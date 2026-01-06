@@ -55,7 +55,7 @@ cd pmonnt
 cargo build --release
 ```
 
-The binary will be at `target/release/pmonnt-ui.exe`.
+The binary will be at `target/release/pmonnt.exe`.
 
 ### Build Requirements
 
