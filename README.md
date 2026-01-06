@@ -66,7 +66,7 @@ The binary will be at `target/release/pmonnt.exe`.
 
 ```bash
 # Run normally (some features limited without admin)
-pmonnt-ui.exe
+pmonnt.exe
 
 # Run as Administrator for full access
 # Right-click → Run as administrator
