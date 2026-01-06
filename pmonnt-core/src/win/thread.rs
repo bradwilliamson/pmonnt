@@ -93,6 +93,7 @@ unsafe fn fn_strlen_wide_bounded(ptr: *const u16, max: usize) -> usize {
 
 pub fn list_threads(pid: u32) -> Result<Vec<ThreadInfo>, PmonntError> {
     let mut threads = Vec::new();
+    // SAFETY: CreateToolhelp32Snapshot is called with valid flags; thread-local GetLastError is safe
     unsafe {
         let snapshot: SYS_HANDLE = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
         if snapshot == INVALID_HANDLE_VALUE {
@@ -271,6 +272,7 @@ pub fn count_threads_global() -> Result<std::collections::HashMap<u32, usize>, P
 
     let mut counts: HashMap<u32, usize> = HashMap::new();
 
+    // SAFETY: CreateToolhelp32Snapshot is called with valid flags; thread-local GetLastError is safe
     unsafe {
         let snapshot: SYS_HANDLE = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
         if snapshot == INVALID_HANDLE_VALUE {

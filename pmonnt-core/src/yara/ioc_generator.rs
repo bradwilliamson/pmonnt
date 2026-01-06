@@ -118,7 +118,7 @@ pub fn sanitize_rule_name(name: &str) -> String {
     }
 
     // Remove trailing underscores
-    while result.ends_with('_') && result.len() > 0 {
+    while result.ends_with('_') && !result.is_empty() {
         result.pop();
     }
 

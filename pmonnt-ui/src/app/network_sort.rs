@@ -239,7 +239,7 @@ mod tests {
         ];
 
         let mut expected = conns.clone();
-        expected.sort_by(|a, b| stable_key(a).cmp(&stable_key(b)));
+        expected.sort_by_key(stable_key);
 
         sort_connections(
             &mut conns,
@@ -250,8 +250,8 @@ mod tests {
         );
 
         assert_eq!(
-            conns.iter().map(|c| stable_key(c)).collect::<Vec<_>>(),
-            expected.iter().map(|c| stable_key(c)).collect::<Vec<_>>()
+            conns.iter().map(stable_key).collect::<Vec<_>>(),
+            expected.iter().map(stable_key).collect::<Vec<_>>()
         );
     }
 

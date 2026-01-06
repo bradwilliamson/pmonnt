@@ -50,6 +50,7 @@ pub enum ThreadPermissionsError {
 }
 
 fn map_last_error(tid: u32) -> ThreadPermissionsError {
+    // SAFETY: GetLastError retrieves the thread-local error code, which is always safe
     let code = unsafe { GetLastError() }.0;
     match WIN32_ERROR(code) {
         ERROR_ACCESS_DENIED => ThreadPermissionsError::AccessDenied,
@@ -73,6 +74,7 @@ fn map_code(context: &'static str, code: u32, tid: u32) -> ThreadPermissionsErro
 pub fn thread_security_sddl(tid: u32) -> Result<String, ThreadPermissionsError> {
     // Need READ_CONTROL to read the security descriptor.
     let desired = THREAD_ACCESS_RIGHTS(READ_CONTROL_RIGHT);
+    // SAFETY: OpenThread is called with valid TID and access rights; error handling checks result
     let handle = unsafe { OpenThread(desired, false, tid) };
     let Ok(handle) = handle else {
         return Err(map_last_error(tid));
@@ -86,6 +88,7 @@ pub fn thread_security_sddl(tid: u32) -> Result<String, ThreadPermissionsError> 
     let mut sd = PSECURITY_DESCRIPTOR::default();
 
     // Per docs, GetSecurityInfo allocates with LocalAlloc; caller frees with LocalFree.
+    // SAFETY: GetSecurityInfo is called with a valid thread handle; output pointer is valid
     let err = unsafe {
         GetSecurityInfo(
             handle,
@@ -107,6 +110,7 @@ pub fn thread_security_sddl(tid: u32) -> Result<String, ThreadPermissionsError> 
     impl Drop for LocalFreeGuard {
         fn drop(&mut self) {
             if !self.0.is_null() {
+                // SAFETY: LocalFree is called with a pointer previously allocated by GetSecurityInfo or ConvertSecurityDescriptorToStringSecurityDescriptorW
                 unsafe {
                     let _ = LocalFree(self.0);
                 }
@@ -119,6 +123,7 @@ pub fn thread_security_sddl(tid: u32) -> Result<String, ThreadPermissionsError> 
     let mut sddl_ptr: *mut u16 = std::ptr::null_mut();
     let mut sddl_len: u32 = 0;
 
+    // SAFETY: ConvertSecurityDescriptorToStringSecurityDescriptorW is called with valid security descriptor from GetSecurityInfo
     let ok = unsafe {
         ConvertSecurityDescriptorToStringSecurityDescriptorW(
             sd.0 as *const _,
@@ -141,6 +146,7 @@ pub fn thread_security_sddl(tid: u32) -> Result<String, ThreadPermissionsError> 
         return Ok(String::new());
     }
 
+    // SAFETY: from_raw_parts is safe here because sddl_ptr is valid, non-null, and len is the size returned by the API
     let slice = unsafe { std::slice::from_raw_parts(sddl_ptr, len) };
     Ok(OsString::from_wide(slice).to_string_lossy().into_owned())
 }

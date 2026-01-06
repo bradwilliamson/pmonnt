@@ -9,7 +9,7 @@ pub(crate) fn try_get_main_hwnd(frame: &eframe::Frame) -> Option<isize> {
 
     let handle = frame.window_handle().ok()?;
     match handle.as_raw() {
-        RawWindowHandle::Win32(h) => Some(h.hwnd.get() as isize),
+        RawWindowHandle::Win32(h) => Some(h.hwnd.get()),
         _ => None,
     }
 }
@@ -121,6 +121,7 @@ pub(crate) fn query_physical_memory_used_total() -> Option<(u64, u64)> {
         dwLength: std::mem::size_of::<MEMORYSTATUSEX>() as u32,
         ..Default::default()
     };
+    // SAFETY: GlobalMemoryStatusEx writes to the provided MEMORYSTATUSEX structure with dwLength set correctly.
     let ok = unsafe { GlobalMemoryStatusEx(&mut ms) }.is_ok();
     if !ok {
         return None;
@@ -140,6 +141,7 @@ pub(crate) fn query_gpu_memory_capacity_bytes() -> Option<(u64, u64)> {
         DXGI_MEMORY_SEGMENT_GROUP_NON_LOCAL, DXGI_QUERY_VIDEO_MEMORY_INFO,
     };
 
+    // SAFETY: CreateDXGIFactory1 initializes COM internally and returns a factory interface.
     let factory: IDXGIFactory1 = unsafe { CreateDXGIFactory1().ok()? };
 
     let mut dedicated: u64 = 0;
@@ -148,11 +150,13 @@ pub(crate) fn query_gpu_memory_capacity_bytes() -> Option<(u64, u64)> {
     // Enumerate adapters and prefer WDDM "budget" (Task Manager-like) when available.
     // If budgets aren't available, fall back to adapter-reported capacities.
     for adapter_index in 0u32.. {
+        // SAFETY: EnumAdapters1 retrieves an adapter interface using a valid factory.
         let adapter = match unsafe { factory.EnumAdapters1(adapter_index) } {
             Ok(a) => a,
             Err(_) => break,
         };
 
+        // SAFETY: GetDesc1 retrieves adapter description from a valid adapter interface.
         let desc: DXGI_ADAPTER_DESC1 = unsafe { adapter.GetDesc1().ok()? };
 
         // Skip software adapters (WARP).
@@ -165,6 +169,7 @@ pub(crate) fn query_gpu_memory_capacity_bytes() -> Option<(u64, u64)> {
         if let Ok(adapter3) = adapter.cast::<IDXGIAdapter3>() {
             // Most systems expose node 0; if this fails, we fall back to descriptor.
             let mut info_local = DXGI_QUERY_VIDEO_MEMORY_INFO::default();
+            // SAFETY: QueryVideoMemoryInfo writes to the provided structure using a valid adapter interface.
             if unsafe {
                 adapter3.QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &mut info_local)
             }
@@ -176,6 +181,7 @@ pub(crate) fn query_gpu_memory_capacity_bytes() -> Option<(u64, u64)> {
             }
 
             let mut info_nonlocal = DXGI_QUERY_VIDEO_MEMORY_INFO::default();
+            // SAFETY: QueryVideoMemoryInfo writes to the provided structure using a valid adapter interface.
             if unsafe {
                 adapter3.QueryVideoMemoryInfo(
                     0,

@@ -36,6 +36,7 @@ pub enum ProcessControlError {
 }
 
 fn map_last_error(pid: u32) -> ProcessControlError {
+    // SAFETY: GetLastError is a thread-local FFI call to retrieve the last error code
     let code = unsafe { GetLastError() }.0;
     match WIN32_ERROR(code) {
         ERROR_ACCESS_DENIED => ProcessControlError::AccessDenied,
@@ -72,12 +73,14 @@ pub fn kill_process(pid: u32) -> Result<(), ProcessControlError> {
         });
     }
 
+    // SAFETY: OpenProcess FFI call with valid PID and PROCESS_TERMINATE access rights
     let handle = unsafe { OpenProcess(PROCESS_TERMINATE, false, pid) };
     let Ok(handle) = handle else {
         return Err(map_last_error(pid));
     };
     let _guard = HandleGuard::new(handle);
 
+    // SAFETY: TerminateProcess FFI call with valid process handle
     if unsafe { TerminateProcess(handle, 1) }.is_err() {
         return Err(map_last_error(pid));
     }
@@ -88,11 +91,12 @@ pub fn kill_process(pid: u32) -> Result<(), ProcessControlError> {
 /// Suspend a process by PID using NtSuspendProcess.
 #[cfg(windows)]
 pub fn suspend_process(pid: u32) -> Result<(), ProcessControlError> {
+    // SAFETY: GetModuleHandleA, GetProcAddress, and transmute to get NtSuspendProcess function pointer with correct signature
     unsafe {
-        let ntdll = GetModuleHandleA(PCSTR(b"ntdll.dll\0".as_ptr() as _))
+        let ntdll = GetModuleHandleA(PCSTR(c"ntdll.dll".as_ptr() as _))
             .map_err(|_| ProcessControlError::NtdllError("Could not load ntdll.dll".to_string()))?;
         let nt_suspend_process_addr =
-            GetProcAddress(ntdll, PCSTR(b"NtSuspendProcess\0".as_ptr() as _));
+            GetProcAddress(ntdll, PCSTR(c"NtSuspendProcess".as_ptr() as _));
 
         if let Some(addr) = nt_suspend_process_addr {
             let nt_suspend_process: unsafe extern "system" fn(HANDLE) -> i32 =
@@ -120,11 +124,12 @@ pub fn suspend_process(pid: u32) -> Result<(), ProcessControlError> {
 /// Resume a process by PID using NtResumeProcess.
 #[cfg(windows)]
 pub fn resume_process(pid: u32) -> Result<(), ProcessControlError> {
+    // SAFETY: GetModuleHandleA, GetProcAddress, and transmute to get NtResumeProcess function pointer with correct signature
     unsafe {
-        let ntdll = GetModuleHandleA(PCSTR(b"ntdll.dll\0".as_ptr() as _))
+        let ntdll = GetModuleHandleA(PCSTR(c"ntdll.dll".as_ptr() as _))
             .map_err(|_| ProcessControlError::NtdllError("Could not load ntdll.dll".to_string()))?;
         let nt_resume_process_addr =
-            GetProcAddress(ntdll, PCSTR(b"NtResumeProcess\0".as_ptr() as _));
+            GetProcAddress(ntdll, PCSTR(c"NtResumeProcess".as_ptr() as _));
 
         if let Some(addr) = nt_resume_process_addr {
             let nt_resume_process: unsafe extern "system" fn(HANDLE) -> i32 =
@@ -170,6 +175,7 @@ fn spawn_process_with_command_line(
     cmd_line: &str,
     cwd: Option<&str>,
 ) -> Result<(), ProcessControlError> {
+    // SAFETY: CreateProcessW FFI call with valid null-terminated UTF-16 command line and properly initialized STARTUPINFOW structure
     unsafe {
         let startup_info = STARTUPINFOW {
             cb: std::mem::size_of::<STARTUPINFOW>() as u32,

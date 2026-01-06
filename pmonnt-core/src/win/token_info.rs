@@ -153,6 +153,9 @@ fn wide_string_from_buf(buf: &[u16]) -> String {
 }
 
 fn sid_to_string(sid: PSID) -> Result<String, SecurityError> {
+    // SAFETY: ConvertSidToStringSidW, string traversal, and LocalFree operations
+    // - sid must be a valid SID pointer from caller
+    // - ConvertSidToStringSidW allocates string that must be freed with LocalFree
     unsafe {
         let mut out_ptr: *mut u16 = std::ptr::null_mut();
         // SAFETY: `sid` must be a valid SID pointer for the duration of the call.
@@ -179,6 +182,9 @@ fn sid_to_string(sid: PSID) -> Result<String, SecurityError> {
 }
 
 fn lookup_account_name(sid: PSID) -> Option<String> {
+    // SAFETY: LookupAccountSidW operations with valid SID pointer from caller
+    // - Two-phase pattern: size query then data retrieval
+    // - Buffers sized from first call
     unsafe {
         // SAFETY: `sid` must be a valid SID pointer for the duration of these Win32 calls.
         // First call to get required sizes
@@ -230,12 +236,12 @@ fn lookup_account_name(sid: PSID) -> Option<String> {
 
 fn integrity_from_token(token: HANDLE) -> Result<IntegrityLevel, SecurityError> {
     let buf = token_info_raw(token, TOKEN_INFORMATION_CLASS(25))?; // TokenIntegrityLevel
-                                                                   // SAFETY: `buf` is populated by `GetTokenInformation(TokenIntegrityLevel)` and begins with a
-                                                                   // `TOKEN_MANDATORY_LABEL`. We use `read_unaligned` because `Vec<u8>` does not guarantee
-                                                                   // alignment for the target type.
+    // SAFETY: buf is populated by GetTokenInformation(TokenIntegrityLevel) and begins with TOKEN_MANDATORY_LABEL
+    // - Use read_unaligned because Vec<u8> does not guarantee alignment
     let label = unsafe { std::ptr::read_unaligned(buf.as_ptr() as *const TOKEN_MANDATORY_LABEL) };
     let sid = label.Label.Sid;
 
+    // SAFETY: SID from token-provided TOKEN_MANDATORY_LABEL, valid for query helpers
     unsafe {
         // SAFETY: `sid` comes from the token-provided `TOKEN_MANDATORY_LABEL` and is expected to
         // be a valid SID pointer for these query helpers.
@@ -404,6 +410,9 @@ fn token_groups(token: HANDLE) -> Result<Vec<GroupEntry>, SecurityError> {
 }
 
 fn luid_to_name(luid: &windows::Win32::Foundation::LUID) -> Option<String> {
+    // SAFETY: LookupPrivilegeNameW operations with valid LUID pointer
+    // - Two-phase pattern: size query with null buffer, then data retrieval
+    // - Buffer sized from first call
     unsafe {
         let mut len = 0u32;
         // SAFETY: `luid` is a valid pointer for the duration of the call; passing a null output
@@ -423,6 +432,9 @@ fn luid_to_name(luid: &windows::Win32::Foundation::LUID) -> Option<String> {
 }
 
 fn luid_to_display(name: &str) -> Option<String> {
+    // SAFETY: LookupPrivilegeDisplayNameW operations with valid null-terminated UTF-16 string
+    // - Two-phase pattern: size query then data retrieval
+    // - name_w is valid for the duration of both calls
     unsafe {
         // First query size.
         let name_w: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();

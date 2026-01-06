@@ -262,7 +262,11 @@ pub fn get_working_set_bytes_map() -> Result<HashMap<u32, u64>> {
     let mut map = HashMap::new();
     let mut offset: usize = 0;
     while offset + mem::size_of::<SystemProcessInformation>() <= buffer.len() {
-        // SAFETY: We bounds-check the minimum header size and step by NextEntryOffset.
+        // SAFETY: SystemProcessInformation alignment and reading:
+        // - NtQuerySystemInformation returns properly aligned structures in the buffer
+        // - We validate that at least sizeof(SystemProcessInformation) remains in buffer
+        // - NextEntryOffset is verified to be within bounds before advancing offset
+        // - The buffer was allocated with sufficient size as determined by the OS
         let spi = unsafe { &*(buffer.as_ptr().add(offset) as *const SystemProcessInformation) };
 
         let pid = spi.unique_process_id.0 as usize as u32;
@@ -321,11 +325,11 @@ fn get_process_memory(handle: HANDLE) -> Option<u64> {
 }
 
 fn get_process_private_bytes(handle: HANDLE) -> Option<u64> {
-    // SAFETY: PROCESS_MEMORY_COUNTERS_EX is a plain-old-data Windows struct; all-zero is a valid
-    // initial value before the OS fills it.
+    // SAFETY: Creating zero-initialized POD struct PROCESS_MEMORY_COUNTERS_EX which will be filled by GetProcessMemoryInfo
     let mut pmc: PROCESS_MEMORY_COUNTERS_EX = unsafe { mem::zeroed() };
     pmc.cb = mem::size_of::<PROCESS_MEMORY_COUNTERS_EX>() as u32;
 
+    // SAFETY: GetProcessMemoryInfo is called with valid handle and properly sized buffer
     let success = unsafe {
         GetProcessMemoryInfo(
             handle,
@@ -476,11 +480,11 @@ pub fn get_process_memory_info_by_pid(pid: u32) -> Option<PROCESS_MEMORY_COUNTER
     };
 
     let guard = HandleGuard::new(handle);
-    // SAFETY: PROCESS_MEMORY_COUNTERS_EX is a plain-old-data Windows struct; all-zero is a valid
-    // initial value before the OS fills it.
+    // SAFETY: Creating zero-initialized POD struct PROCESS_MEMORY_COUNTERS_EX which will be filled by GetProcessMemoryInfo
     let mut pmc: PROCESS_MEMORY_COUNTERS_EX = unsafe { mem::zeroed() };
     pmc.cb = mem::size_of::<PROCESS_MEMORY_COUNTERS_EX>() as u32;
 
+    // SAFETY: GetProcessMemoryInfo is called with valid handle and properly sized buffer
     let success = unsafe {
         GetProcessMemoryInfo(
             guard.raw(),

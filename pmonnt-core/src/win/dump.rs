@@ -36,6 +36,7 @@ pub enum DumpError {
 
 impl DumpError {
     fn win32(context: &str) -> Self {
+        // SAFETY: GetLastError is a thread-local FFI call to retrieve the last error code
         let err = unsafe { GetLastError() };
         let code = err.0;
 
@@ -157,6 +158,7 @@ pub fn write_process_dump(
     {
         use std::os::windows::io::AsRawHandle;
 
+        // SAFETY: OpenProcess FFI call with valid PID and access rights
         let proc = unsafe { OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid) }
             .map_err(|_| DumpError::win32(&format!("Failed to open PID {pid} for dump")))?;
         let proc_guard = HandleGuard::new(proc);
@@ -169,6 +171,7 @@ pub fn write_process_dump(
         }
 
         let dump_type = dump_type_for(kind);
+        // SAFETY: MiniDumpWriteDump FFI call with valid process handle, file handle, and properly configured dump type
         if unsafe {
             MiniDumpWriteDump(
                 proc_guard.raw(),

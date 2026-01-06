@@ -105,11 +105,11 @@ impl PMonNTApp {
 
         // Memory
         if let Some(mem_info) = win_process_metrics::get_process_memory_info_by_pid(pid) {
-            let current_private = mem_info.PrivateUsage as usize;
-            let current_commit = mem_info.PagefileUsage as usize;
-            let current_peak_commit = mem_info.PeakPagefileUsage as usize;
-            let current_working_set = mem_info.WorkingSetSize as usize;
-            let current_peak_working_set = mem_info.PeakWorkingSetSize as usize;
+            let current_private = mem_info.PrivateUsage;
+            let current_commit = mem_info.PagefileUsage;
+            let current_peak_commit = mem_info.PeakPagefileUsage;
+            let current_working_set = mem_info.WorkingSetSize;
+            let current_peak_working_set = mem_info.PeakWorkingSetSize;
 
             stats.virtual_size = Some(current_commit); // Virtual size is commit size in Process Explorer
             stats.private_bytes = Some(current_private);

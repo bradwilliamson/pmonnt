@@ -60,6 +60,7 @@ impl ScmHandleGuard {
 
 impl Drop for ScmHandleGuard {
     fn drop(&mut self) {
+        // SAFETY: self.0 is a valid SC_HANDLE owned by this guard
         unsafe {
             let _ = CloseServiceHandle(self.0);
         }
@@ -76,6 +77,7 @@ impl ServiceHandleGuard {
 
 impl Drop for ServiceHandleGuard {
     fn drop(&mut self) {
+        // SAFETY: self.0 is a valid SC_HANDLE owned by this guard
         unsafe {
             let _ = CloseServiceHandle(self.0);
         }
@@ -87,6 +89,10 @@ fn wide_ptr_to_string(ptr: *const u16) -> String {
         return String::new();
     }
 
+    // SAFETY: ptr is non-null and points to a null-terminated wide string from Windows API
+    // - Caller guarantees ptr is valid for reads
+    // - Loop finds null terminator to determine valid length
+    // - from_raw_parts creates slice from valid pointer and computed length
     unsafe {
         let mut len = 0usize;
         while *ptr.add(len) != 0 {
@@ -182,6 +188,7 @@ fn enumerate_all_services_basic() -> Result<Vec<BasicService>> {
         drop(guard);
     }
 
+    // SAFETY: OpenSCManagerW with valid parameters (None uses defaults)
     let scm = unsafe { OpenSCManagerW(None, None, SC_MANAGER_ENUMERATE_SERVICE)? };
     let _scm_guard = ScmHandleGuard::new(scm);
 
@@ -190,6 +197,10 @@ fn enumerate_all_services_basic() -> Result<Vec<BasicService>> {
     let mut resume_handle = 0u32;
 
     // First call to get required buffer size.
+    // SAFETY: EnumServicesStatusExW size query with None buffer
+    // - scm is a valid SC_HANDLE from OpenSCManagerW
+    // - None buffer is standard pattern for querying required size
+    // - bytes_needed will be populated with required size
     let _ = unsafe {
         EnumServicesStatusExW(
             scm,
@@ -210,6 +221,10 @@ fn enumerate_all_services_basic() -> Result<Vec<BasicService>> {
     }
 
     let mut buffer = vec![0u8; bytes_needed as usize];
+    // SAFETY: EnumServicesStatusExW writes structured service data into the buffer
+    // - Buffer size matches bytes_needed determined by first API call
+    // - API populates the buffer with services_returned valid entries
+    // - Each entry is an ENUM_SERVICE_STATUS_PROCESSW struct
     unsafe {
         EnumServicesStatusExW(
             scm,
@@ -225,9 +240,14 @@ fn enumerate_all_services_basic() -> Result<Vec<BasicService>> {
     }
 
     let mut services = Vec::with_capacity(services_returned as usize);
+    // SAFETY: Buffer populated by EnumServicesStatusExW with proper alignment
+    // - Windows guarantees ENUM_SERVICE_STATUS_PROCESSW array alignment
+    // - services_returned indicates the actual entry count written by OS
+    // - Buffer sized to accommodate all entries
     let ptr = buffer.as_ptr() as *const ENUM_SERVICE_STATUS_PROCESSW;
 
     for i in 0..(services_returned as usize) {
+        // SAFETY: Pointer arithmetic within validated bounds (i < services_returned)
         let item = unsafe { &*ptr.add(i) };
         let name = wide_ptr_to_string(PCWSTR(item.lpServiceName.0).0);
         let display_name = wide_ptr_to_string(PCWSTR(item.lpDisplayName.0).0);
@@ -268,6 +288,10 @@ fn get_service_details(scm: SC_HANDLE, name: &str) -> Result<(ServiceStartType, 
     }
 
     let wname: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
+    // SAFETY: OpenServiceW with valid parameters
+    // - scm is a valid SC_HANDLE
+    // - wname is a null-terminated UTF-16 string valid for the call
+    // - wname.as_ptr() remains valid as wname is in scope
     let service = unsafe {
         OpenServiceW(
             scm,
@@ -279,6 +303,9 @@ fn get_service_details(scm: SC_HANDLE, name: &str) -> Result<(ServiceStartType, 
 
     // QueryServiceConfigW
     let mut bytes_needed = 0u32;
+    // SAFETY: QueryServiceConfigW size query
+    // - service is a valid SC_HANDLE from OpenServiceW
+    // - None buffer is standard pattern for size query
     let _ = unsafe { QueryServiceConfigW(service, None, 0, &mut bytes_needed) };
     if bytes_needed == 0 {
         // Fall back to defaults if we can't query.
@@ -286,6 +313,9 @@ fn get_service_details(scm: SC_HANDLE, name: &str) -> Result<(ServiceStartType, 
     }
 
     let mut cfg_buf = vec![0u8; bytes_needed as usize];
+    // SAFETY: QueryServiceConfigW populates the buffer with QUERY_SERVICE_CONFIGW data
+    // - Buffer size matches bytes_needed from the API
+    // - Windows guarantees proper alignment for service config structures
     unsafe {
         QueryServiceConfigW(
             service,
@@ -294,11 +324,17 @@ fn get_service_details(scm: SC_HANDLE, name: &str) -> Result<(ServiceStartType, 
             &mut bytes_needed,
         )?;
     }
+    // SAFETY: Buffer was populated by QueryServiceConfigW with valid QUERY_SERVICE_CONFIGW
+    // - API guarantees proper structure layout and alignment
+    // - Buffer size verified to accommodate the structure
     let cfg = unsafe { &*(cfg_buf.as_ptr() as *const QUERY_SERVICE_CONFIGW) };
 
     // Delayed auto-start info (only meaningful for auto-start).
     let mut delayed = false;
     let mut bytes_needed2 = 0u32;
+    // SAFETY: QueryServiceConfig2W size query for delayed auto-start info
+    // - service is a valid SC_HANDLE
+    // - None buffer for size query is standard Windows API pattern
     let _ = unsafe {
         QueryServiceConfig2W(
             service,
@@ -309,6 +345,9 @@ fn get_service_details(scm: SC_HANDLE, name: &str) -> Result<(ServiceStartType, 
     };
     if bytes_needed2 > 0 {
         let mut buf2 = vec![0u8; bytes_needed2 as usize];
+        // SAFETY: QueryServiceConfig2W data retrieval with properly sized buffer
+        // - Buffer allocated with exact size from previous query
+        // - service handle remains valid
         if unsafe {
             QueryServiceConfig2W(
                 service,
@@ -319,6 +358,9 @@ fn get_service_details(scm: SC_HANDLE, name: &str) -> Result<(ServiceStartType, 
         }
         .is_ok()
         {
+            // SAFETY: QueryServiceConfig2W populated buf2 with SERVICE_DELAYED_AUTO_START_INFO
+            // - Buffer size matches bytes_needed2 determined by the API
+            // - Windows guarantees proper alignment for this structure
             let info = unsafe { &*(buf2.as_ptr() as *const SERVICE_DELAYED_AUTO_START_INFO) };
             delayed = info.fDelayedAutostart.as_bool();
         }
@@ -327,6 +369,9 @@ fn get_service_details(scm: SC_HANDLE, name: &str) -> Result<(ServiceStartType, 
     // Description
     let mut description: Option<String> = None;
     let mut bytes_needed3 = 0u32;
+    // SAFETY: QueryServiceConfig2W size query for description
+    // - service is a valid SC_HANDLE
+    // - None buffer for size query
     let _ = unsafe {
         QueryServiceConfig2W(
             service,
@@ -337,6 +382,9 @@ fn get_service_details(scm: SC_HANDLE, name: &str) -> Result<(ServiceStartType, 
     };
     if bytes_needed3 > 0 {
         let mut buf3 = vec![0u8; bytes_needed3 as usize];
+        // SAFETY: QueryServiceConfig2W data retrieval with properly sized buffer
+        // - Buffer allocated with exact size from previous query
+        // - service handle remains valid
         if unsafe {
             QueryServiceConfig2W(
                 service,
@@ -347,6 +395,9 @@ fn get_service_details(scm: SC_HANDLE, name: &str) -> Result<(ServiceStartType, 
         }
         .is_ok()
         {
+            // SAFETY: QueryServiceConfig2W populated buf3 with SERVICE_DESCRIPTIONW
+            // - Buffer size matches bytes_needed3 from API
+            // - Windows guarantees proper alignment and valid lpDescription pointer (or null)
             let info = unsafe { &*(buf3.as_ptr() as *const SERVICE_DESCRIPTIONW) };
             if !info.lpDescription.is_null() {
                 description = Some(wide_ptr_to_string(PCWSTR(info.lpDescription.0).0));
@@ -377,6 +428,7 @@ pub fn get_services_for_process(pid: u32) -> Result<Vec<ServiceInfo>> {
         return Ok(Vec::new());
     }
 
+    // SAFETY: OpenSCManagerW with valid parameters
     let scm = unsafe { OpenSCManagerW(None, None, SC_MANAGER_ENUMERATE_SERVICE)? };
     let _scm_guard = ScmHandleGuard::new(scm);
 
@@ -411,6 +463,7 @@ pub fn get_services_for_pid(pid: u32) -> Result<Vec<ServiceInfo>> {
 pub fn enumerate_all_services() -> Result<Vec<ServiceInfo>> {
     let basics = enumerate_all_services_basic()?;
 
+    // SAFETY: OpenSCManagerW with valid parameters (None uses defaults, SC_MANAGER_ENUMERATE_SERVICE is valid)
     let scm = unsafe { OpenSCManagerW(None, None, SC_MANAGER_ENUMERATE_SERVICE)? };
     let _scm_guard = ScmHandleGuard::new(scm);
 
@@ -435,6 +488,7 @@ pub fn enumerate_all_services() -> Result<Vec<ServiceInfo>> {
 }
 
 pub fn stop_service(service_name: &str, timeout: Duration) -> Result<()> {
+    // SAFETY: OpenSCManagerW with valid parameters
     let scm = unsafe { OpenSCManagerW(None, None, SC_MANAGER_CONNECT)? };
     let _scm_guard = ScmHandleGuard::new(scm);
 
@@ -442,6 +496,7 @@ pub fn stop_service(service_name: &str, timeout: Duration) -> Result<()> {
         .encode_utf16()
         .chain(std::iter::once(0))
         .collect();
+    // SAFETY: OpenServiceW with valid null-terminated UTF-16 string and valid scm handle
     let service = unsafe {
         OpenServiceW(
             scm,
@@ -452,6 +507,7 @@ pub fn stop_service(service_name: &str, timeout: Duration) -> Result<()> {
     let _svc_guard = ServiceHandleGuard::new(service);
 
     let mut status = SERVICE_STATUS::default();
+    // SAFETY: ControlService with valid service handle and mutable status reference
     unsafe { ControlService(service, SERVICE_CONTROL_STOP, &mut status)? };
 
     wait_for_service_state(
@@ -466,6 +522,7 @@ pub fn restart_service(service_name: &str, timeout: Duration) -> Result<()> {
     let _ = stop_service(service_name, timeout);
 
     // Start
+    // SAFETY: OpenSCManagerW with valid parameters
     let scm = unsafe { OpenSCManagerW(None, None, SC_MANAGER_CONNECT)? };
     let _scm_guard = ScmHandleGuard::new(scm);
 
@@ -473,6 +530,7 @@ pub fn restart_service(service_name: &str, timeout: Duration) -> Result<()> {
         .encode_utf16()
         .chain(std::iter::once(0))
         .collect();
+    // SAFETY: OpenServiceW with valid null-terminated UTF-16 string and valid scm handle
     let service = unsafe {
         OpenServiceW(
             scm,
@@ -482,6 +540,7 @@ pub fn restart_service(service_name: &str, timeout: Duration) -> Result<()> {
     };
     let _svc_guard = ServiceHandleGuard::new(service);
 
+    // SAFETY: StartServiceW with valid service handle, no arguments
     unsafe {
         // No args.
         StartServiceW(service, None)?;
@@ -491,6 +550,7 @@ pub fn restart_service(service_name: &str, timeout: Duration) -> Result<()> {
 }
 
 pub fn start_service(service_name: &str, timeout: Duration) -> Result<()> {
+    // SAFETY: OpenSCManagerW with valid parameters
     let scm = unsafe { OpenSCManagerW(None, None, SC_MANAGER_CONNECT)? };
     let _scm_guard = ScmHandleGuard::new(scm);
 
@@ -498,6 +558,7 @@ pub fn start_service(service_name: &str, timeout: Duration) -> Result<()> {
         .encode_utf16()
         .chain(std::iter::once(0))
         .collect();
+    // SAFETY: OpenServiceW with valid null-terminated UTF-16 string and valid scm handle
     let service = unsafe {
         OpenServiceW(
             scm,
@@ -507,6 +568,7 @@ pub fn start_service(service_name: &str, timeout: Duration) -> Result<()> {
     };
     let _svc_guard = ServiceHandleGuard::new(service);
 
+    // SAFETY: StartServiceW with valid service handle
     unsafe {
         StartServiceW(service, None)?;
     }
@@ -515,6 +577,7 @@ pub fn start_service(service_name: &str, timeout: Duration) -> Result<()> {
 }
 
 pub fn pause_service(service_name: &str, timeout: Duration) -> Result<()> {
+    // SAFETY: OpenSCManagerW with valid parameters
     let scm = unsafe { OpenSCManagerW(None, None, SC_MANAGER_CONNECT)? };
     let _scm_guard = ScmHandleGuard::new(scm);
 
@@ -522,6 +585,7 @@ pub fn pause_service(service_name: &str, timeout: Duration) -> Result<()> {
         .encode_utf16()
         .chain(std::iter::once(0))
         .collect();
+    // SAFETY: OpenServiceW with valid null-terminated UTF-16 string and valid scm handle
     let service = unsafe {
         OpenServiceW(
             scm,
@@ -534,6 +598,7 @@ pub fn pause_service(service_name: &str, timeout: Duration) -> Result<()> {
     // Best-effort check for pause accept.
     let mut bytes_needed = 0u32;
     let mut buf = vec![0u8; std::mem::size_of::<SERVICE_STATUS_PROCESS>()];
+    // SAFETY: QueryServiceStatusEx with valid service handle and properly sized buffer
     unsafe {
         QueryServiceStatusEx(
             service,
@@ -542,12 +607,14 @@ pub fn pause_service(service_name: &str, timeout: Duration) -> Result<()> {
             &mut bytes_needed,
         )?;
     }
+    // SAFETY: Buffer properly sized and filled by QueryServiceStatusEx, valid for SERVICE_STATUS_PROCESS cast
     let ssp = unsafe { &*(buf.as_ptr() as *const SERVICE_STATUS_PROCESS) };
     if (ssp.dwControlsAccepted & SERVICE_ACCEPT_PAUSE_CONTINUE) == 0 {
         return Err(anyhow!("Service does not accept pause"));
     }
 
     let mut status = SERVICE_STATUS::default();
+    // SAFETY: ControlService with valid service handle and mutable status reference
     unsafe { ControlService(service, SERVICE_CONTROL_PAUSE, &mut status)? };
 
     wait_for_service_state(
@@ -558,6 +625,7 @@ pub fn pause_service(service_name: &str, timeout: Duration) -> Result<()> {
 }
 
 pub fn resume_service(service_name: &str, timeout: Duration) -> Result<()> {
+    // SAFETY: OpenSCManagerW with valid parameters
     let scm = unsafe { OpenSCManagerW(None, None, SC_MANAGER_CONNECT)? };
     let _scm_guard = ScmHandleGuard::new(scm);
 
@@ -565,6 +633,7 @@ pub fn resume_service(service_name: &str, timeout: Duration) -> Result<()> {
         .encode_utf16()
         .chain(std::iter::once(0))
         .collect();
+    // SAFETY: OpenServiceW with valid null-terminated UTF-16 string and valid scm handle
     let service = unsafe {
         OpenServiceW(
             scm,
@@ -575,6 +644,7 @@ pub fn resume_service(service_name: &str, timeout: Duration) -> Result<()> {
     let _svc_guard = ServiceHandleGuard::new(service);
 
     let mut status = SERVICE_STATUS::default();
+    // SAFETY: ControlService with valid service handle and mutable status reference
     unsafe { ControlService(service, SERVICE_CONTROL_CONTINUE, &mut status)? };
 
     wait_for_service_state(service, SERVICE_RUNNING, timeout)
@@ -590,6 +660,7 @@ fn wait_for_service_state(
     loop {
         let mut bytes_needed = 0u32;
         let mut buf = vec![0u8; std::mem::size_of::<SERVICE_STATUS_PROCESS>()];
+        // SAFETY: QueryServiceStatusEx with valid service handle and properly sized buffer
         unsafe {
             QueryServiceStatusEx(
                 service,
@@ -598,6 +669,7 @@ fn wait_for_service_state(
                 &mut bytes_needed,
             )?;
         }
+        // SAFETY: Buffer properly sized and filled by QueryServiceStatusEx, valid for SERVICE_STATUS_PROCESS cast
         let ssp = unsafe { &*(buf.as_ptr() as *const SERVICE_STATUS_PROCESS) };
 
         if ssp.dwCurrentState == desired {

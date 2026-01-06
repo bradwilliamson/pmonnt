@@ -30,6 +30,7 @@ pub fn enumerate_processes() -> Result<Vec<Process>> {
         return Err(anyhow!("Failed to create process snapshot"));
     }
 
+    // SAFETY: Creating zero-initialized POD struct PROCESSENTRY32 which will be filled by Process32First
     let mut process_entry: PROCESSENTRY32 = unsafe { std::mem::zeroed() };
     process_entry.dwSize = std::mem::size_of::<PROCESSENTRY32>() as u32;
 

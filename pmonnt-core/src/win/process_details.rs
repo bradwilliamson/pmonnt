@@ -147,6 +147,7 @@ fn query_process_basic_information(handle: HANDLE) -> Result<PROCESS_BASIC_INFOR
         _reserved3: std::ptr::null_mut(),
     };
     let mut ret_len = 0u32;
+    // SAFETY: NtQueryInformationProcess is called with a valid process handle and properly sized buffer
     let status = unsafe {
         NtQueryInformationProcess(
             handle,
@@ -169,6 +170,7 @@ fn query_wow64_peb_address(handle: HANDLE) -> Result<Option<u32>> {
     // Returns the 32-bit PEB address for WoW64 processes. If 0, the process is not WoW64.
     let mut peb32: usize = 0;
     let mut ret_len = 0u32;
+    // SAFETY: NtQueryInformationProcess is called with a valid process handle and properly sized buffer
     let status = unsafe {
         NtQueryInformationProcess(
             handle,
@@ -198,6 +200,7 @@ fn read_process_memory_exact(
         return Ok(Vec::new());
     }
 
+    // SAFETY: ReadProcessMemory is called with valid handle and buffer allocated for requested size
     unsafe {
         let mut buffer = vec![0u8; size];
         let mut bytes_read: usize = 0;
@@ -325,6 +328,7 @@ fn read_environment_block_u16(
 
     while bytes.len() < max_bytes {
         let to_read = CHUNK_BYTES.min(max_bytes - bytes.len());
+        // SAFETY: ReadProcessMemory is called with valid handle and buffer allocated for chunk size
         let chunk = unsafe {
             let mut buffer = vec![0u8; to_read];
             let mut bytes_read: usize = 0;
@@ -393,6 +397,7 @@ pub fn get_process_details(pid: u32, include_environment: bool) -> Result<Proces
         return Ok(ProcessDetails::default());
     }
 
+    // SAFETY: OpenProcess is called with a valid PID and appropriate access rights
     let handle = unsafe { OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid) }?;
     let guard = HandleGuard::new(handle);
 

@@ -22,6 +22,7 @@ pub struct ThreadDetailUi<'a> {
     pub stack: Option<&'a (Instant, Result<String, String>)>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn render_threads_panel<F: FnMut(ThreadActionRequest)>(
     ui: &mut egui::Ui,
     pid: u32,

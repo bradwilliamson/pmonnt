@@ -66,7 +66,7 @@ impl HashComputer {
     pub fn new() -> Self {
         Self {
             cache: Arc::new(Mutex::new(HashMap::new())),
-            ops: Arc::new(StdFileOps::default()),
+            ops: Arc::new(StdFileOps),
         }
     }
 
@@ -226,9 +226,11 @@ mod tests {
 
     // Regression tests: HashComputer cache behavior must remain deterministic.
 
+    type FileCache = Arc<Mutex<HashMap<String, (Vec<u8>, FileMeta)>>>;
+
     #[derive(Clone)]
     struct MockFileOps {
-        files: Arc<Mutex<HashMap<String, (Vec<u8>, FileMeta)>>>,
+        files: FileCache,
         opens: Arc<AtomicUsize>,
     }
 

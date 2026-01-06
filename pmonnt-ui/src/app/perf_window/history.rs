@@ -191,6 +191,7 @@ impl Default for NetChurnMonitor {
 }
 
 #[cfg(any(test, feature = "dev-tools"))]
+#[allow(dead_code)]
 pub(crate) fn fake_perf_stats() -> PerfStats {
     PerfStats {
         priority_class: Some("Normal".to_string()),

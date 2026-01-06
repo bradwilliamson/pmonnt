@@ -61,6 +61,7 @@ fn hint_for_win32(code: u32) -> String {
 }
 
 fn map_last_error(context: &'static str, pid: u32, tid: u32) -> ThreadStackError {
+    // SAFETY: GetLastError retrieves the thread-local error code, which is always safe
     let code = unsafe { GetLastError() }.0;
     match WIN32_ERROR(code) {
         ERROR_ACCESS_DENIED => ThreadStackError::AccessDenied,
@@ -87,6 +88,7 @@ const PROCESS_WOW64_INFORMATION_CLASS: u32 = 26;
 fn is_wow64_process(process: HANDLE) -> Result<bool, ThreadStackError> {
     // Returns the 32-bit PEB address for WoW64 processes. If 0, the process is not WoW64.
     let mut peb32: usize = 0;
+    // SAFETY: NtQueryInformationProcess is called with a valid process handle and properly sized output buffer
     let status = unsafe {
         NtQueryInformationProcess(
             process,
@@ -116,6 +118,7 @@ struct ResumeOnDrop {
 impl Drop for ResumeOnDrop {
     fn drop(&mut self) {
         if self.did_suspend {
+            // SAFETY: ResumeThread is called with a valid thread handle; best-effort cleanup
             unsafe {
                 let _ = ResumeThread(self.thread);
             }
@@ -143,6 +146,7 @@ pub fn thread_stack_trace(
     // If it fails, we continue (we still want a clear error message below).
     let _ = crate::win::enable_debug_privilege();
 
+    // SAFETY: OpenProcess is called with valid PID and access rights; error handling checks result
     let process = unsafe { OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid) };
     let Ok(process) = process else {
         return Err(map_last_error("OpenProcess", pid, 0));
@@ -150,13 +154,12 @@ pub fn thread_stack_trace(
     let process_guard = HandleGuard::new(process);
 
     // Prevent confusing failures: we don't currently implement Wow64GetThreadContext.
-    if cfg!(target_arch = "x86_64") {
-        if is_wow64_process(process_guard.raw())? {
+    if cfg!(target_arch = "x86_64")
+        && is_wow64_process(process_guard.raw())? {
             return Err(ThreadStackError::Unsupported {
                 reason: "WoW64 (32-bit) targets are not supported yet for Stack".to_string(),
             });
         }
-    }
 
     // Try multiple access right combinations for protected processes.
     // Some targets (e.g., Chrome sandbox) deny THREAD_GET_CONTEXT but allow limited query.
@@ -175,11 +178,13 @@ pub fn thread_stack_trace(
     let mut _last_open_error = None;
 
     for desired in access_attempts.iter() {
+        // SAFETY: OpenThread is called with valid TID and access rights; error handling checks result
         let thread = unsafe { OpenThread(*desired, false, tid) };
         if let Ok(handle) = thread {
             thread_guard = Some(HandleGuard::new(handle));
             break;
         } else {
+            // SAFETY: GetLastError retrieves the thread-local error code, which is always safe
             _last_open_error = Some(unsafe { GetLastError() }.0);
         }
     }
@@ -190,6 +195,7 @@ pub fn thread_stack_trace(
 
     // Best-effort suspend. Some protected processes may deny this, but we can try
     // capturing context without suspension (less reliable but sometimes works).
+    // SAFETY: SuspendThread is called with a valid thread handle to freeze the thread for safe stack walking
     let prev = unsafe { SuspendThread(thread_guard.raw()) };
     let did_suspend = prev != u32::MAX;
 
@@ -210,13 +216,16 @@ pub fn thread_stack_trace(
     #[cfg(target_arch = "x86")]
     const CONTEXT_FULL_FLAGS: u32 = 0x0001_0007;
 
+    // SAFETY: mem::zeroed is safe for CONTEXT, which is a POD struct used by Windows APIs
     let mut context: windows::Win32::System::Diagnostics::Debug::CONTEXT = unsafe { mem::zeroed() };
 
     // Try with minimal flags first, then fall back to more complete context
     let mut got_context = false;
     for flags in [CONTEXT_MIN_FLAGS, CONTEXT_FULL_FLAGS] {
+        // SAFETY: mem::zeroed is safe for CONTEXT, which is a POD struct used by Windows APIs
         context = unsafe { mem::zeroed() };
         context.ContextFlags = CONTEXT_FLAGS(flags);
+        // SAFETY: GetThreadContext is called with a valid thread handle and properly initialized context structure
         if unsafe { GetThreadContext(thread_guard.raw(), &mut context) }.is_ok() {
             got_context = true;
             break;
@@ -231,6 +240,7 @@ pub fn thread_stack_trace(
     let lock = DBGHELP_LOCK.get_or_init(|| Mutex::new(()));
     let _dbghelp_guard = lock.lock().expect("dbghelp lock poisoned");
 
+    // SAFETY: SymSetOptions, SymInitialize, and other Sym* APIs are called with valid handles; dbghelp usage is serialized via mutex
     unsafe {
         SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS);
         // `invade_process = true` loads module list for symbol resolution.
@@ -239,6 +249,7 @@ pub fn thread_stack_trace(
     }
 
     let mut out = String::new();
+    // SAFETY: mem::zeroed is safe for STACKFRAME64, which is a POD struct used by dbghelp APIs
     let mut frame: STACKFRAME64 = unsafe { mem::zeroed() };
 
     #[cfg(target_arch = "x86_64")]
@@ -273,6 +284,7 @@ pub fn thread_stack_trace(
         let machine: u32 = 0x8664;
 
         for idx in 0..max_frames {
+            // SAFETY: StackWalk64 is called with valid handles, context structure, and callback functions
             let ok = unsafe {
                 StackWalk64(
                     machine,
@@ -296,11 +308,13 @@ pub fn thread_stack_trace(
                 break;
             }
 
+            // SAFETY: format_frame is called with a valid process handle and instruction pointer from stack walk
             let line = unsafe { format_frame(process_guard.raw(), ip) };
             out.push_str(&format!("#{idx:02} {line}\n"));
         }
     }
 
+    // SAFETY: SymCleanup is called with a valid process handle to clean up debug symbols
     unsafe {
         let _ = SymCleanup(process_guard.raw());
     }

@@ -27,6 +27,7 @@ use windows::Win32::System::Threading::{
 /// All handles are properly closed before returning.
 pub fn inspect_process_token(pid: u32) -> TokenInfo {
     // Try to open the process
+    // SAFETY: OpenProcess is called with a valid PID and PROCESS_QUERY_LIMITED_INFORMATION access rights.
     let process_handle = match unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }
     {
         Ok(handle) => handle,
@@ -43,6 +44,7 @@ pub fn inspect_process_token(pid: u32) -> TokenInfo {
 
     // Try to open the process token
     let mut token_handle = HANDLE::default();
+    // SAFETY: OpenProcessToken is called with a valid process handle and TOKEN_QUERY access rights.
     if unsafe { OpenProcessToken(process_handle, TOKEN_QUERY, &mut token_handle) }.is_err() {
         return TokenInfo {
             error: Some(format!(
@@ -100,11 +102,13 @@ fn get_token_user(token: HANDLE) -> Option<String> {
 
     // Query TOKEN_USER size
     let mut required_size = 0u32;
+    // SAFETY: GetTokenInformation size query with valid token handle
     let _ = unsafe { GetTokenInformation(token, TOKEN_USER_CLASS, None, 0, &mut required_size) };
     if required_size == 0 {
         return None;
     }
     let mut buffer = vec![0u8; required_size as usize];
+    // SAFETY: GetTokenInformation with valid token handle and properly sized buffer
     if unsafe {
         GetTokenInformation(
             token,
@@ -129,6 +133,7 @@ fn get_token_user(token: HANDLE) -> Option<String> {
     let mut name_len = name.len() as u32;
     let mut domain_len = domain.len() as u32;
     let mut sid_type = SID_NAME_USE(0);
+    // SAFETY: LookupAccountSidW is called with a valid SID from GetTokenInformation, and properly sized buffers.
     let lookup_result = unsafe {
         LookupAccountSidW(
             None,
@@ -183,6 +188,7 @@ fn get_token_integrity(token: HANDLE) -> Option<String> {
 
     // Query TOKEN_MANDATORY_LABEL size
     let mut required_size = 0u32;
+    // SAFETY: GetTokenInformation size query with valid token handle
     let _ = unsafe {
         GetTokenInformation(
             token,
@@ -196,6 +202,7 @@ fn get_token_integrity(token: HANDLE) -> Option<String> {
         return None;
     }
     let mut buffer = vec![0u8; required_size as usize];
+    // SAFETY: GetTokenInformation with valid token handle and properly sized buffer
     if unsafe {
         GetTokenInformation(
             token,
@@ -216,6 +223,7 @@ fn get_token_integrity(token: HANDLE) -> Option<String> {
     let sid = label.Label.Sid;
 
     // Parse last subauthority RID using Win32 helpers
+    // SAFETY: SID pointer from GetTokenInformation is valid. GetSidSubAuthorityCount and GetSidSubAuthority are safe for valid SIDs.
     unsafe {
         let count = windows::Win32::Security::GetSidSubAuthorityCount(sid);
         if count.is_null() || *count == 0 {
@@ -244,6 +252,7 @@ fn get_token_elevation(token: HANDLE) -> Option<bool> {
     let mut elevation = TOKEN_ELEVATION::default();
     let mut required_size = std::mem::size_of::<TOKEN_ELEVATION>() as u32;
 
+    // SAFETY: GetTokenInformation is called with a valid token handle and properly sized buffer for TOKEN_ELEVATION.
     if unsafe {
         GetTokenInformation(
             token,
@@ -266,6 +275,7 @@ fn get_token_is_app_container(token: HANDLE) -> Option<bool> {
     let mut is_app_container = 0u32;
     let mut required_size = std::mem::size_of::<u32>() as u32;
 
+    // SAFETY: GetTokenInformation is called with a valid token handle and properly sized buffer for u32.
     if unsafe {
         GetTokenInformation(
             token,
@@ -287,6 +297,7 @@ fn get_token_is_app_container(token: HANDLE) -> Option<bool> {
 fn get_token_privileges(token: HANDLE) -> Vec<PrivilegeInfo> {
     // First call to get required buffer size
     let mut required_size = 0u32;
+    // SAFETY: GetTokenInformation is called with a valid token handle. Passing None with size 0 is the documented pattern for querying buffer size.
     let _ = unsafe {
         GetTokenInformation(token, TOKEN_PRIVILEGES_CLASS, None, 0, &mut required_size)
         // TokenPrivileges
@@ -298,6 +309,7 @@ fn get_token_privileges(token: HANDLE) -> Vec<PrivilegeInfo> {
 
     // Allocate buffer and get the data
     let mut buffer = vec![0u8; required_size as usize];
+    // SAFETY: GetTokenInformation is called with a valid token handle and properly allocated buffer of required_size bytes.
     if unsafe {
         GetTokenInformation(
             token,
@@ -347,6 +359,7 @@ fn luid_to_privilege_name(luid: windows::Win32::Foundation::LUID) -> Option<Stri
 
     // First call to get required buffer size
     let mut required_size = 0u32;
+    // SAFETY: LookupPrivilegeNameW is called with a valid LUID. Passing null buffer with size query is the documented pattern.
     let _ = unsafe { LookupPrivilegeNameW(None, &luid, PWSTR::null(), &mut required_size) };
 
     if required_size == 0 {
@@ -355,6 +368,7 @@ fn luid_to_privilege_name(luid: windows::Win32::Foundation::LUID) -> Option<Stri
 
     // Allocate buffer and get the name
     let mut buffer = vec![0u16; required_size as usize];
+    // SAFETY: LookupPrivilegeNameW is called with a valid LUID and properly allocated buffer of required_size elements.
     if unsafe { LookupPrivilegeNameW(None, &luid, PWSTR(buffer.as_mut_ptr()), &mut required_size) }
         .is_ok()
     {

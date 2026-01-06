@@ -68,8 +68,8 @@ impl ScHandleGuard {
 impl Drop for ScHandleGuard {
     fn drop(&mut self) {
         if !self.0.is_invalid() {
+            // SAFETY: `self.0` is a live `SC_HANDLE` owned by this guard.
             unsafe {
-                // SAFETY: `self.0` is a live `SC_HANDLE` owned by this guard.
                 CloseServiceHandle(self.0).ok();
             }
         }

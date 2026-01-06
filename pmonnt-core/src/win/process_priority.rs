@@ -133,6 +133,7 @@ pub fn get_priority_class(pid: u32) -> Result<PriorityClass, PriorityError> {
     let handle = open_process_query(pid)?;
     let _guard = HandleGuard::new(handle);
 
+    // SAFETY: GetPriorityClass is called with valid process handle
     let value = unsafe { GetPriorityClass(handle) };
     if value == 0 {
         return Err(map_last_error(pid));
@@ -148,6 +149,7 @@ pub fn get_affinity(pid: u32) -> Result<AffinityInfo, PriorityError> {
     let mut process_mask: usize = 0;
     let mut system_mask: usize = 0;
 
+    // SAFETY: GetProcessAffinityMask is called with valid process handle and properly initialized output pointers
     if unsafe { GetProcessAffinityMask(handle, &mut process_mask, &mut system_mask) }.is_err() {
         return Err(map_last_error(pid));
     }
@@ -172,6 +174,7 @@ pub fn set_priority_class(pid: u32, priority: PriorityClass) -> Result<(), Prior
     let handle = open_process_set(pid)?;
     let _guard = HandleGuard::new(handle);
 
+    // SAFETY: SetPriorityClass is called with valid process handle and priority value
     if unsafe { SetPriorityClass(handle, priority.to_win32()) }.is_err() {
         let err = map_last_error(pid);
         if priority == PriorityClass::Realtime && matches!(err, PriorityError::AccessDenied) {
@@ -200,6 +203,7 @@ pub fn set_affinity(pid: u32, mask: u64) -> Result<(), PriorityError> {
     let handle = open_process_set(pid)?;
     let _guard = HandleGuard::new(handle);
 
+    // SAFETY: SetProcessAffinityMask is called with valid process handle and validated affinity mask
     if unsafe { SetProcessAffinityMask(handle, mask as usize) }.is_err() {
         return Err(map_last_error(pid));
     }
@@ -212,6 +216,7 @@ pub fn set_affinity(pid: u32, mask: u64) -> Result<(), PriorityError> {
 // ============================================================================
 
 fn open_process_query(pid: u32) -> Result<HANDLE, PriorityError> {
+    // SAFETY: OpenProcess is called with valid PID and appropriate access rights
     match unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) } {
         Ok(h) => Ok(h),
         Err(_) => Err(map_last_error(pid)),
@@ -219,6 +224,7 @@ fn open_process_query(pid: u32) -> Result<HANDLE, PriorityError> {
 }
 
 fn open_process_set(pid: u32) -> Result<HANDLE, PriorityError> {
+    // SAFETY: OpenProcess is called with valid PID and appropriate access rights
     match unsafe {
         OpenProcess(
             PROCESS_SET_INFORMATION | PROCESS_QUERY_LIMITED_INFORMATION,
@@ -232,6 +238,7 @@ fn open_process_set(pid: u32) -> Result<HANDLE, PriorityError> {
 }
 
 fn map_last_error(pid: u32) -> PriorityError {
+    // SAFETY: GetLastError retrieves thread-local error code set by previous Windows API call
     let code = unsafe { GetLastError() }.0;
     match WIN32_ERROR(code) {
         ERROR_ACCESS_DENIED => PriorityError::AccessDenied,

@@ -142,6 +142,15 @@ fn winverifytrust_path(path: &Path) -> Result<i32> {
         .chain(std::iter::once(0))
         .collect();
 
+    // SAFETY: WinVerifyTrust FFI call with proper pointer lifetime management:
+    // - `wide_path` is a null-terminated UTF-16 string valid for the entire unsafe block
+    // - `wide_path.as_ptr()` stored in `file_info.pcwszFilePath` remains valid during both WinVerifyTrust calls
+    // - `file_info` and `wvt_data` are stack-allocated and live for the duration of the calls
+    // - Struct sizes computed correctly with `mem::size_of`
+    // - `pFile` pointer to `file_info` is valid as both structs are in the same scope
+    // - WinVerifyTrust is called per Microsoft documentation with proper state management
+    // - Second call with STATEACTION_CLOSE properly releases resources allocated by first call
+    // - No concurrent access to these structures
     unsafe {
         let mut file_info = WintrustFileInfo {
             cbStruct: std::mem::size_of::<WintrustFileInfo>() as u32,
@@ -187,6 +196,12 @@ fn try_extract_signer_names(path: &Path) -> Option<(String, String)> {
     let mut store: HCERTSTORE = HCERTSTORE::default();
     let mut msg: *mut c_void = std::ptr::null_mut();
 
+    // SAFETY: CryptQueryObject FFI call with valid pointer arguments:
+    // - `wide_path` is a null-terminated UTF-16 string living for the entire function scope
+    // - Cast to `*const c_void` is required by the API and safe for read-only access
+    // - `store` and `msg` are valid mutable references for output parameters
+    // - API will either populate these handles or leave them null on failure
+    // - No data races as all parameters are locally owned
     let ok = unsafe {
         CryptQueryObject(
             CERT_QUERY_OBJECT_FILE,
@@ -208,6 +223,10 @@ fn try_extract_signer_names(path: &Path) -> Option<(String, String)> {
     }
 
     let mut signer_info_size: u32 = 0;
+    // SAFETY: CryptMsgGetParam size query with valid message handle:
+    // - `msg` was populated by successful CryptQueryObject call above
+    // - Passing None for buffer is the standard pattern to query required size
+    // - `signer_info_size` is a valid mutable reference for output
     let ok_size = unsafe {
         CryptMsgGetParam(
             msg as *const c_void,
@@ -218,6 +237,10 @@ fn try_extract_signer_names(path: &Path) -> Option<(String, String)> {
         )
     };
     if ok_size.is_err() || signer_info_size == 0 {
+        // SAFETY: Cleanup of resources acquired from CryptQueryObject:
+        // - `msg` null check prevents passing invalid handle to CryptMsgClose
+        // - `store` handle is valid from CryptQueryObject or default-initialized
+        // - Both cleanup functions are safe to call with their respective handle types
         unsafe {
             let _ = CryptMsgClose(if msg.is_null() {
                 None
@@ -230,6 +253,11 @@ fn try_extract_signer_names(path: &Path) -> Option<(String, String)> {
     }
 
     let mut signer_info_buf = vec![0u8; signer_info_size as usize];
+    // SAFETY: CryptMsgGetParam data retrieval with properly sized buffer:
+    // - Buffer allocated with exact size returned by previous size query
+    // - `msg` handle remains valid from CryptQueryObject
+    // - Buffer pointer valid for the duration of the call
+    // - `signer_info_size` is updated with actual bytes written
     let ok_param = unsafe {
         CryptMsgGetParam(
             msg as *const c_void,
@@ -240,6 +268,7 @@ fn try_extract_signer_names(path: &Path) -> Option<(String, String)> {
         )
     };
     if ok_param.is_err() {
+        // SAFETY: Resource cleanup on error - same safety invariants as above
         unsafe {
             let _ = CryptMsgClose(if msg.is_null() {
                 None
@@ -251,6 +280,11 @@ fn try_extract_signer_names(path: &Path) -> Option<(String, String)> {
         return None;
     }
 
+    // SAFETY: Casting buffer to CMSG_SIGNER_INFO structure:
+    // - Buffer was populated by CryptMsgGetParam with CMSG_SIGNER_INFO_PARAM
+    // - Microsoft API guarantees proper structure layout and alignment
+    // - Buffer size validated to be at least signer_info_size bytes
+    // - Reference lifetime bound to buffer lifetime (within this function)
     let signer_info = unsafe { &*(signer_info_buf.as_ptr() as *const CMSG_SIGNER_INFO) };
 
     let mut cert_info = windows::Win32::Security::Cryptography::CERT_INFO {
@@ -259,6 +293,12 @@ fn try_extract_signer_names(path: &Path) -> Option<(String, String)> {
         ..Default::default()
     };
 
+    // SAFETY: CertFindCertificateInStore with valid certificate store and search criteria:
+    // - `store` handle is valid from CryptQueryObject
+    // - `cert_info` is properly initialized with Issuer and SerialNumber from signer_info
+    // - Cast to `*const c_void` required by API for search parameter
+    // - Returns certificate context pointer or null if not found
+    // - No ownership transfer - we must free the returned certificate
     let cert = unsafe {
         CertFindCertificateInStore(
             store,
@@ -276,6 +316,10 @@ fn try_extract_signer_names(path: &Path) -> Option<(String, String)> {
         let cert_ptr = cert as *const windows::Win32::Security::Cryptography::CERT_CONTEXT;
         let subject = cert_get_name_string(cert_ptr, 0);
         let issuer = cert_get_name_string(cert_ptr, CERT_NAME_ISSUER_FLAG);
+        // SAFETY: Freeing certificate context obtained from CertFindCertificateInStore:
+        // - `cert` pointer is non-null (verified above) and valid
+        // - Certificate context was allocated by Windows and must be freed
+        // - After this call, `cert` pointer must not be used
         unsafe {
             let _ = CertFreeCertificateContext(Some(
                 cert as *const windows::Win32::Security::Cryptography::CERT_CONTEXT,
@@ -287,6 +331,11 @@ fn try_extract_signer_names(path: &Path) -> Option<(String, String)> {
         }
     };
 
+    // SAFETY: Final cleanup of cryptography handles:
+    // - `msg` null check prevents invalid handle usage
+    // - `store` handle valid from CryptQueryObject or default
+    // - Both cleanup functions safe to call with valid or default handles
+    // - Must be called to prevent resource leaks
     unsafe {
         let _ = CryptMsgClose(if msg.is_null() {
             None
@@ -303,12 +352,21 @@ fn cert_get_name_string(
     cert: *const windows::Win32::Security::Cryptography::CERT_CONTEXT,
     flags: u32,
 ) -> Option<String> {
+    // SAFETY: CertGetNameStringW size query with valid certificate context:
+    // - `cert` pointer must be valid CERT_CONTEXT from CertFindCertificateInStore
+    // - Passing None for buffer is standard pattern to query required string length
+    // - Returns character count needed including null terminator
     let len = unsafe { CertGetNameStringW(cert, CERT_NAME_SIMPLE_DISPLAY_TYPE, flags, None, None) };
     if len <= 1 {
         return None;
     }
 
     let mut buf = vec![0u16; len as usize];
+    // SAFETY: CertGetNameStringW data retrieval with properly sized buffer:
+    // - Buffer allocated with exact length from previous size query
+    // - `cert` pointer remains valid (same context)
+    // - Buffer will be populated with null-terminated UTF-16 string
+    // - Returns actual characters written including null terminator
     let len2 = unsafe {
         CertGetNameStringW(
             cert,
@@ -341,6 +399,11 @@ fn has_embedded_signature(path: &Path) -> bool {
     let mut store: HCERTSTORE = HCERTSTORE::default();
     let mut msg: *mut c_void = std::ptr::null_mut();
 
+    // SAFETY: CryptQueryObject call to check for embedded signature:
+    // - `wide_path` is null-terminated UTF-16 string valid for the call
+    // - Cast to `*const c_void` required by API for file path
+    // - `store` and `msg` are valid output parameters
+    // - Only checking for signature presence, not extracting data
     let ok = unsafe {
         CryptQueryObject(
             CERT_QUERY_OBJECT_FILE,
@@ -358,6 +421,10 @@ fn has_embedded_signature(path: &Path) -> bool {
     };
 
     if ok.is_ok() {
+        // SAFETY: Cleanup of acquired handles after successful query:
+        // - `msg` null check prevents invalid handle usage
+        // - `store` handle valid from CryptQueryObject
+        // - Both resources must be freed to prevent leaks
         unsafe {
             let _ = CryptMsgClose(if msg.is_null() {
                 None

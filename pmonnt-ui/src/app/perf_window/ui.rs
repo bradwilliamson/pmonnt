@@ -78,7 +78,7 @@ impl PMonNTApp {
             let now = Instant::now();
             let should_sample = w
                 .last_sample
-                .map_or(true, |last| now.duration_since(last).as_secs_f64() >= 1.0);
+                .is_none_or(|last| now.duration_since(last).as_secs_f64() >= 1.0);
             if should_sample {
                 let elapsed = w
                     .last_sample

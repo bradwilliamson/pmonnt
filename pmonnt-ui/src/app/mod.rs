@@ -289,9 +289,7 @@ impl PMonNTApp {
     }
 
     pub(crate) fn current_status_line(&self) -> Option<&str> {
-        let Some((msg, at)) = self.status_line.as_ref() else {
-            return None;
-        };
+        let (msg, at) = self.status_line.as_ref()?;
         if at.elapsed() <= Duration::from_secs(10) {
             Some(msg.as_str())
         } else {
@@ -847,10 +845,6 @@ mod perf;
 pub(crate) mod perf_window;
 mod state;
 mod update;
-
-// Re-export for tests
-#[cfg(test)]
-pub use state::{parse_ui_layout_config, serialize_ui_layout_config, UiLayoutConfig};
 
 #[cfg(test)]
 mod tests;

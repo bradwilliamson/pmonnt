@@ -47,6 +47,7 @@ impl HandleGuard {
 
 impl Drop for HandleGuard {
     fn drop(&mut self) {
+        // SAFETY: Valid HANDLE checked before calling CloseHandle
         unsafe {
             // Be defensive: don't close NULL or INVALID_HANDLE_VALUE.
             if !self.0.is_invalid() && !self.0 .0.is_null() {
@@ -58,6 +59,7 @@ impl Drop for HandleGuard {
 
 /// Check if the current process is running with administrative privileges
 pub fn is_app_elevated() -> bool {
+    // SAFETY: IsUserAnAdmin takes no parameters and is safe to call
     unsafe { windows::Win32::UI::Shell::IsUserAnAdmin().as_bool() }
 }
 
@@ -71,6 +73,7 @@ pub fn enable_debug_privilege() -> windows::core::Result<()> {
     };
     use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
+    // SAFETY: GetCurrentProcess returns valid handle, token_handle is valid mutable reference
     unsafe {
         let mut token_handle = HANDLE::default();
         if OpenProcessToken(
@@ -132,6 +135,7 @@ pub fn get_process_protection(pid: u32) -> (bool, Option<String>) {
     /* CloseHandle not needed here; HandleGuard used instead */
 
     // Try to open with minimal rights
+    // SAFETY: OpenProcess called with valid PID and access rights
     let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) };
 
     let Ok(handle) = handle else {
@@ -157,6 +161,7 @@ pub fn get_process_protection(pid: u32) -> (bool, Option<String>) {
     };
     let mut ret_len = 0u32;
 
+    // SAFETY: Valid process handle and properly sized buffer for PS_PROTECTION
     let status = unsafe {
         NtQueryInformationProcess(
             handle_guard.raw(),

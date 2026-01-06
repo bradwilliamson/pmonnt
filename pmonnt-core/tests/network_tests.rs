@@ -4,8 +4,6 @@ use pmonnt_core::network::{Protocol, TcpState};
 
 // Test tcp_state_from_mib mapping
 mod tcp_state_mapping {
-    use super::*;
-
     // Helper to access private function - we'll test via public API instead
     // Since tcp_state_from_mib is private, we test it indirectly through integration tests
     // For now, document expected behavior:
@@ -111,8 +109,8 @@ fn test_connection_local_address_is_valid() {
         for conn in all_conns {
             // Just verify we can access the address
             let _ = conn.local_address;
-            // Local port should be valid (0-65535)
-            assert!(conn.local_port <= 65535);
+            // Local port is u16, always valid (0-65535)
+            let _ = conn.local_port;
         }
     }
 }

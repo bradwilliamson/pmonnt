@@ -498,6 +498,7 @@ fn opt_bool_label(v: Option<bool>) -> String {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_security_tab(
     ui: &mut egui::Ui,
     pid: u32,
@@ -561,7 +562,7 @@ fn render_security_tab(
     let cached = cached.unwrap();
     match &cached.result {
         Err(e) => {
-            ui.colored_label(egui::Color32::LIGHT_RED, format!("{e}"));
+            ui.colored_label(egui::Color32::LIGHT_RED, e.to_string());
             ui.label(
                 egui::RichText::new(
                     "Tip: normal processes should work without admin; protected/system processes may deny token query.",
@@ -1668,7 +1669,7 @@ fn perf_chip(
 #[cfg(test)]
 thread_local! {
     static TEST_CARD_RECTS: std::cell::RefCell<Vec<(&'static str, egui::Rect)>> =
-        std::cell::RefCell::new(Vec::new());
+        const { std::cell::RefCell::new(Vec::new()) };
 }
 
 #[cfg(test)]
@@ -1806,6 +1807,7 @@ fn render_row(ui: &mut egui::Ui, label: &str, value: ValueCell, kind: MetricKind
 #[allow(dead_code)]
 fn render_cpu_card(ui: &mut egui::Ui, stats: &PerfStats, pid: u32) {
     ui.push_id("perf_card_cpu", |ui| {
+        #[cfg_attr(not(test), allow(unused_variables))]
         let response = egui::Frame::group(ui.style()).show(ui, |ui| {
             ui.heading("CPU");
 
@@ -1896,7 +1898,7 @@ fn render_cpu_card(ui: &mut egui::Ui, stats: &PerfStats, pid: u32) {
                         ui,
                         "Cycles Δ:",
                         format_compact_optional(
-                            stats.cycles_delta.map(|v| v as u64),
+                            stats.cycles_delta,
                             NA_REASON_SAMPLING,
                         ),
                         MetricKind::Badge,
@@ -1913,6 +1915,7 @@ fn render_cpu_card(ui: &mut egui::Ui, stats: &PerfStats, pid: u32) {
 #[allow(dead_code)]
 fn render_memory_card(ui: &mut egui::Ui, stats: &PerfStats, pid: u32) {
     ui.push_id("perf_card_memory", |ui| {
+        #[cfg_attr(not(test), allow(unused_variables))]
         let response = egui::Frame::group(ui.style()).show(ui, |ui| {
             ui.heading("Memory");
 
@@ -2061,6 +2064,7 @@ fn render_memory_card(ui: &mut egui::Ui, stats: &PerfStats, pid: u32) {
 #[allow(dead_code)]
 fn render_io_card(ui: &mut egui::Ui, stats: &PerfStats, pid: u32) {
     ui.push_id("perf_card_io", |ui| {
+        #[cfg_attr(not(test), allow(unused_variables))]
         let response = egui::Frame::group(ui.style()).show(ui, |ui| {
             ui.heading("I/O");
 
@@ -2072,7 +2076,7 @@ fn render_io_card(ui: &mut egui::Ui, stats: &PerfStats, pid: u32) {
                         render_row(
                             ui,
                             "Reads:",
-                            format_count(stats.io_reads.map(|v| v as u64)),
+                            format_count(stats.io_reads),
                             MetricKind::Normal,
                         );
                         render_row(
@@ -2080,7 +2084,7 @@ fn render_io_card(ui: &mut egui::Ui, stats: &PerfStats, pid: u32) {
                             "Read Δ:",
                             format_optional(
                                 stats.io_read_delta,
-                                |v| format_count_with_commas(v as u64),
+                                format_count_with_commas,
                                 NA_REASON_SAMPLING,
                             ),
                             MetricKind::Badge,
@@ -2090,7 +2094,7 @@ fn render_io_card(ui: &mut egui::Ui, stats: &PerfStats, pid: u32) {
                             "Read Bytes Δ:",
                             format_optional(
                                 stats.io_read_bytes_delta,
-                                |v| format_bytes_value(v),
+                                format_bytes_value,
                                 NA_REASON_SAMPLING,
                             ),
                             MetricKind::Badge,
@@ -2099,7 +2103,7 @@ fn render_io_card(ui: &mut egui::Ui, stats: &PerfStats, pid: u32) {
                         render_row(
                             ui,
                             "Writes:",
-                            format_count(stats.io_writes.map(|v| v as u64)),
+                            format_count(stats.io_writes),
                             MetricKind::Normal,
                         );
                         render_row(
@@ -2107,7 +2111,7 @@ fn render_io_card(ui: &mut egui::Ui, stats: &PerfStats, pid: u32) {
                             "Write Δ:",
                             format_optional(
                                 stats.io_write_delta,
-                                |v| format_count_with_commas(v as u64),
+                                format_count_with_commas,
                                 NA_REASON_SAMPLING,
                             ),
                             MetricKind::Badge,
@@ -2117,7 +2121,7 @@ fn render_io_card(ui: &mut egui::Ui, stats: &PerfStats, pid: u32) {
                             "Write Bytes Δ:",
                             format_optional(
                                 stats.io_write_bytes_delta,
-                                |v| format_bytes_value(v),
+                                format_bytes_value,
                                 NA_REASON_SAMPLING,
                             ),
                             MetricKind::Badge,
@@ -2126,7 +2130,7 @@ fn render_io_card(ui: &mut egui::Ui, stats: &PerfStats, pid: u32) {
                         render_row(
                             ui,
                             "Other:",
-                            format_count(stats.io_other.map(|v| v as u64)),
+                            format_count(stats.io_other),
                             MetricKind::Normal,
                         );
                         render_row(
@@ -2134,7 +2138,7 @@ fn render_io_card(ui: &mut egui::Ui, stats: &PerfStats, pid: u32) {
                             "Other Δ:",
                             format_optional(
                                 stats.io_other_delta,
-                                |v| format_count_with_commas(v as u64),
+                                format_count_with_commas,
                                 NA_REASON_SAMPLING,
                             ),
                             MetricKind::Badge,
@@ -2144,7 +2148,7 @@ fn render_io_card(ui: &mut egui::Ui, stats: &PerfStats, pid: u32) {
                             "Other Bytes Δ:",
                             format_optional(
                                 stats.io_other_bytes_delta,
-                                |v| format_bytes_value(v),
+                                format_bytes_value,
                                 NA_REASON_SAMPLING,
                             ),
                             MetricKind::Badge,
@@ -2266,6 +2270,7 @@ fn render_io_card(ui: &mut egui::Ui, stats: &PerfStats, pid: u32) {
 #[allow(dead_code)]
 fn render_handles_card(ui: &mut egui::Ui, stats: &PerfStats, pid: u32) {
     ui.push_id("perf_card_handles", |ui| {
+        #[cfg_attr(not(test), allow(unused_variables))]
         let response = egui::Frame::group(ui.style()).show(ui, |ui| {
             ui.heading("Handles");
 

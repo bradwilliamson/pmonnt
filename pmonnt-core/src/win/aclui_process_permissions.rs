@@ -415,6 +415,7 @@ fn open_process_for_permissions(
         ProcessPermissionsAccess::ReadOnly
     };
 
+    // SAFETY: Valid PID with proper access rights; error handling via Result
     let h = unsafe { OpenProcess(PROCESS_ACCESS_RIGHTS(desired), false, pid) }
         .map_err(|e| map_error("OpenProcess", e))?;
     Ok((HandleGuard::new(h), access))
@@ -474,6 +475,7 @@ impl ProcessSecurityInformation {
 
 impl ISecurityInformation_Impl for ProcessSecurityInformation_Impl {
     fn GetObjectInformation(&self, pobjectinfo: *mut SI_OBJECT_INFO) -> windows::core::Result<()> {
+        // SAFETY: ISecurityInformation callback; pobjectinfo validated before dereferencing
         unsafe {
             if pobjectinfo.is_null() {
                 return Err(WinError::from_win32());
@@ -503,6 +505,7 @@ impl ISecurityInformation_Impl for ProcessSecurityInformation_Impl {
         ppsecuritydescriptor: *mut PSECURITY_DESCRIPTOR,
         _fdefault: BOOL,
     ) -> windows::core::Result<()> {
+        // SAFETY: ISecurityInformation callback with valid handle; ppsecuritydescriptor validated
         unsafe {
             if ppsecuritydescriptor.is_null() {
                 return Err(WinError::from_win32());
@@ -536,6 +539,7 @@ impl ISecurityInformation_Impl for ProcessSecurityInformation_Impl {
         securityinformation: OBJECT_SECURITY_INFORMATION,
         psecuritydescriptor: PSECURITY_DESCRIPTOR,
     ) -> windows::core::Result<()> {
+        // SAFETY: ISecurityInformation callback with valid handle and security descriptor from system
         unsafe {
             // We only support updating the DACL.
             if (securityinformation & DACL_SECURITY_INFORMATION) == OBJECT_SECURITY_INFORMATION(0) {
@@ -582,6 +586,7 @@ impl ISecurityInformation_Impl for ProcessSecurityInformation_Impl {
         pcaccesses: *mut u32,
         pidefaultaccess: *mut u32,
     ) -> windows::core::Result<()> {
+        // SAFETY: ISecurityInformation callback; out-parameters validated before dereferencing
         unsafe {
             if ppaccess.is_null() || pcaccesses.is_null() || pidefaultaccess.is_null() {
                 return Err(WinError::from_win32());
@@ -617,6 +622,7 @@ impl ISecurityInformation_Impl for ProcessSecurityInformation_Impl {
         _paceflags: *mut u8,
         pmask: *mut u32,
     ) -> windows::core::Result<()> {
+        // SAFETY: ISecurityInformation callback; pmask validated before dereferencing
         unsafe {
             if pmask.is_null() {
                 return Ok(());
@@ -639,6 +645,7 @@ impl ISecurityInformation_Impl for ProcessSecurityInformation_Impl {
         ppinherittypes: *mut *mut SI_INHERIT_TYPE,
         pcinherittypes: *mut u32,
     ) -> windows::core::Result<()> {
+        // SAFETY: ISecurityInformation callback; pointers validated before dereferencing
         unsafe {
             if !ppinherittypes.is_null() {
                 *ppinherittypes = std::ptr::null_mut();
@@ -679,6 +686,7 @@ pub fn open_process_permissions_dialog(
         ProcessPermissionsAccess::Denied => return Err(PermissionsError::AccessDenied),
     };
 
+    // SAFETY: Standard COM initialization with proper cleanup via RAII guard
     unsafe {
         CoInitializeEx(None, COINIT_APARTMENTTHREADED)
             .ok()
@@ -688,6 +696,7 @@ pub fn open_process_permissions_dialog(
     struct ComGuard;
     impl Drop for ComGuard {
         fn drop(&mut self) {
+            // SAFETY: Paired with CoInitializeEx; called exactly once per initialization
             unsafe { CoUninitialize() };
         }
     }
@@ -696,6 +705,7 @@ pub fn open_process_permissions_dialog(
     let sec_info: ISecurityInformation =
         ProcessSecurityInformation::new(handle, object_name, access).into();
 
+    // SAFETY: Valid HWND and ISecurityInformation interface pointer from successful creation
     unsafe {
         EditSecurity(HWND(owner_hwnd as _), &sec_info).map_err(|e| map_error("EditSecurity", e))?;
     }

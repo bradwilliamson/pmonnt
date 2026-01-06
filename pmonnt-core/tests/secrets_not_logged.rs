@@ -112,7 +112,7 @@ fn vt_lookup_does_not_log_api_key_value() {
     let reply_body = include_str!("data/vt_hit_clean.json");
     let reply = format!(
         "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-        reply_body.as_bytes().len(),
+        reply_body.len(),
         reply_body
     );
 
@@ -163,7 +163,7 @@ fn mb_get_info_does_not_log_api_key_value() {
     let reply_body = "unauthorized";
     let reply = format!(
         "HTTP/1.1 401 Unauthorized\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-        reply_body.as_bytes().len(),
+        reply_body.len(),
         reply_body
     );
     let server = spawn_one_shot_http_server(listener, reply);
@@ -215,7 +215,7 @@ fn tf_search_hash_does_not_log_api_key_value() {
     let reply_body = r#"{"query_status":"error","data":"not allowed"}"#;
     let reply = format!(
         "HTTP/1.1 500 Internal Server Error\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-        reply_body.as_bytes().len(),
+        reply_body.len(),
         reply_body
     );
     let server = spawn_one_shot_http_server(listener, reply);

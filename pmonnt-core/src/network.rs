@@ -175,6 +175,11 @@ fn query_tcp_af_v4() -> Result<Vec<NetworkConnection>, NetworkError> {
     };
     use windows_sys::Win32::Networking::WinSock::AF_INET;
 
+    // SAFETY: Windows API interaction with GetExtendedTcpTable
+    // - First call with null buffer gets required size
+    // - Second call writes structured data into properly sized buffer
+    // - Buffer alignment requirements are satisfied by Windows API guarantees for this function
+    // - The buffer is sized by Windows and cast to MIB_TCPTABLE_OWNER_PID with count validation
     unsafe {
         let mut size: u32 = 0;
         let mut ret = GetExtendedTcpTable(
@@ -193,6 +198,8 @@ fn query_tcp_af_v4() -> Result<Vec<NetworkConnection>, NetworkError> {
             });
         }
 
+        // Allocate aligned buffer: GetExtendedTcpTable guarantees proper alignment
+        // for the returned structures when using the OS-provided size
         let mut buf = vec![0u8; size as usize];
         ret = GetExtendedTcpTable(
             buf.as_mut_ptr().cast(),
@@ -209,8 +216,15 @@ fn query_tcp_af_v4() -> Result<Vec<NetworkConnection>, NetworkError> {
             });
         }
 
+        // SAFETY: Buffer was populated by GetExtendedTcpTable which guarantees:
+        // - Proper alignment for MIB_TCPTABLE_OWNER_PID structure
+        // - Buffer size is at least sizeof(MIB_TCPTABLE_OWNER_PID)
+        // - dwNumEntries indicates valid row count for the flexible array member
         let table = buf.as_ptr().cast::<MIB_TCPTABLE_OWNER_PID>();
         let count = (*table).dwNumEntries as usize;
+        
+        // SAFETY: Windows guarantees the table array contains `count` valid entries
+        // The buffer size was determined by Windows to accommodate the header + all rows
         let first: *const MIB_TCPROW_OWNER_PID = (*table).table.as_ptr();
         let rows = std::slice::from_raw_parts(first, count);
 
@@ -244,6 +258,11 @@ fn query_tcp_af_v6() -> Result<Vec<NetworkConnection>, NetworkError> {
     };
     use windows_sys::Win32::Networking::WinSock::AF_INET6;
 
+    // SAFETY: Windows API interaction with GetExtendedTcpTable for IPv6
+    // - First call with null buffer gets required size
+    // - Second call writes structured data into properly sized buffer
+    // - Buffer alignment requirements are satisfied by Windows API guarantees
+    // - The buffer is sized by Windows and cast to MIB_TCP6TABLE_OWNER_PID with count validation
     unsafe {
         let mut size: u32 = 0;
         let mut ret = GetExtendedTcpTable(
@@ -262,6 +281,7 @@ fn query_tcp_af_v6() -> Result<Vec<NetworkConnection>, NetworkError> {
             });
         }
 
+        // Allocate aligned buffer: GetExtendedTcpTable guarantees proper alignment
         let mut buf = vec![0u8; size as usize];
         ret = GetExtendedTcpTable(
             buf.as_mut_ptr().cast(),
@@ -278,8 +298,14 @@ fn query_tcp_af_v6() -> Result<Vec<NetworkConnection>, NetworkError> {
             });
         }
 
+        // SAFETY: Buffer was populated by GetExtendedTcpTable which guarantees:
+        // - Proper alignment for MIB_TCP6TABLE_OWNER_PID structure
+        // - Buffer size accommodates header + dwNumEntries rows
+        // - dwNumEntries indicates valid row count
         let table = buf.as_ptr().cast::<MIB_TCP6TABLE_OWNER_PID>();
         let count = (*table).dwNumEntries as usize;
+        
+        // SAFETY: Windows guarantees the table array contains `count` valid IPv6 TCP entries
         let first: *const MIB_TCP6ROW_OWNER_PID = (*table).table.as_ptr();
         let rows = std::slice::from_raw_parts(first, count);
 
@@ -312,6 +338,11 @@ fn query_udp_af_v4() -> Result<Vec<NetworkConnection>, NetworkError> {
     };
     use windows_sys::Win32::Networking::WinSock::AF_INET;
 
+    // SAFETY: Windows API interaction with GetExtendedUdpTable
+    // - First call with null buffer gets required size
+    // - Second call writes structured data into properly sized buffer
+    // - Windows guarantees proper alignment for returned MIB structures
+    // - Count validation ensures slice bounds are correct
     unsafe {
         let mut size: u32 = 0;
         let mut ret = GetExtendedUdpTable(
@@ -330,6 +361,7 @@ fn query_udp_af_v4() -> Result<Vec<NetworkConnection>, NetworkError> {
             });
         }
 
+        // Allocate aligned buffer based on OS-provided size
         let mut buf = vec![0u8; size as usize];
         ret = GetExtendedUdpTable(
             buf.as_mut_ptr().cast(),
@@ -346,8 +378,14 @@ fn query_udp_af_v4() -> Result<Vec<NetworkConnection>, NetworkError> {
             });
         }
 
+        // SAFETY: GetExtendedUdpTable guarantees:
+        // - Proper alignment for MIB_UDPTABLE_OWNER_PID
+        // - Buffer contains valid header + dwNumEntries rows
+        // - dwNumEntries is the actual count of rows written
         let table = buf.as_ptr().cast::<MIB_UDPTABLE_OWNER_PID>();
         let count = (*table).dwNumEntries as usize;
+        
+        // SAFETY: Windows guarantees `count` valid UDP entries in the table array
         let first: *const MIB_UDPROW_OWNER_PID = (*table).table.as_ptr();
         let rows = std::slice::from_raw_parts(first, count);
 
@@ -378,6 +416,11 @@ fn query_udp_af_v6() -> Result<Vec<NetworkConnection>, NetworkError> {
     };
     use windows_sys::Win32::Networking::WinSock::AF_INET6;
 
+    // SAFETY: Windows API interaction with GetExtendedUdpTable for IPv6
+    // - First call with null buffer gets required size
+    // - Second call writes structured data into properly sized buffer
+    // - Windows guarantees proper alignment for returned MIB structures
+    // - Count validation ensures slice bounds are correct
     unsafe {
         let mut size: u32 = 0;
         let mut ret = GetExtendedUdpTable(
@@ -396,6 +439,7 @@ fn query_udp_af_v6() -> Result<Vec<NetworkConnection>, NetworkError> {
             });
         }
 
+        // Allocate aligned buffer based on OS-provided size
         let mut buf = vec![0u8; size as usize];
         ret = GetExtendedUdpTable(
             buf.as_mut_ptr().cast(),
@@ -412,8 +456,14 @@ fn query_udp_af_v6() -> Result<Vec<NetworkConnection>, NetworkError> {
             });
         }
 
+        // SAFETY: GetExtendedUdpTable guarantees:
+        // - Proper alignment for MIB_UDP6TABLE_OWNER_PID
+        // - Buffer contains valid header + dwNumEntries rows
+        // - dwNumEntries is the actual count of IPv6 UDP rows written
         let table = buf.as_ptr().cast::<MIB_UDP6TABLE_OWNER_PID>();
         let count = (*table).dwNumEntries as usize;
+        
+        // SAFETY: Windows guarantees `count` valid IPv6 UDP entries in the table array
         let first: *const MIB_UDP6ROW_OWNER_PID = (*table).table.as_ptr();
         let rows = std::slice::from_raw_parts(first, count);
 

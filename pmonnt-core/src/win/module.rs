@@ -48,7 +48,7 @@ extern "system" {
     fn K32GetModuleInformation(
         hProcess: isize,
         hModule: usize,
-        lpmodinfo: *mut MODULEINFO,
+        lpmodinfo: *mut Moduleinfo,
         cb: u32,
     ) -> i32;
 
@@ -65,7 +65,7 @@ const PROCESS_BASIC_INFORMATION_CLASS: u32 = 0;
 
 #[repr(C)]
 #[allow(non_snake_case)]
-struct MODULEINFO {
+struct Moduleinfo {
     lpBaseOfDll: *mut std::ffi::c_void,
     SizeOfImage: u32,
     EntryPoint: *mut std::ffi::c_void,
@@ -266,6 +266,7 @@ pub fn list_modules(pid: u32) -> Result<Vec<ModuleInfo>, PmonntError> {
 fn list_modules_toolhelp(pid: u32) -> Result<Vec<ModuleInfo>, PmonntError> {
     let mut modules = Vec::new();
 
+    // SAFETY: CreateToolhelp32Snapshot, Module32FirstW, Module32NextW FFI calls with valid PID and properly initialized MODULEENTRY32W structure
     unsafe {
         // TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32 to get both 32 and 64-bit modules
         let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid);
@@ -313,6 +314,7 @@ fn list_modules_psapi(pid: u32) -> Result<Vec<ModuleInfo>, PmonntError> {
 
     let mut modules = Vec::new();
 
+    // SAFETY: K32EnumProcessModulesEx, K32GetModuleBaseNameW, K32GetModuleFileNameExW, K32GetModuleInformation FFI calls with valid process handle and properly sized buffers
     unsafe {
         // Need PROCESS_QUERY_INFORMATION | PROCESS_VM_READ for EnumProcessModulesEx
         let handle = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid);
@@ -392,12 +394,12 @@ fn list_modules_psapi(pid: u32) -> Result<Vec<ModuleInfo>, PmonntError> {
             };
 
             // Get module info (base address, size)
-            let mut mod_info: MODULEINFO = std::mem::zeroed();
+            let mut mod_info: Moduleinfo = std::mem::zeroed();
             let info_result = K32GetModuleInformation(
                 raw_handle,
                 hmod,
                 &mut mod_info,
-                std::mem::size_of::<MODULEINFO>() as u32,
+                std::mem::size_of::<Moduleinfo>() as u32,
             );
 
             let (base_address, size) = if info_result != 0 {
@@ -440,6 +442,7 @@ fn list_modules_peb(pid: u32) -> Result<Vec<ModuleInfo>, PmonntError> {
 
     let mut modules = Vec::new();
 
+    // SAFETY: NtQueryInformationProcess and ReadProcessMemory FFI calls to read PEB structures with valid process handle and properly aligned buffers
     unsafe {
         // Need PROCESS_QUERY_INFORMATION | PROCESS_VM_READ for PEB access
         let handle = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid);
@@ -596,6 +599,7 @@ unsafe fn read_unicode_string(handle: isize, us: &UNICODE_STRING) -> String {
 pub fn check_signature(path: &str) -> (Option<bool>, Option<String>) {
     let wide_path: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
 
+    // SAFETY: WinVerifyTrust FFI call with valid null-terminated UTF-16 path and properly initialized structures
     unsafe {
         let mut file_info = WINTRUST_FILE_INFO {
             cbStruct: std::mem::size_of::<WINTRUST_FILE_INFO>() as u32,

@@ -59,14 +59,11 @@ fn drain_thread_fetch_results(
         thread_fetch_in_flight.remove(&pid);
         thread_fetch_started.remove(&pid);
 
-        match result {
-            Ok(threads) => {
-                if let Some(old) = thread_cache.peek(pid).cloned() {
-                    thread_prev.insert(pid, old);
-                }
-                thread_cache.insert(pid, threads);
+        if let Ok(threads) = result {
+            if let Some(old) = thread_cache.peek(pid).cloned() {
+                thread_prev.insert(pid, old);
             }
-            Err(_) => {}
+            thread_cache.insert(pid, threads);
         }
     }
 }

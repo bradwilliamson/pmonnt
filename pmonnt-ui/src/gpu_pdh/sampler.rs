@@ -266,6 +266,7 @@ impl GpuPdhSampler {
         for (counter, pid) in &self.usage_counters {
             // SAFETY: PDH_FMT_COUNTERVALUE is a plain-old-data struct; zero init is valid.
             let mut value: PDH_FMT_COUNTERVALUE = unsafe { mem::zeroed() };
+            // SAFETY: PdhGetFormattedCounterValue reads from a valid counter handle and writes to `value`.
             let status =
                 unsafe { PdhGetFormattedCounterValue(*counter, PDH_FMT_DOUBLE, None, &mut value) };
             if pdh_ok(status) && value.CStatus == 0 {
@@ -283,6 +284,7 @@ impl GpuPdhSampler {
         for (counter, pid) in &self.mem_counters {
             // SAFETY: PDH_FMT_COUNTERVALUE is a plain-old-data struct; zero init is valid.
             let mut value: PDH_FMT_COUNTERVALUE = unsafe { mem::zeroed() };
+            // SAFETY: PdhGetFormattedCounterValue reads from a valid counter handle and writes to `value`.
             let status =
                 unsafe { PdhGetFormattedCounterValue(*counter, PDH_FMT_LARGE, None, &mut value) };
             if pdh_ok(status) && value.CStatus == 0 {
@@ -298,6 +300,7 @@ impl GpuPdhSampler {
         for (counter, pid) in &self.shared_counters {
             // SAFETY: PDH_FMT_COUNTERVALUE is a plain-old-data struct; zero init is valid.
             let mut value: PDH_FMT_COUNTERVALUE = unsafe { mem::zeroed() };
+            // SAFETY: PdhGetFormattedCounterValue reads from a valid counter handle and writes to `value`.
             let status =
                 unsafe { PdhGetFormattedCounterValue(*counter, PDH_FMT_LARGE, None, &mut value) };
             if pdh_ok(status) && value.CStatus == 0 {
@@ -340,6 +343,7 @@ impl GpuPdhSampler {
 
 impl Drop for GpuPdhSampler {
     fn drop(&mut self) {
+        // SAFETY: PdhCloseQuery is safe to call on a PDH query handle that we own.
         unsafe {
             let _ = PdhCloseQuery(self.query);
         }
