@@ -28,7 +28,7 @@ jobs:
       - name: Package
         shell: pwsh
         run: |
-          $tag = "${{ github.ref_name }}"  # e.g. v0.1
+          $tag = "${{ github.ref_name }}"  # e.g. v0.1.0
           New-Item -ItemType Directory -Force dist | Out-Null
 
           Copy-Item "target/release/pmonnt-ui.exe" "dist/PMonNT.exe"
