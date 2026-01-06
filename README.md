@@ -37,7 +37,7 @@
 
 ### User Experience
 - **Responsive UI** — Built with [egui](https://github.com/emilk/egui) for smooth 60fps rendering
-- **Multiple Themes** — Dark, Light, Green Screen (retro), High Contrast
+- **Multiple Themes** — Dark, Light, 3270 Green Screen (retro), High Contrast
 - **Keyboard Navigation** — Full keyboard support for power users
 - **Persistent Layout** — Window sizes, column order, and preferences are saved
 
