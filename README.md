@@ -1,6 +1,6 @@
 # PMonNT
 
-**Process Monitor for Windows** — A modern, feature-rich alternative to Task Manager and Process Explorer, built in Rust.
+**A Process Monitor for Windows** — A modern, feature-rich alternative to Task Manager and Process Explorer, built in Rust.
 
 ![Windows](https://img.shields.io/badge/platform-Windows-0078D6?logo=windows)
 ![Rust](https://img.shields.io/badge/rust-1.75%2B-orange?logo=rust)
@@ -66,7 +66,7 @@ The binary will be at `target/release/pmonnt.exe`.
 
 ```bash
 # Run normally (some features limited without admin)
-pmonnt-ui.exe
+pmonnt.exe
 
 # Run as Administrator for full access
 # Right-click → Run as administrator
