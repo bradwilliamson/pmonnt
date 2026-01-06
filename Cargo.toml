@@ -1,0 +1,23 @@
+[workspace]
+members = ["pmonnt-core", "pmonnt-ui"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["PMonNT Contributors"]
+
+[profile.dev]
+opt-level = 0
+debug = 0
+incremental = true
+codegen-units = 16
+
+[profile.dev.package."*"]
+opt-level = 0
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+overflow-checks = true

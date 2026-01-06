@@ -1,0 +1,55 @@
+# Rust build artifacts
+/target/
+yara_cache/
+pmonnt_reputation_cache.json
+yara_rules_cache.json
+dumps/
+testout*
+*.zip
+
+**/*.rs.bk
+# Note: Cargo.lock IS committed for applications (ensures reproducible builds)
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Windows-specific
+*.exe
+*.dll
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.dmp
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Debug/test artifacts
+*.log
+*.tmp
+*.temp
+
+# Local configuration (API keys, etc.)
+.env
+.env.local
+*.local.toml
+
+# PMonNT-specific
+pmonnt_ui_layout.ini
+/yara_cache/
+dumps/

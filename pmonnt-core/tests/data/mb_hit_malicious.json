@@ -1,0 +1,27 @@
+{
+  "query_status": "ok",
+  "data": [
+    {
+      "sha256_hash": "5d41402abc4b2a76b9719d911017c592",
+      "signature": "Emotet",
+      "tags": ["emotet", "trojan", "banking"],
+      "first_seen": "2025-01-01",
+      "last_seen": "2025-01-04",
+      "file_name": "emotet.exe",
+      "file_type_mime": "application/x-msdos-program",
+      "file_size": 512000,
+      "vendor_intel": {
+        "vendor_name": "MalwareBazaar",
+        "vendor_label": "MALICIOUS"
+      },
+      "yara_rules": ["emotet_signatures"],
+      "comments": [
+        {
+          "date": "2025-01-04",
+          "comment": "Known Emotet sample",
+          "author": "analyst"
+        }
+      ]
+    }
+  ]
+}

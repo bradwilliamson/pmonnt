@@ -1,0 +1,5 @@
+{
+  "query_status": "auth_error",
+  "data": [],
+  "error": "API key invalid or expired"
+}

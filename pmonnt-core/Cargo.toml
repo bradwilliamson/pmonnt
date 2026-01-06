@@ -1,0 +1,44 @@
+[package]
+name = "pmonnt-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[features]
+default = []
+handles_v2 = []  # Per-handle name resolution (future)
+
+[[bin]]
+name = "test_services"
+path = "src/bin/test_services.rs"
+
+[dependencies]
+
+anyhow = "1.0"
+log = "0.4"
+thiserror = "1.0"
+windows = { version = "0.58", features = ["implement", "Win32_Foundation", "Win32_System_Diagnostics_ToolHelp", "Win32_Security", "Win32_Security_WinTrust", "Win32_Security_Cryptography", "Win32_System_Threading", "Win32_Security_Authorization", "Win32_Security_Authorization_UI", "Win32_System_Com", "Win32_UI_Controls", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_System_ProcessStatus", "Win32_System_Memory", "Win32_System_Kernel", "Win32_Storage_FileSystem", "Win32_System_Diagnostics_Debug", "Win32_System_Services", "Win32_System_LibraryLoader"] }
+windows-core = "0.58"
+windows-sys = { version = "0.61", features = [
+	"Win32_Foundation",
+	"Win32_NetworkManagement_IpHelper",
+	"Win32_Networking_WinSock",
+	"Win32_Security",
+	"Win32_Security_Authorization",
+	"Win32_System_Diagnostics_ToolHelp",
+	"Win32_System_Threading",
+] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "blocking", "multipart"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+tokio = { version = "1.0", features = ["sync", "time"] }
+
+chrono = "0.4"
+tokio-util = "0.7"
+yara-x = "0.12"
+zip = "0.6"
+url = "2.5"
+
+[dev-dependencies]
+tempfile = "3.10"

@@ -1,0 +1,21 @@
+{
+  "query_status": "ok",
+  "data": [
+    {
+      "id": "123456",
+      "ioc": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "ioc_type": "sha256_hash",
+      "malware": "Emotet",
+      "confidence_level": 85,
+      "tags": ["banking", "loader"],
+      "malware_samples": [
+        {
+          "time_stamp": "2025-12-31 00:00:00",
+          "md5_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "sha256_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "malware_bazaar": "ok"
+        }
+      ]
+    }
+  ]
+}

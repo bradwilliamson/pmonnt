@@ -1,0 +1,5 @@
+{
+  "query_status": "rate_limit_exceeded",
+  "data": [],
+  "error": "Rate limit exceeded"
+}

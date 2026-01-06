@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "AuthenticationRequiredError",
+    "message": "Invalid API key provided"
+  }
+}
