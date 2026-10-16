@@ -6,6 +6,7 @@ resolver = "2"
 version = "0.1.0"
 edition = "2021"
 authors = ["PMonNT Contributors"]
+rust-version = "1.99"
 
 [profile.dev]
 opt-level = 0

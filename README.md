@@ -3,7 +3,7 @@
 **A Process Monitor for Windows** — A modern, feature-rich alternative to Task Manager and Process Explorer, built in Rust.
 
 ![Windows](https://img.shields.io/badge/platform-Windows-0078D6?logo=windows)
-![Rust](https://img.shields.io/badge/rust-1.75%2B-orange?logo=rust)
+![Rust](https://img.shields.io/badge/rust-1.99%2B-orange?logo=rust)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
 <!-- 
@@ -44,7 +44,7 @@
 ## Requirements
 
 - **Windows 10/11** (x64)
-- **Rust 1.75+** (for building from source)
+- **Rust 1.99+** (for building from source)
 - **Administrator privileges** recommended for full functionality
 
 ## Building
