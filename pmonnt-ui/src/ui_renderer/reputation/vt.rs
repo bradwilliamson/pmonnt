@@ -1,8 +1,63 @@
+use super::sha::{PendingLookups, known_image_sha, request_check};
 use crate::ui_state::VtUiState;
 use eframe::egui;
 use pmonnt_core::reputation_service::ReputationService;
 use std::collections::HashMap;
 use std::sync::Arc;
+
+impl PendingLookups for VtUiState {
+    fn pending_checks(&mut self) -> &mut HashMap<u32, bool> {
+        &mut self.pending_checks
+    }
+
+    fn shown_pid(&self) -> Option<u32> {
+        self.last_seen_pid
+    }
+
+    fn request(service: &ReputationService, sha: &str, force: bool) {
+        service.request_vt_lookup_for_hash(sha, force);
+    }
+
+    fn track(&mut self, pid: u32, sha: String) {
+        self.current_process_sha = Some(sha.clone());
+        self.querying_vt_sha = Some(sha);
+        self.querying_vt_pid = Some(pid);
+        self.querying_started_at = Some(std::time::Instant::now());
+    }
+
+    fn show_error(&mut self, message: String) {
+        set_vt_error(self, message);
+    }
+}
+
+fn set_vt_error(vt_state: &mut VtUiState, message: String) {
+    vt_state.last_query_meta = Some(pmonnt_core::vt::VtQueryMeta {
+        last_query: Some("request".to_string()),
+        last_http_status: None,
+        last_query_status: Some("error".to_string()),
+        last_result_count: None,
+        last_error_message: Some(message),
+    });
+}
+
+/// Queue an explicit lookup for `pid` (see [`request_check`]) or show why it cannot start.
+fn request_check_or_report(
+    vt_state: &mut VtUiState,
+    reputation_service: &ReputationService,
+    pid_to_image_path: &HashMap<u32, String>,
+    pid: u32,
+    force: bool,
+) {
+    if let Err(e) = request_check(
+        reputation_service,
+        pid_to_image_path,
+        pid,
+        force,
+        &mut vt_state.pending_checks,
+    ) {
+        set_vt_error(vt_state, e);
+    }
+}
 
 pub fn render_virustotal_section(
     ui: &mut egui::Ui,
@@ -27,6 +82,14 @@ pub fn render_virustotal_section(
         vt_state.last_query_meta = None;
     }
 
+    // Show the image hash as soon as it is known.
+    if vt_state.current_process_sha.is_none()
+        && let Some(sha) =
+            pid.and_then(|pid| known_image_sha(reputation_service, pid_to_image_path, pid))
+    {
+        vt_state.current_process_sha = Some(sha);
+    }
+
     let can_query = pid.is_some() && online_lookups_enabled;
     ui.horizontal(|ui| {
         if ui
@@ -35,57 +98,33 @@ pub fn render_virustotal_section(
                 egui::Button::new("Check this process in VirusTotal"),
             )
             .clicked()
+            && let Some(pid) = pid
         {
-            if let Some(pid) = pid {
-                match reputation_service.request_vt_lookup_for_process(pid) {
-                    Ok(sha) => {
-                        vt_state.current_process_sha = Some(sha.clone());
-                        vt_state.querying_vt_sha = Some(sha);
-                        vt_state.querying_vt_pid = Some(pid);
-                        vt_state.querying_started_at = Some(std::time::Instant::now());
-                    }
-                    Err(e) => {
-                        vt_state.last_query_meta = Some(pmonnt_core::vt::VtQueryMeta {
-                            last_query: Some("request".to_string()),
-                            last_http_status: None,
-                            last_query_status: Some("error".to_string()),
-                            last_result_count: None,
-                            last_error_message: Some(e),
-                        });
-                    }
-                }
-            }
+            request_check_or_report(vt_state, reputation_service, pid_to_image_path, pid, false);
         }
 
+        // Refresh re-validates the hash and bypasses the cached answers.
         if ui
             .add_enabled(can_query, egui::Button::new("Refresh VT data"))
             .clicked()
-            && vt_state
-                .current_process_sha
-                .as_ref()
-                .or(vt_state.querying_vt_sha.as_ref())
-                .is_some()
+            && let Some(pid) = pid
         {
-            // Re-request by process - this will dedupe if in-flight
-            if let Some(pid) = pid {
-                let _ = reputation_service.request_vt_lookup_for_process(pid);
-                vt_state.querying_vt_pid = Some(pid);
-                vt_state.querying_started_at = Some(std::time::Instant::now());
-            }
+            request_check_or_report(vt_state, reputation_service, pid_to_image_path, pid, true);
         }
 
-        // Spinner logic: show only if querying for this process and no cached result yet
-        if let Some(sha) = vt_state
+        if pid.is_some_and(|pid| vt_state.pending_checks.contains_key(&pid)) {
+            ui.spinner();
+            ui.label("Hashing image...");
+        } else if let Some(sha) = vt_state
             .current_process_sha
             .as_ref()
             .or(vt_state.querying_vt_sha.as_ref())
+            && (reputation_service.vt_lookup_in_flight(sha)
+                || (vt_state.querying_vt_pid == pid
+                    && reputation_service.get_vt_sample_for_hash(sha).is_none()))
         {
-            if vt_state.querying_vt_pid == pid
-                && reputation_service.get_vt_sample_for_hash(sha).is_none()
-            {
-                ui.spinner();
-                ui.label("Querying VirusTotal...");
-            }
+            ui.spinner();
+            ui.label("Querying VirusTotal...");
         }
     });
 
@@ -98,46 +137,39 @@ pub fn render_virustotal_section(
         return;
     }
 
-    // Drain pending sha
-    if let Ok(mut guard) = vt_state.current_process_sha_pending.lock() {
-        if let Some(sha) = guard.take() {
-            vt_state.current_process_sha = Some(sha);
-        }
-    }
-
     let sha_to_show = vt_state
         .current_process_sha
         .as_ref()
         .or(vt_state.querying_vt_sha.as_ref());
 
     // Stuck protection
-    if let Some(started) = vt_state.querying_started_at {
-        if started.elapsed() > std::time::Duration::from_secs(VT_QUERY_TIMEOUT_SECS) {
-            vt_state.querying_vt_pid = None;
-            vt_state.querying_started_at = None;
-        }
+    if let Some(started) = vt_state.querying_started_at
+        && started.elapsed() > std::time::Duration::from_secs(VT_QUERY_TIMEOUT_SECS)
+    {
+        vt_state.querying_vt_pid = None;
+        vt_state.querying_started_at = None;
     }
 
     if let Some(sha) = sha_to_show {
-        if let Some(pid) = pid {
-            if let Some(path) = pid_to_image_path.get(&pid) {
-                let filename = std::path::Path::new(path)
-                    .file_name()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("");
-                ui.horizontal(|ui| {
-                    ui.label(format!("Process: {}", filename));
-                });
-                ui.horizontal(|ui| {
-                    ui.label(format!("Path:    {}", path));
-                });
-            }
+        if let Some(pid) = pid
+            && let Some(path) = pid_to_image_path.get(&pid)
+        {
+            let filename = std::path::Path::new(path)
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("");
+            ui.horizontal(|ui| {
+                ui.label(format!("Process: {filename}"));
+            });
+            ui.horizontal(|ui| {
+                ui.label(format!("Path:    {path}"));
+            });
         }
         ui.horizontal(|ui| {
             ui.label("SHA-256:");
             ui.monospace(sha);
             if ui.button("📋").clicked() {
-                ui.output_mut(|o| o.copied_text = sha.clone());
+                ui.copy_text(sha.clone());
             }
         });
 
@@ -161,10 +193,7 @@ pub fn render_virustotal_section(
                             } else {
                                 egui::Color32::RED
                             };
-                            ui.colored_label(
-                                color,
-                                format!("VT: {}/{} detections", detections, total),
-                            );
+                            ui.colored_label(color, format!("VT: {detections}/{total} detections"));
                         } else {
                             ui.colored_label(
                                 egui::Color32::GRAY,

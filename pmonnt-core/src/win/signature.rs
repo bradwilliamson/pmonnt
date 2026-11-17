@@ -1,61 +1,21 @@
+use crate::aligned_buf::AlignedBuf;
 use std::ffi::c_void;
 use std::os::windows::ffi::OsStrExt;
 use std::path::Path;
 
 use anyhow::Result;
 
-use windows::core::PCWSTR;
 use windows::Win32::Foundation::HANDLE;
 use windows::Win32::Security::Cryptography::{
-    CertCloseStore, CertFindCertificateInStore, CertFreeCertificateContext, CertGetNameStringW,
-    CryptMsgClose, CryptMsgGetParam, CryptQueryObject, CERT_FIND_SUBJECT_CERT,
-    CERT_NAME_ISSUER_FLAG, CERT_NAME_SIMPLE_DISPLAY_TYPE,
+    CERT_FIND_SUBJECT_CERT, CERT_NAME_ISSUER_FLAG, CERT_NAME_SIMPLE_DISPLAY_TYPE,
     CERT_QUERY_CONTENT_FLAG_PKCS7_SIGNED_EMBED, CERT_QUERY_FORMAT_FLAG_BINARY,
-    CERT_QUERY_OBJECT_FILE, CMSG_SIGNER_INFO, CMSG_SIGNER_INFO_PARAM, HCERTSTORE,
-    PKCS_7_ASN_ENCODING, X509_ASN_ENCODING,
+    CERT_QUERY_OBJECT_FILE, CMSG_SIGNER_INFO, CMSG_SIGNER_INFO_PARAM, CertCloseStore,
+    CertFindCertificateInStore, CertFreeCertificateContext, CertGetNameStringW, CryptMsgClose,
+    CryptMsgGetParam, CryptQueryObject, HCERTSTORE, PKCS_7_ASN_ENCODING, X509_ASN_ENCODING,
 };
+use windows::core::PCWSTR;
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct SignatureInfo {
-    pub is_signed: bool,
-    pub is_valid: bool,
-    pub signer_name: Option<String>,
-    pub issuer_name: Option<String>,
-    pub timestamp: Option<std::time::SystemTime>,
-    pub catalog_signed: bool,
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SignatureStatus {
-    Valid,
-    Invalid,
-    NotSigned,
-    CatalogSigned,
-    Untrusted,
-    Expired,
-}
-
-impl SignatureInfo {
-    pub fn status(&self) -> SignatureStatus {
-        if !self.is_signed {
-            return SignatureStatus::NotSigned;
-        }
-
-        if self.is_valid {
-            if self.catalog_signed {
-                return SignatureStatus::CatalogSigned;
-            }
-            return SignatureStatus::Valid;
-        }
-
-        match self.error.as_deref() {
-            Some("Expired") => SignatureStatus::Expired,
-            Some("Untrusted") => SignatureStatus::Untrusted,
-            _ => SignatureStatus::Invalid,
-        }
-    }
-}
+pub use crate::signature::{SignatureInfo, SignatureStatus};
 
 #[repr(C)]
 #[allow(non_snake_case)]
@@ -99,7 +59,10 @@ const WTD_REVOKE_NONE: u32 = 0;
 const WTD_CHOICE_FILE: u32 = 1;
 const WTD_STATEACTION_VERIFY: u32 = 1;
 const WTD_STATEACTION_CLOSE: u32 = 2;
-const WTD_CACHE_ONLY_URL_RETRIEVAL: u32 = 0x00000004;
+// Never fetch CRLs or AIA certificates over the network: a signature check must not block on
+// a slow or offline network, and revocation is not checked anyway.
+const WTD_PROV_FLAGS: u32 = windows::Win32::Security::WinTrust::WTD_CACHE_ONLY_URL_RETRIEVAL.0
+    | windows::Win32::Security::WinTrust::WTD_REVOCATION_CHECK_NONE.0;
 
 const WINTRUST_ACTION_GENERIC_VERIFY_V2: WintrustGuid = WintrustGuid {
     Data1: 0x00AAC56B,
@@ -108,15 +71,19 @@ const WINTRUST_ACTION_GENERIC_VERIFY_V2: WintrustGuid = WintrustGuid {
     Data4: [0x8C, 0xC2, 0x00, 0xC0, 0x4F, 0xC2, 0x95, 0xEE],
 };
 
-const TRUST_E_NOSIGNATURE: i32 = -0x7FF6FE00_i32; // 0x800B0100
-const TRUST_E_EXPLICIT_DISTRUST: i32 = -0x7FF6FDFC_i32; // 0x800B0104
-const TRUST_E_SUBJECT_NOT_TRUSTED: i32 = -0x7FF6FDFE_i32; // 0x800B0102
-const CRYPT_E_SECURITY_SETTINGS: i32 = -0x7FF6CFFD_i32; // 0x80092003
-const CERT_E_EXPIRED: i32 = -0x7FF4FEFF_i32; // 0x800B0101
-const CERT_E_UNTRUSTEDROOT: i32 = -0x7FF4FEF7_i32; // 0x800B0109
+// HRESULTs returned by WinVerifyTrust, taken from the windows crate so they cannot drift.
+pub(crate) const TRUST_E_NOSIGNATURE: i32 = windows::Win32::Foundation::TRUST_E_NOSIGNATURE.0;
+pub(crate) const TRUST_E_EXPLICIT_DISTRUST: i32 =
+    windows::Win32::Foundation::TRUST_E_EXPLICIT_DISTRUST.0;
+pub(crate) const TRUST_E_SUBJECT_NOT_TRUSTED: i32 =
+    windows::Win32::Foundation::TRUST_E_SUBJECT_NOT_TRUSTED.0;
+pub(crate) const CRYPT_E_SECURITY_SETTINGS: i32 =
+    windows::Win32::Foundation::CRYPT_E_SECURITY_SETTINGS.0;
+const CERT_E_EXPIRED: i32 = windows::Win32::Foundation::CERT_E_EXPIRED.0;
+const CERT_E_UNTRUSTEDROOT: i32 = windows::Win32::Foundation::CERT_E_UNTRUSTEDROOT.0;
 
 #[link(name = "wintrust")]
-extern "system" {
+unsafe extern "system" {
     fn WinVerifyTrust(
         hwnd: HANDLE,
         pgActionID: *const WintrustGuid,
@@ -135,7 +102,9 @@ fn classify_winverifytrust_error(code: i32) -> &'static str {
     }
 }
 
-fn winverifytrust_path(path: &Path) -> Result<i32> {
+/// Run `WinVerifyTrust(WINTRUST_ACTION_GENERIC_VERIFY_V2)` on a file and return its HRESULT
+/// (0 means a valid embedded signature). Never touches the network.
+pub(crate) fn winverifytrust_path(path: &Path) -> Result<i32> {
     let wide_path: Vec<u16> = path
         .as_os_str()
         .encode_wide()
@@ -166,21 +135,21 @@ fn winverifytrust_path(path: &Path) -> Result<i32> {
             dwUIChoice: WTD_UI_NONE,
             fdwRevocationChecks: WTD_REVOKE_NONE,
             dwUnionChoice: WTD_CHOICE_FILE,
-            pFile: &mut file_info,
+            pFile: &raw mut file_info,
             dwStateAction: WTD_STATEACTION_VERIFY,
             hWVTStateData: HANDLE::default(),
             pwszURLReference: std::ptr::null(),
             // Avoid network retrieval in UI tooling contexts.
-            dwProvFlags: WTD_CACHE_ONLY_URL_RETRIEVAL,
+            dwProvFlags: WTD_PROV_FLAGS,
             dwUIContext: 0,
             pSignatureSettings: std::ptr::null_mut(),
         };
 
         let action_guid = WINTRUST_ACTION_GENERIC_VERIFY_V2;
-        let result = WinVerifyTrust(HANDLE::default(), &action_guid, &mut wvt_data);
+        let result = WinVerifyTrust(HANDLE::default(), &raw const action_guid, &raw mut wvt_data);
 
         wvt_data.dwStateAction = WTD_STATEACTION_CLOSE;
-        let _ = WinVerifyTrust(HANDLE::default(), &action_guid, &mut wvt_data);
+        let _ = WinVerifyTrust(HANDLE::default(), &raw const action_guid, &raw mut wvt_data);
 
         Ok(result)
     }
@@ -205,15 +174,15 @@ fn try_extract_signer_names(path: &Path) -> Option<(String, String)> {
     let ok = unsafe {
         CryptQueryObject(
             CERT_QUERY_OBJECT_FILE,
-            PCWSTR(wide_path.as_ptr()).0 as *const c_void,
+            PCWSTR(wide_path.as_ptr()).0.cast::<c_void>(),
             CERT_QUERY_CONTENT_FLAG_PKCS7_SIGNED_EMBED,
             CERT_QUERY_FORMAT_FLAG_BINARY,
             0,
             None,
             None,
             None,
-            Some(&mut store as *mut _),
-            Some(&mut msg as *mut _),
+            Some(&raw mut store),
+            Some(&raw mut msg),
             None,
         )
     };
@@ -229,11 +198,11 @@ fn try_extract_signer_names(path: &Path) -> Option<(String, String)> {
     // - `signer_info_size` is a valid mutable reference for output
     let ok_size = unsafe {
         CryptMsgGetParam(
-            msg as *const c_void,
+            msg.cast_const(),
             CMSG_SIGNER_INFO_PARAM,
             0,
             None,
-            &mut signer_info_size,
+            &raw mut signer_info_size,
         )
     };
     if ok_size.is_err() || signer_info_size == 0 {
@@ -245,14 +214,14 @@ fn try_extract_signer_names(path: &Path) -> Option<(String, String)> {
             let _ = CryptMsgClose(if msg.is_null() {
                 None
             } else {
-                Some(msg as *const c_void)
+                Some(msg.cast_const())
             });
-            let _ = CertCloseStore(store, 0);
+            let _ = CertCloseStore(Some(store), 0);
         }
         return None;
     }
 
-    let mut signer_info_buf = vec![0u8; signer_info_size as usize];
+    let mut signer_info_buf = AlignedBuf::new(signer_info_size as usize);
     // SAFETY: CryptMsgGetParam data retrieval with properly sized buffer:
     // - Buffer allocated with exact size returned by previous size query
     // - `msg` handle remains valid from CryptQueryObject
@@ -260,11 +229,11 @@ fn try_extract_signer_names(path: &Path) -> Option<(String, String)> {
     // - `signer_info_size` is updated with actual bytes written
     let ok_param = unsafe {
         CryptMsgGetParam(
-            msg as *const c_void,
+            msg.cast_const(),
             CMSG_SIGNER_INFO_PARAM,
             0,
-            Some(signer_info_buf.as_mut_ptr() as *mut c_void),
-            &mut signer_info_size,
+            Some(signer_info_buf.as_mut_ptr().cast::<c_void>()),
+            &raw mut signer_info_size,
         )
     };
     if ok_param.is_err() {
@@ -273,9 +242,9 @@ fn try_extract_signer_names(path: &Path) -> Option<(String, String)> {
             let _ = CryptMsgClose(if msg.is_null() {
                 None
             } else {
-                Some(msg as *const c_void)
+                Some(msg.cast_const())
             });
-            let _ = CertCloseStore(store, 0);
+            let _ = CertCloseStore(Some(store), 0);
         }
         return None;
     }
@@ -285,7 +254,7 @@ fn try_extract_signer_names(path: &Path) -> Option<(String, String)> {
     // - Microsoft API guarantees proper structure layout and alignment
     // - Buffer size validated to be at least signer_info_size bytes
     // - Reference lifetime bound to buffer lifetime (within this function)
-    let signer_info = unsafe { &*(signer_info_buf.as_ptr() as *const CMSG_SIGNER_INFO) };
+    let signer_info = unsafe { &*signer_info_buf.ptr_at::<CMSG_SIGNER_INFO>(0) };
 
     let mut cert_info = windows::Win32::Security::Cryptography::CERT_INFO {
         Issuer: signer_info.Issuer,
@@ -305,7 +274,7 @@ fn try_extract_signer_names(path: &Path) -> Option<(String, String)> {
             X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
             0,
             CERT_FIND_SUBJECT_CERT,
-            Some(&mut cert_info as *mut _ as *const c_void),
+            Some(&raw mut cert_info as *const c_void),
             None,
         )
     };
@@ -313,7 +282,7 @@ fn try_extract_signer_names(path: &Path) -> Option<(String, String)> {
     let out = if cert.is_null() {
         None
     } else {
-        let cert_ptr = cert as *const windows::Win32::Security::Cryptography::CERT_CONTEXT;
+        let cert_ptr = cert.cast_const();
         let subject = cert_get_name_string(cert_ptr, 0);
         let issuer = cert_get_name_string(cert_ptr, CERT_NAME_ISSUER_FLAG);
         // SAFETY: Freeing certificate context obtained from CertFindCertificateInStore:
@@ -321,9 +290,7 @@ fn try_extract_signer_names(path: &Path) -> Option<(String, String)> {
         // - Certificate context was allocated by Windows and must be freed
         // - After this call, `cert` pointer must not be used
         unsafe {
-            let _ = CertFreeCertificateContext(Some(
-                cert as *const windows::Win32::Security::Cryptography::CERT_CONTEXT,
-            ));
+            let _ = CertFreeCertificateContext(Some(cert.cast_const()));
         }
         match (subject, issuer) {
             (Some(subject), Some(issuer)) => Some((subject, issuer)),
@@ -340,9 +307,9 @@ fn try_extract_signer_names(path: &Path) -> Option<(String, String)> {
         let _ = CryptMsgClose(if msg.is_null() {
             None
         } else {
-            Some(msg as *const c_void)
+            Some(msg.cast_const())
         });
-        let _ = CertCloseStore(store, 0);
+        let _ = CertCloseStore(Some(store), 0);
     }
 
     out
@@ -382,11 +349,7 @@ fn cert_get_name_string(
 
     let s = String::from_utf16_lossy(&buf[..(len2 as usize).saturating_sub(1)]);
     let s = s.trim().to_string();
-    if s.is_empty() {
-        None
-    } else {
-        Some(s)
-    }
+    if s.is_empty() { None } else { Some(s) }
 }
 
 fn has_embedded_signature(path: &Path) -> bool {
@@ -407,15 +370,15 @@ fn has_embedded_signature(path: &Path) -> bool {
     let ok = unsafe {
         CryptQueryObject(
             CERT_QUERY_OBJECT_FILE,
-            PCWSTR(wide_path.as_ptr()).0 as *const c_void,
+            PCWSTR(wide_path.as_ptr()).0.cast::<c_void>(),
             CERT_QUERY_CONTENT_FLAG_PKCS7_SIGNED_EMBED,
             CERT_QUERY_FORMAT_FLAG_BINARY,
             0,
             None,
             None,
             None,
-            Some(&mut store as *mut _),
-            Some(&mut msg as *mut _),
+            Some(&raw mut store),
+            Some(&raw mut msg),
             None,
         )
     };
@@ -429,9 +392,9 @@ fn has_embedded_signature(path: &Path) -> bool {
             let _ = CryptMsgClose(if msg.is_null() {
                 None
             } else {
-                Some(msg as *const c_void)
+                Some(msg.cast_const())
             });
-            let _ = CertCloseStore(store, 0);
+            let _ = CertCloseStore(Some(store), 0);
         }
         true
     } else {
@@ -493,6 +456,33 @@ pub fn verify_signature(path: &Path) -> Result<SignatureInfo> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn trust_constants_match_winerror_h() {
+        assert_eq!(TRUST_E_NOSIGNATURE as u32, 0x800B_0100);
+        assert_eq!(TRUST_E_EXPLICIT_DISTRUST as u32, 0x800B_0111);
+        assert_eq!(TRUST_E_SUBJECT_NOT_TRUSTED as u32, 0x800B_0004);
+        assert_eq!(CRYPT_E_SECURITY_SETTINGS as u32, 0x8009_2026);
+        assert_eq!(WTD_PROV_FLAGS, 0x1000 | 0x10);
+    }
+
+    #[test]
+    fn unsigned_file_reports_not_signed() {
+        // A freshly written file has no Authenticode signature and is not in a catalog.
+        let dir = std::env::temp_dir().join(format!("pmonnt-sig-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("unsigned.exe");
+        std::fs::write(&path, b"MZ not really a PE").unwrap();
+        let code = winverifytrust_path(&path).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_ne!(code, 0, "unsigned file must not verify");
+        assert!(
+            code == TRUST_E_NOSIGNATURE
+                || code == windows::Win32::Foundation::TRUST_E_SUBJECT_FORM_UNKNOWN.0,
+            "unexpected WinVerifyTrust result 0x{:08X}",
+            code as u32
+        );
+    }
 
     #[test]
     fn test_status() {

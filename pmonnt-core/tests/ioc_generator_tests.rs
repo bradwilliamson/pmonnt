@@ -1,8 +1,8 @@
 //! Tests for IOC to YARA rule generator
 
 use pmonnt_core::yara::ioc_generator::{
-    escape_yara_string, sanitize_rule_name, severity_from_confidence, IocToYaraGenerator,
-    ThreatFoxIoc,
+    IocToYaraGenerator, ThreatFoxIoc, escape_yara_string, sanitize_rule_name,
+    severity_from_confidence,
 };
 use pmonnt_core::yara::rules::Severity;
 
@@ -95,7 +95,7 @@ fn make_ioc(value: &str, ioc_type: &str, malware: Option<&str>, conf: i32) -> Th
     ThreatFoxIoc {
         ioc_value: value.to_string(),
         ioc_type: ioc_type.to_string(),
-        malware: malware.map(|s| s.to_string()),
+        malware: malware.map(std::string::ToString::to_string),
         confidence_level: Some(conf),
     }
 }
@@ -128,7 +128,7 @@ fn test_generate_max_strings_per_rule() {
     let mut iocs = Vec::new();
     for i in 0..60 {
         iocs.push(make_ioc(
-            &format!("evil{}.com", i),
+            &format!("evil{i}.com"),
             "domain",
             Some("Emotet"),
             80,

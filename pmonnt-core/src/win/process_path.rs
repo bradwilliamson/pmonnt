@@ -1,11 +1,11 @@
 //! Windows process image path retrieval
 
 use crate::win::HandleGuard;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use windows::Win32::Foundation::MAX_PATH;
 use windows::Win32::System::Threading::{
-    OpenProcess, QueryFullProcessImageNameW, PROCESS_ACCESS_RIGHTS,
-    PROCESS_QUERY_LIMITED_INFORMATION,
+    OpenProcess, PROCESS_ACCESS_RIGHTS, PROCESS_QUERY_LIMITED_INFORMATION,
+    QueryFullProcessImageNameW,
 };
 
 /// Get the full executable path for a process
@@ -28,7 +28,7 @@ pub fn get_process_image_path(pid: u32) -> Result<String> {
     };
 
     if handle.is_invalid() {
-        return Err(anyhow!("Failed to open process {}", pid));
+        return Err(anyhow!("Failed to open process {pid}"));
     }
 
     let mut path_buf = vec![0u16; MAX_PATH as usize];
@@ -41,7 +41,7 @@ pub fn get_process_image_path(pid: u32) -> Result<String> {
             handle,
             windows::Win32::System::Threading::PROCESS_NAME_WIN32,
             windows::core::PWSTR(path_buf.as_mut_ptr()),
-            &mut size,
+            &raw mut size,
         )
     };
 
@@ -49,7 +49,7 @@ pub fn get_process_image_path(pid: u32) -> Result<String> {
     drop(HandleGuard::new(handle));
 
     if success.is_err() {
-        return Err(anyhow!("Failed to query image path for PID {}", pid));
+        return Err(anyhow!("Failed to query image path for PID {pid}"));
     }
 
     // Convert UTF-16 to Rust String

@@ -3,13 +3,13 @@ use std::{collections::HashMap, mem};
 use anyhow::Result;
 
 use windows::Win32::System::Performance::{
-    PdhAddEnglishCounterW, PdhCloseQuery, PdhCollectQueryData, PdhGetFormattedCounterValue,
-    PDH_FMT_COUNTERVALUE, PDH_FMT_DOUBLE, PDH_FMT_LARGE,
+    PDH_FMT_COUNTERVALUE, PDH_FMT_DOUBLE, PDH_FMT_LARGE, PdhAddEnglishCounterW, PdhCloseQuery,
+    PdhCollectQueryData, PdhGetFormattedCounterValue,
 };
 
 use crate::gpu::GpuSnapshot;
 
-use super::pdh::{expand_paths, extract_pid, pdh_ok, wstring, PdhCounterHandle, PdhQueryHandle};
+use super::pdh::{PdhCounterHandle, PdhQueryHandle, expand_paths, extract_pid, pdh_ok, wstring};
 use super::warnings::should_warn;
 
 const ENGINE_PATH: &str = r"\GPU Engine(*)\Utilization Percentage";
@@ -29,7 +29,7 @@ impl GpuPdhSampler {
         let mut query: PdhQueryHandle = Default::default();
         // SAFETY: PdhOpenQueryW writes a query handle into `query` on success.
         let status =
-            unsafe { windows::Win32::System::Performance::PdhOpenQueryW(None, 0, &mut query) };
+            unsafe { windows::Win32::System::Performance::PdhOpenQueryW(None, 0, &raw mut query) };
         if !pdh_ok(status) {
             return Err(anyhow::anyhow!("PdhOpenQueryW failed: {status:?}"));
         }
@@ -87,8 +87,12 @@ impl GpuPdhSampler {
         // Mark first sample as done so next sample() returns real data
         self.first_sample_done = true;
 
-        log::info!("[GPU PDH] Smoke test passed: {} usage counters, {} mem counters, {} shared counters ready",
-            self.usage_counters.len(), self.mem_counters.len(), self.shared_counters.len());
+        log::info!(
+            "[GPU PDH] Smoke test passed: {} usage counters, {} mem counters, {} shared counters ready",
+            self.usage_counters.len(),
+            self.mem_counters.len(),
+            self.shared_counters.len()
+        );
         Ok(())
     }
 
@@ -99,7 +103,7 @@ impl GpuPdhSampler {
         let mut query: PdhQueryHandle = Default::default();
         // SAFETY: PdhOpenQueryW writes a query handle into `query` on success.
         let status =
-            unsafe { windows::Win32::System::Performance::PdhOpenQueryW(None, 0, &mut query) };
+            unsafe { windows::Win32::System::Performance::PdhOpenQueryW(None, 0, &raw mut query) };
         if !pdh_ok(status) {
             if should_warn() {
                 log::warn!("[GPU PDH] PdhOpenQueryW failed: status=0x{status:08X}");
@@ -112,13 +116,13 @@ impl GpuPdhSampler {
         self.shared_counters.clear();
         self.first_sample_done = false;
 
-        log::debug!("[GPU PDH] Expanding wildcard: {}", ENGINE_PATH);
+        log::debug!("[GPU PDH] Expanding wildcard: {ENGINE_PATH}");
         let usage_paths = match expand_paths(ENGINE_PATH) {
             Ok(paths) => {
                 log::debug!("[GPU PDH] Expanded {} GPU Engine paths", paths.len());
                 if !paths.is_empty() {
                     for (i, p) in paths.iter().enumerate().take(3) {
-                        log::trace!("[GPU PDH]   Example usage path {}: {}", i, p);
+                        log::trace!("[GPU PDH]   Example usage path {i}: {p}");
                     }
                 }
                 paths
@@ -138,21 +142,24 @@ impl GpuPdhSampler {
                 let wide = wstring(&path);
                 // SAFETY: `wide` is NUL-terminated UTF-16 and lives for the duration of the call.
                 // PDH writes a counter handle into `counter` on success.
-                let status =
-                    unsafe { PdhAddEnglishCounterW(self.query, wide.as_pwstr(), 0, &mut counter) };
+                let status = unsafe {
+                    PdhAddEnglishCounterW(self.query, wide.as_pwstr(), 0, &raw mut counter)
+                };
                 if !pdh_ok(status) {
-                    log::trace!("[GPU PDH] Failed to add usage counter for PID {pid}: status=0x{status:08X}");
+                    log::trace!(
+                        "[GPU PDH] Failed to add usage counter for PID {pid}: status=0x{status:08X}"
+                    );
                     continue;
                 }
                 self.usage_counters.push((counter, pid));
                 usage_added += 1;
             } else {
-                log::trace!("[GPU PDH] Could not extract PID from path: {}", path);
+                log::trace!("[GPU PDH] Could not extract PID from path: {path}");
             }
         }
-        log::debug!("[GPU PDH] Added {} GPU usage counters", usage_added);
+        log::debug!("[GPU PDH] Added {usage_added} GPU usage counters");
 
-        log::debug!("[GPU PDH] Expanding wildcard: {}", PROCESS_MEM_PATH);
+        log::debug!("[GPU PDH] Expanding wildcard: {PROCESS_MEM_PATH}");
         let mem_paths = match expand_paths(PROCESS_MEM_PATH) {
             Ok(paths) => {
                 log::debug!(
@@ -161,7 +168,7 @@ impl GpuPdhSampler {
                 );
                 if !paths.is_empty() {
                     for (i, p) in paths.iter().enumerate().take(3) {
-                        log::trace!("[GPU PDH]   Example path {}: {}", i, p);
+                        log::trace!("[GPU PDH]   Example path {i}: {p}");
                     }
                 }
                 paths
@@ -179,8 +186,9 @@ impl GpuPdhSampler {
                 let wide = wstring(&path);
                 // SAFETY: `wide` is NUL-terminated UTF-16 and lives for the duration of the call.
                 // PDH writes a counter handle into `counter` on success.
-                let status =
-                    unsafe { PdhAddEnglishCounterW(self.query, wide.as_pwstr(), 0, &mut counter) };
+                let status = unsafe {
+                    PdhAddEnglishCounterW(self.query, wide.as_pwstr(), 0, &raw mut counter)
+                };
                 if !pdh_ok(status) {
                     log::trace!(
                         "[GPU PDH] Failed to add mem counter for PID {pid}: status=0x{status:08X}"
@@ -189,7 +197,7 @@ impl GpuPdhSampler {
                 }
                 self.mem_counters.push((counter, pid));
             } else {
-                log::trace!("[GPU PDH] Could not extract PID from mem path: {}", path);
+                log::trace!("[GPU PDH] Could not extract PID from mem path: {path}");
             }
         }
         log::debug!(
@@ -197,13 +205,13 @@ impl GpuPdhSampler {
             self.mem_counters.len()
         );
 
-        log::debug!("[GPU PDH] Expanding wildcard: {}", SHARED_MEM_PATH);
+        log::debug!("[GPU PDH] Expanding wildcard: {SHARED_MEM_PATH}");
         let shared_paths = match expand_paths(SHARED_MEM_PATH) {
             Ok(paths) => {
                 log::debug!("[GPU PDH] Expanded {} GPU Shared Memory paths", paths.len());
                 if !paths.is_empty() {
                     for (i, p) in paths.iter().enumerate().take(3) {
-                        log::trace!("[GPU PDH]   Example shared path {}: {}", i, p);
+                        log::trace!("[GPU PDH]   Example shared path {i}: {p}");
                     }
                 }
                 paths
@@ -221,15 +229,18 @@ impl GpuPdhSampler {
                 let wide = wstring(&path);
                 // SAFETY: `wide` is NUL-terminated UTF-16 and lives for the duration of the call.
                 // PDH writes a counter handle into `counter` on success.
-                let status =
-                    unsafe { PdhAddEnglishCounterW(self.query, wide.as_pwstr(), 0, &mut counter) };
+                let status = unsafe {
+                    PdhAddEnglishCounterW(self.query, wide.as_pwstr(), 0, &raw mut counter)
+                };
                 if !pdh_ok(status) {
-                    log::trace!("[GPU PDH] Failed to add shared counter for PID {pid}: status=0x{status:08X}");
+                    log::trace!(
+                        "[GPU PDH] Failed to add shared counter for PID {pid}: status=0x{status:08X}"
+                    );
                     continue;
                 }
                 self.shared_counters.push((counter, pid));
             } else {
-                log::trace!("[GPU PDH] Could not extract PID from shared path: {}", path);
+                log::trace!("[GPU PDH] Could not extract PID from shared path: {path}");
             }
         }
         log::debug!(
@@ -256,8 +267,14 @@ impl GpuPdhSampler {
         if !self.first_sample_done {
             self.first_sample_done = true;
             log::debug!("[GPU PDH] First sample collected (grace period)");
-            return Ok(GpuSnapshot::default());
+            return Ok(GpuSnapshot {
+                warming_up: true,
+                ..GpuSnapshot::default()
+            });
         }
+        // Distinguishes "no process uses the GPU" (valid, empty) from "no counter could be
+        // read" (a failed sample, which must not wipe the last good data).
+        let mut readings_ok = 0usize;
 
         let mut percent_map: HashMap<u32, f32> = HashMap::new();
         let mut mem_map: HashMap<u32, u64> = HashMap::new();
@@ -267,9 +284,11 @@ impl GpuPdhSampler {
             // SAFETY: PDH_FMT_COUNTERVALUE is a plain-old-data struct; zero init is valid.
             let mut value: PDH_FMT_COUNTERVALUE = unsafe { mem::zeroed() };
             // SAFETY: PdhGetFormattedCounterValue reads from a valid counter handle and writes to `value`.
-            let status =
-                unsafe { PdhGetFormattedCounterValue(*counter, PDH_FMT_DOUBLE, None, &mut value) };
+            let status = unsafe {
+                PdhGetFormattedCounterValue(*counter, PDH_FMT_DOUBLE, None, &raw mut value)
+            };
             if pdh_ok(status) && value.CStatus == 0 {
+                readings_ok += 1;
                 // SAFETY: On success, PDH initializes the union field for the requested format.
                 let val = unsafe { value.Anonymous.doubleValue } as f32;
                 if val.is_finite() && val >= 0.0 {
@@ -285,9 +304,11 @@ impl GpuPdhSampler {
             // SAFETY: PDH_FMT_COUNTERVALUE is a plain-old-data struct; zero init is valid.
             let mut value: PDH_FMT_COUNTERVALUE = unsafe { mem::zeroed() };
             // SAFETY: PdhGetFormattedCounterValue reads from a valid counter handle and writes to `value`.
-            let status =
-                unsafe { PdhGetFormattedCounterValue(*counter, PDH_FMT_LARGE, None, &mut value) };
+            let status = unsafe {
+                PdhGetFormattedCounterValue(*counter, PDH_FMT_LARGE, None, &raw mut value)
+            };
             if pdh_ok(status) && value.CStatus == 0 {
+                readings_ok += 1;
                 // SAFETY: On success, PDH initializes the union field for the requested format.
                 let val = unsafe { value.Anonymous.largeValue };
                 if val > 0 {
@@ -301,9 +322,11 @@ impl GpuPdhSampler {
             // SAFETY: PDH_FMT_COUNTERVALUE is a plain-old-data struct; zero init is valid.
             let mut value: PDH_FMT_COUNTERVALUE = unsafe { mem::zeroed() };
             // SAFETY: PdhGetFormattedCounterValue reads from a valid counter handle and writes to `value`.
-            let status =
-                unsafe { PdhGetFormattedCounterValue(*counter, PDH_FMT_LARGE, None, &mut value) };
+            let status = unsafe {
+                PdhGetFormattedCounterValue(*counter, PDH_FMT_LARGE, None, &raw mut value)
+            };
             if pdh_ok(status) && value.CStatus == 0 {
+                readings_ok += 1;
                 // SAFETY: On success, PDH initializes the union field for the requested format.
                 let val = unsafe { value.Anonymous.largeValue };
                 if val > 0 {
@@ -311,6 +334,14 @@ impl GpuPdhSampler {
                     *entry = entry.saturating_add(val as u64);
                 }
             }
+        }
+
+        let counters =
+            self.usage_counters.len() + self.mem_counters.len() + self.shared_counters.len();
+        if counters > 0 && readings_ok == 0 {
+            return Err(anyhow::anyhow!(
+                "none of {counters} GPU counters returned valid data"
+            ));
         }
 
         // Compute total GPU memory per PID
@@ -327,8 +358,13 @@ impl GpuPdhSampler {
         static SAMPLE_COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
         let count = SAMPLE_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if count.is_multiple_of(30) {
-            log::debug!("[GPU PDH] Sample #{}: {} PIDs with GPU%, {} PIDs with dedicated, {} PIDs with shared",
-                count, percent_map.len(), mem_map.len(), shared_map.len());
+            log::debug!(
+                "[GPU PDH] Sample #{}: {} PIDs with GPU%, {} PIDs with dedicated, {} PIDs with shared",
+                count,
+                percent_map.len(),
+                mem_map.len(),
+                shared_map.len()
+            );
         }
 
         Ok(GpuSnapshot {
@@ -337,6 +373,7 @@ impl GpuPdhSampler {
             gpu_shared_bytes: shared_map,
             gpu_total_bytes: total_map,
             sample_timestamp: std::time::Instant::now(),
+            warming_up: false,
         })
     }
 }

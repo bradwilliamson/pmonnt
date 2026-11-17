@@ -14,11 +14,7 @@ impl PMonNTApp {
 
         let pids: Vec<u32> = self.perf_windows.keys().copied().collect();
         for pid in pids {
-            let gpu = self
-                .gpu_data
-                .get(&pid)
-                .map(|(pct, _, _, _)| *pct)
-                .unwrap_or(0.0);
+            let gpu = self.gpu_data.get(&pid).map_or(0.0, |(pct, _, _, _)| *pct);
 
             let mem = win_process_metrics::get_process_memory_by_pid(pid).unwrap_or(0);
             let private_bytes =
@@ -69,6 +65,10 @@ impl PMonNTApp {
     ) -> Option<PerfStats> {
         let mut stats = PerfStats::default();
 
+        // One SystemProcessInformation query covers times, cycles, I/O and handle count;
+        // fall back to per-process queries only if it fails.
+        let spi = win_process_metrics::system_process_entry(pid);
+
         // CPU
         if let Some(priority) = win_process_metrics::get_process_priority_class_by_pid(pid) {
             stats.priority_class = Some(match priority {
@@ -78,25 +78,28 @@ impl PMonNTApp {
                 0x00008000 => "Above Normal".to_string(),
                 0x00000080 => "High".to_string(),
                 0x00000100 => "Realtime".to_string(),
-                _ => format!("Unknown ({})", priority),
+                _ => format!("Unknown ({priority})"),
             });
         }
 
-        if let Some((kernel, user)) = win_process_metrics::get_process_times_by_pid(pid) {
+        let times = spi
+            .map(|e| (e.kernel_time_100ns, e.user_time_100ns))
+            .or_else(|| win_process_metrics::get_process_times_by_pid(pid));
+        if let Some((kernel, user)) = times {
             stats.kernel_time = Some(kernel);
             stats.user_time = Some(user);
             stats.total_time = Some(kernel + user);
 
-            if let Some(last) = last_stats {
-                if let (Some(lk), Some(lu)) = (last.kernel_time, last.user_time) {
-                    stats.kernel_delta = Some(kernel.saturating_sub(lk));
-                    stats.user_delta = Some(user.saturating_sub(lu));
-                    stats.total_delta = Some((kernel + user).saturating_sub(lk + lu));
-                }
+            if let Some(last) = last_stats
+                && let (Some(lk), Some(lu)) = (last.kernel_time, last.user_time)
+            {
+                stats.kernel_delta = Some(kernel.saturating_sub(lk));
+                stats.user_delta = Some(user.saturating_sub(lu));
+                stats.total_delta = Some((kernel + user).saturating_sub(lk + lu));
             }
         }
 
-        if let Some(cycles) = win_process_metrics::get_process_cycle_time_by_pid(pid) {
+        if let Some(cycles) = spi.map(|e| e.cycle_time) {
             stats.cycles = Some(cycles);
             if let Some(last) = last_stats.and_then(|l| l.cycles) {
                 stats.cycles_delta = Some(cycles.saturating_sub(last));
@@ -111,7 +114,8 @@ impl PMonNTApp {
             let current_working_set = mem_info.WorkingSetSize;
             let current_peak_working_set = mem_info.PeakWorkingSetSize;
 
-            stats.virtual_size = Some(current_commit); // Virtual size is commit size in Process Explorer
+            // Virtual size is the address space reserved + committed (not the commit charge).
+            stats.virtual_size = spi.map(|e| e.virtual_size_bytes as usize);
             stats.private_bytes = Some(current_private);
             stats.commit_charge = Some(current_commit);
             stats.peak_commit_charge = Some(current_peak_commit);
@@ -125,15 +129,18 @@ impl PMonNTApp {
                 .map(|p| p.max(current_private))
                 .or(Some(current_private));
 
-            if let Some(last) = last_stats {
-                if let Some(lp) = last.page_faults {
-                    stats.page_fault_delta = Some(mem_info.PageFaultCount.saturating_sub(lp));
-                }
+            if let Some(last) = last_stats
+                && let Some(lp) = last.page_faults
+            {
+                stats.page_fault_delta = Some(mem_info.PageFaultCount.saturating_sub(lp));
             }
         }
 
         // I/O
-        if let Some(io) = win_process_metrics::get_process_io_counters_by_pid(pid) {
+        let io = spi
+            .map(|e| e.io)
+            .or_else(|| win_process_metrics::get_process_io_counters_by_pid(pid));
+        if let Some(io) = io {
             stats.io_reads = Some(io.read_ops);
             stats.io_writes = Some(io.write_ops);
             stats.io_other = Some(io.other_ops);
@@ -185,7 +192,7 @@ impl PMonNTApp {
         }
 
         // Handles
-        if let Some(handles) = win_process_metrics::get_process_handle_count_by_pid(pid) {
+        if let Some(handles) = spi.map(|e| e.handle_count) {
             stats.handles = Some(handles);
 
             // Track peak handles
@@ -216,7 +223,7 @@ impl PMonNTApp {
         _pid: u32,
         pids_to_monitor: &[u32],
     ) {
-        use pmonnt_core::network::{get_all_connections, Protocol, TcpState};
+        use pmonnt_core::network::{Protocol, TcpState, get_all_connections};
         use std::collections::HashSet;
 
         monitor.error = None;
@@ -225,7 +232,7 @@ impl PMonNTApp {
         let conns = match get_all_connections() {
             Ok(c) => c,
             Err(e) => {
-                monitor.error = Some(format!("Failed to fetch connections: {}", e));
+                monitor.error = Some(format!("Failed to fetch connections: {e}"));
                 return;
             }
         };
@@ -242,11 +249,18 @@ impl PMonNTApp {
         let mut total_tcp = 0u32;
         let mut total_udp = 0u32;
         let mut unique_remotes = HashSet::new();
+        let mut tcp_keys = HashSet::new();
 
         for conn in &filtered {
             match conn.protocol {
                 Protocol::Tcp => {
                     total_tcp += 1;
+                    tcp_keys.insert((
+                        conn.local_address,
+                        conn.local_port,
+                        conn.remote_address,
+                        conn.remote_port,
+                    ));
                     if let Some(state) = conn.state {
                         match state {
                             TcpState::Established => tcp_states.established += 1,
@@ -273,14 +287,15 @@ impl PMonNTApp {
             }
         }
 
-        // Compute new connections/sec
+        // New connections/sec: connections not present at the previous poll (by identity,
+        // so 100 closed + 100 opened counts as 100 new, not 0).
         let now = std::time::Instant::now();
         let dt = now
             .duration_since(monitor.last_poll)
             .as_secs_f32()
             .max(0.001);
-        let delta_total = total_tcp.saturating_sub(monitor.last_snapshot_total) as f32;
-        let new_per_sec = (delta_total / dt).max(0.0);
+        let new_conns = monitor.observe_tcp(tcp_keys).unwrap_or(0);
+        let new_per_sec = new_conns as f32 / dt;
 
         // Smooth new_per_sec with rolling average of last 5 samples
         let smoothed_new_per_sec = if monitor.samples.len() >= 5 {
@@ -318,7 +333,6 @@ impl PMonNTApp {
         }
 
         // Update state
-        monitor.last_snapshot_total = total_tcp;
         monitor.last_poll = now;
         monitor.last_counts = tcp_states;
         monitor.child_pid_count = pids_to_monitor.len().saturating_sub(1); // Exclude root PID

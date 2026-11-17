@@ -60,9 +60,7 @@ impl HandleCache {
                 // Clean up tmp file on failure (best-effort)
                 let _ = std::fs::remove_file(&tmp_path);
                 return Err(anyhow::anyhow!(
-                    "Rename failed: {} (original error: {})",
-                    rename_err,
-                    e
+                    "Rename failed: {rename_err} (original error: {e})"
                 ));
             }
         }
@@ -108,6 +106,14 @@ impl HandleCache {
         })
     }
 
+    /// All summaries if the cache is still fresh.
+    ///
+    /// Reads the clock once, so callers doing many lookups (sorting a process list) should
+    /// use this instead of calling [`Self::get`] per PID.
+    pub fn fresh_summaries(&self) -> Option<&HashMap<u32, HandleSummary>> {
+        (self.last_update.elapsed().as_secs() < self.ttl_secs).then_some(&self.summaries)
+    }
+
     /// Get cached summary if still fresh
     pub fn get(&self, pid: u32) -> Option<&HandleSummary> {
         if self.last_update.elapsed().as_secs() >= self.ttl_secs {
@@ -135,7 +141,7 @@ impl HandleCache {
     ) {
         // Update leak detectors
         for (pid, summary) in &summaries {
-            let image_path = pid_to_path.get(pid).map(|s| s.as_str());
+            let image_path = pid_to_path.get(pid).map(std::string::String::as_str);
             let detector = self.get_or_create_detector(*pid, image_path);
             detector.add_sample(summary.total);
         }
@@ -161,7 +167,7 @@ impl HandleCache {
         }
 
         // Clean up old PIDs
-        let active_pids: std::collections::HashSet<u32> = type_counts.keys().cloned().collect();
+        let active_pids: std::collections::HashSet<u32> = type_counts.keys().copied().collect();
         self.type_history.retain(|pid, _| active_pids.contains(pid));
     }
 
@@ -186,8 +192,8 @@ impl HandleCache {
         all_types.extend(newest.keys());
 
         for type_idx in all_types {
-            let old_count = oldest.get(type_idx).copied().unwrap_or(0) as i64;
-            let new_count = newest.get(type_idx).copied().unwrap_or(0) as i64;
+            let old_count = i64::from(oldest.get(type_idx).copied().unwrap_or(0));
+            let new_count = i64::from(newest.get(type_idx).copied().unwrap_or(0));
             let delta = new_count - old_count;
 
             if delta > 0 {
@@ -196,7 +202,7 @@ impl HandleCache {
         }
 
         // Sort by delta descending, take top K
-        deltas.sort_by(|a, b| b.1.cmp(&a.1));
+        deltas.sort_by_key(|d| std::cmp::Reverse(d.1));
         deltas.truncate(TOP_K);
 
         Some(deltas)
@@ -206,8 +212,7 @@ impl HandleCache {
     pub fn is_leaking(&self, pid: u32) -> bool {
         self.leak_detectors
             .get(&pid)
-            .map(|d| d.is_leaking())
-            .unwrap_or(false)
+            .is_some_and(super::leak_detector::HandleLeakDetector::is_leaking)
     }
 
     /// Get delta from previous sample
@@ -260,10 +265,10 @@ impl HandleCache {
 
     /// Get current detector config for a PID (or default if not exists)
     pub fn get_detector_config(&self, pid: u32) -> (usize, u32, usize) {
-        self.leak_detectors
-            .get(&pid)
-            .map(|d| d.get_config())
-            .unwrap_or((20, 200, 2))
+        self.leak_detectors.get(&pid).map_or(
+            (20, 200, 2),
+            super::leak_detector::HandleLeakDetector::get_config,
+        )
     }
 
     /// Get config for an image path (for displaying defaults)

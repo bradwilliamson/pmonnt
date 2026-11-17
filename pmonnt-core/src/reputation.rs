@@ -108,7 +108,7 @@ impl fmt::Display for LookupState {
                 stats.total_engines()
             ),
             LookupState::NotFound => write!(f, "Not found"),
-            LookupState::Error(e) => write!(f, "Error: {}", e),
+            LookupState::Error(e) => write!(f, "Error: {e}"),
             LookupState::Aggregated(agg) => write!(f, "{}", agg.summary),
         }
     }

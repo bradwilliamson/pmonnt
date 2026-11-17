@@ -103,13 +103,12 @@ pub fn has_unsupported_modules(content: &str) -> bool {
         }
         // Accept: import "module"
         let rest = l.strip_prefix("import").unwrap_or("").trim_start();
-        if let Some(module) = rest.strip_prefix('"').and_then(|s| s.split('"').next()) {
-            if UNSUPPORTED_MODULES
+        if let Some(module) = rest.strip_prefix('"').and_then(|s| s.split('"').next())
+            && UNSUPPORTED_MODULES
                 .iter()
                 .any(|m| m.eq_ignore_ascii_case(module))
-            {
-                return true;
-            }
+        {
+            return true;
         }
     }
     false
@@ -132,6 +131,114 @@ pub enum RuleError {
     CacheError(String),
 }
 
+/// Basic ZIP safety limits for downloaded rule packages.
+const MAX_ZIP_ENTRIES: usize = 20_000;
+const MAX_SINGLE_FILE_BYTES: u64 = 2 * 1024 * 1024; // 2MB per rule file
+const MAX_TOTAL_EXTRACTED_BYTES: u64 = 200 * 1024 * 1024; // 200MB total
+
+/// Read `.yar`/`.yara` entries from a rule ZIP, enforcing the size limits on the bytes
+/// actually decompressed (the sizes declared in ZIP headers are not trusted).
+///
+/// Returns `(entry name, rule source)` pairs.
+fn read_zip_rule_sources(bytes: &[u8]) -> Result<Vec<(String, String)>, RuleError> {
+    use std::io::Read;
+
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes))
+        .map_err(|e| RuleError::YaraifyFetchFailed(format!("Invalid zip: {e}")))?;
+
+    let mut out = Vec::new();
+    let mut total_extracted: u64 = 0;
+    let entries = archive.len().min(MAX_ZIP_ENTRIES);
+    for i in 0..entries {
+        let file = archive
+            .by_index(i)
+            .map_err(|e| RuleError::YaraifyFetchFailed(e.to_string()))?;
+
+        let Ok(name) = file.name().map(std::borrow::Cow::into_owned) else {
+            log::warn!("Skipping ZIP entry {i} - name is not valid UTF-8");
+            continue;
+        };
+        if !has_rule_extension(&name) {
+            continue;
+        }
+
+        let declared = file.size();
+        if declared > MAX_SINGLE_FILE_BYTES {
+            log::warn!("Skipping rule {name} - too large ({declared} bytes)");
+            continue;
+        }
+        if total_extracted.saturating_add(declared) > MAX_TOTAL_EXTRACTED_BYTES {
+            log::warn!(
+                "Stopping ZIP extraction - exceeded {MAX_TOTAL_EXTRACTED_BYTES} bytes total"
+            );
+            break;
+        }
+
+        // Never read more than the per-file limit, whatever the header claims.
+        let mut raw = Vec::new();
+        file.take(MAX_SINGLE_FILE_BYTES + 1)
+            .read_to_end(&mut raw)
+            .map_err(|e| RuleError::YaraifyFetchFailed(e.to_string()))?;
+        let read = raw.len() as u64;
+        if read > MAX_SINGLE_FILE_BYTES {
+            log::warn!("Skipping rule {name} - decompresses past {MAX_SINGLE_FILE_BYTES} bytes");
+            continue;
+        }
+        total_extracted = total_extracted.saturating_add(read);
+        if total_extracted > MAX_TOTAL_EXTRACTED_BYTES {
+            log::warn!(
+                "Stopping ZIP extraction - exceeded {MAX_TOTAL_EXTRACTED_BYTES} bytes total"
+            );
+            break;
+        }
+
+        let content = String::from_utf8(raw)
+            .map_err(|e| RuleError::YaraifyFetchFailed(format!("{name}: {e}")))?;
+        out.push((name, content));
+    }
+    Ok(out)
+}
+
+/// True for `.yar` / `.yara` file names (case-insensitive, as on Windows).
+fn has_rule_extension(name: &str) -> bool {
+    std::path::Path::new(name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("yar") || e.eq_ignore_ascii_case("yara"))
+}
+
+/// Turn a YARAify rule package into compiled-checked rules, caching each one in `cache_dir`.
+fn yaraify_rules_from_zip(bytes: &[u8], cache_dir: &Path) -> Result<Vec<YaraRule>, RuleError> {
+    let mut rules = Vec::new();
+    for (name, content) in read_zip_rule_sources(bytes)? {
+        if has_unsupported_modules(&content) {
+            log::warn!("Skipping rule {name} - uses unsupported module");
+            continue;
+        }
+        if !is_rule_compilable(&content) {
+            log::warn!("Skipping rule {name} - failed to compile");
+            continue;
+        }
+
+        let safe_name = name.replace(['/', '\\'], "_");
+        std::fs::write(cache_dir.join(&safe_name), &content)
+            .map_err(|e| RuleError::CacheError(e.to_string()))?;
+
+        rules.push(YaraRule {
+            name: safe_name,
+            source: RuleSource::YARAify {
+                rule_name: name,
+                downloaded_at: SystemTime::now(),
+            },
+            content,
+            description: None,
+            severity: Severity::High,
+            tags: Vec::new(),
+        });
+    }
+    Ok(rules)
+}
+
 impl RuleManager {
     pub fn new(cache_dir: PathBuf) -> Self {
         std::fs::create_dir_all(&cache_dir).ok();
@@ -140,8 +247,7 @@ impl RuleManager {
         let yaraify_refresh_interval = std::env::var("PMONNT_YARAIFY_REFRESH_INTERVAL_SECS")
             .ok()
             .and_then(|s| s.parse::<u64>().ok())
-            .map(Duration::from_secs)
-            .unwrap_or_else(|| Duration::from_secs(60 * 60 * 24));
+            .map_or_else(|| Duration::from_secs(60 * 60 * 24), Duration::from_secs);
 
         Self {
             cache_dir,
@@ -159,47 +265,44 @@ impl RuleManager {
             Ok(entries) => {
                 for e in entries.flatten() {
                     let p = e.path();
-                    if p.extension()
-                        .and_then(|s| s.to_str())
-                        .map(|s| s.eq_ignore_ascii_case("yar") || s.eq_ignore_ascii_case("yara"))
-                        .unwrap_or(false)
+                    if p.extension().and_then(|s| s.to_str()).is_some_and(|s| {
+                        s.eq_ignore_ascii_case("yar") || s.eq_ignore_ascii_case("yara")
+                    }) && let Ok(content) = fs::read_to_string(&p)
                     {
-                        if let Ok(content) = fs::read_to_string(&p) {
-                            if has_unsupported_modules(&content) {
-                                log::warn!("Skipping rule {:?} - uses unsupported module", p);
-                                continue;
-                            }
-
-                            if !is_rule_compilable(&content) {
-                                log::warn!("Skipping rule {:?} - failed to compile", p);
-                                continue;
-                            }
-
-                            let metadata = fs::metadata(&p).ok();
-                            let modified = metadata
-                                .and_then(|m| m.modified().ok())
-                                .unwrap_or(SystemTime::now());
-                            self.rules.push(YaraRule {
-                                name: p
-                                    .file_name()
-                                    .and_then(|s| s.to_str())
-                                    .unwrap_or("local")
-                                    .to_string(),
-                                source: RuleSource::LocalFile {
-                                    path: p.clone(),
-                                    modified_at: modified,
-                                },
-                                content,
-                                description: None,
-                                severity: Severity::Medium,
-                                tags: Vec::new(),
-                            });
-                            count += 1;
+                        if has_unsupported_modules(&content) {
+                            log::warn!("Skipping rule {p:?} - uses unsupported module");
+                            continue;
                         }
+
+                        if !is_rule_compilable(&content) {
+                            log::warn!("Skipping rule {p:?} - failed to compile");
+                            continue;
+                        }
+
+                        let metadata = fs::metadata(&p).ok();
+                        let modified = metadata
+                            .and_then(|m| m.modified().ok())
+                            .unwrap_or_else(SystemTime::now);
+                        self.rules.push(YaraRule {
+                            name: p
+                                .file_name()
+                                .and_then(|s| s.to_str())
+                                .unwrap_or("local")
+                                .to_string(),
+                            source: RuleSource::LocalFile {
+                                path: p.clone(),
+                                modified_at: modified,
+                            },
+                            content,
+                            description: None,
+                            severity: Severity::Medium,
+                            tags: Vec::new(),
+                        });
+                        count += 1;
                     }
                 }
             }
-            Err(e) => return Err(RuleError::CacheError(format!("read dir failed: {}", e))),
+            Err(e) => return Err(RuleError::CacheError(format!("read dir failed: {e}"))),
         }
         Ok(count)
     }
@@ -215,8 +318,12 @@ impl RuleManager {
     pub async fn fetch_yaraify(
         ctx: YaraifyRefreshContext,
     ) -> Result<YaraifyRefreshResult, RuleError> {
-        // YARAify provides a ZIP package of all public YARA rules
-        let client = reqwest::Client::new();
+        // YARAify provides a ZIP package of all public YARA rules (~30 MB), so allow a
+        // generous whole-request timeout; connects are still bounded by the default.
+        let client = crate::http::client_builder()
+            .timeout(std::time::Duration::from_secs(300))
+            .build()
+            .map_err(|e| RuleError::YaraifyFetchFailed(e.to_string()))?;
 
         let mut request = client.get("https://yaraify.abuse.ch/yarahub/yaraify-rules.zip");
         if let Some(etag) = &ctx.etag {
@@ -253,98 +360,21 @@ impl RuleManager {
             .headers()
             .get(reqwest::header::ETAG)
             .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string());
+            .map(std::string::ToString::to_string);
         let last_modified = response
             .headers()
             .get(reqwest::header::LAST_MODIFIED)
             .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string());
+            .map(std::string::ToString::to_string);
 
         let bytes = response
             .bytes()
             .await
             .map_err(|e| RuleError::YaraifyFetchFailed(e.to_string()))?;
 
-        // Extract zip to cache directory
-        let reader = std::io::Cursor::new(bytes);
-        let mut archive = zip::ZipArchive::new(reader)
-            .map_err(|e| RuleError::YaraifyFetchFailed(format!("Invalid zip: {}", e)))?;
-
-        let mut rules = Vec::new();
-        let mut count = 0usize;
-
-        // Basic ZIP safety limits.
-        const MAX_ZIP_ENTRIES: usize = 20_000;
-        const MAX_SINGLE_FILE_BYTES: u64 = 2 * 1024 * 1024; // 2MB per rule file
-        const MAX_TOTAL_EXTRACTED_BYTES: u64 = 200 * 1024 * 1024; // 200MB total
-        let mut total_uncompressed: u64 = 0;
-
-        let entries = archive.len().min(MAX_ZIP_ENTRIES);
-        for i in 0..entries {
-            let mut file = archive
-                .by_index(i)
-                .map_err(|e| RuleError::YaraifyFetchFailed(e.to_string()))?;
-
-            let name = file.name().to_string();
-            if !(name.ends_with(".yar") || name.ends_with(".yara")) {
-                continue;
-            }
-
-            let uncompressed_size = file.size();
-            if uncompressed_size > MAX_SINGLE_FILE_BYTES {
-                log::warn!(
-                    "Skipping rule {} - too large ({} bytes)",
-                    name,
-                    uncompressed_size
-                );
-                continue;
-            }
-            if total_uncompressed.saturating_add(uncompressed_size) > MAX_TOTAL_EXTRACTED_BYTES {
-                log::warn!(
-                    "Stopping ZIP extraction - exceeded {} bytes total",
-                    MAX_TOTAL_EXTRACTED_BYTES
-                );
-                break;
-            }
-
-            let mut content = String::new();
-            use std::io::Read;
-            file.read_to_string(&mut content)
-                .map_err(|e| RuleError::YaraifyFetchFailed(e.to_string()))?;
-
-            total_uncompressed = total_uncompressed.saturating_add(uncompressed_size);
-
-            if has_unsupported_modules(&content) {
-                log::warn!("Skipping rule {} - uses unsupported module", name);
-                continue;
-            }
-
-            if !is_rule_compilable(&content) {
-                log::warn!("Skipping rule {} - failed to compile", name);
-                continue;
-            }
-
-            // Save to cache
-            let safe_name = name.replace("/", "_").replace("\\", "_");
-            let cache_path = ctx.cache_dir.join(&safe_name);
-            std::fs::write(&cache_path, &content)
-                .map_err(|e| RuleError::CacheError(e.to_string()))?;
-
-            rules.push(YaraRule {
-                name: safe_name,
-                source: RuleSource::YARAify {
-                    rule_name: name,
-                    downloaded_at: SystemTime::now(),
-                },
-                content,
-                description: None,
-                severity: Severity::High,
-                tags: Vec::new(),
-            });
-            count += 1;
-        }
-
-        log::info!("YARAify refresh fetched {} rule(s)", count);
+        let rules = yaraify_rules_from_zip(&bytes, &ctx.cache_dir)?;
+        let count = rules.len();
+        log::info!("YARAify refresh fetched {count} rule(s)");
         Ok(YaraifyRefreshResult {
             rules,
             etag,
@@ -355,8 +385,8 @@ impl RuleManager {
 
     pub fn apply_yaraify_refresh(&mut self, result: YaraifyRefreshResult) -> usize {
         self.last_yaraify_refresh = Some(SystemTime::now());
-        self.yaraify_etag = result.etag.clone();
-        self.yaraify_last_modified = result.last_modified.clone();
+        self.yaraify_etag.clone_from(&result.etag);
+        self.yaraify_last_modified.clone_from(&result.last_modified);
 
         save_yaraify_meta(
             &self.cache_dir,
@@ -398,7 +428,9 @@ impl RuleManager {
             data: Option<Vec<ThreatFoxIocData>>,
         }
 
-        let client = reqwest::Client::new();
+        let client = crate::http::client_builder()
+            .build()
+            .map_err(|e| RuleError::YaraifyFetchFailed(e.to_string()))?;
         let mut request =
             client
                 .post("https://threatfox-api.abuse.ch/api/v1/")
@@ -464,8 +496,12 @@ impl RuleManager {
     }
 
     pub async fn refresh_from_yaraify(&mut self) -> Result<usize, RuleError> {
-        // YARAify provides a ZIP package of all public YARA rules
-        let client = reqwest::Client::new();
+        // YARAify provides a ZIP package of all public YARA rules (~30 MB), so allow a
+        // generous whole-request timeout; connects are still bounded by the default.
+        let client = crate::http::client_builder()
+            .timeout(std::time::Duration::from_secs(300))
+            .build()
+            .map_err(|e| RuleError::YaraifyFetchFailed(e.to_string()))?;
 
         let mut request = client.get("https://yaraify.abuse.ch/yarahub/yaraify-rules.zip");
         if let Some(etag) = &self.yaraify_etag {
@@ -498,99 +534,25 @@ impl RuleManager {
             .headers()
             .get(reqwest::header::ETAG)
             .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string());
+            .map(std::string::ToString::to_string);
         self.yaraify_last_modified = response
             .headers()
             .get(reqwest::header::LAST_MODIFIED)
             .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string());
+            .map(std::string::ToString::to_string);
 
         let bytes = response
             .bytes()
             .await
             .map_err(|e| RuleError::YaraifyFetchFailed(e.to_string()))?;
 
-        // Extract zip to cache directory
-        let reader = std::io::Cursor::new(bytes);
-        let mut archive = zip::ZipArchive::new(reader)
-            .map_err(|e| RuleError::YaraifyFetchFailed(format!("Invalid zip: {}", e)))?;
+        let fresh = yaraify_rules_from_zip(&bytes, &self.cache_dir)?;
+        let count = fresh.len();
 
         // Prevent duplicates if refresh is called multiple times.
         self.rules
             .retain(|r| !matches!(r.source, RuleSource::YARAify { .. }));
-
-        let mut count = 0;
-
-        // Basic ZIP safety limits.
-        const MAX_ZIP_ENTRIES: usize = 20_000;
-        const MAX_SINGLE_FILE_BYTES: u64 = 2 * 1024 * 1024; // 2MB per rule file
-        const MAX_TOTAL_EXTRACTED_BYTES: u64 = 200 * 1024 * 1024; // 200MB total
-        let mut total_uncompressed: u64 = 0;
-
-        let entries = archive.len().min(MAX_ZIP_ENTRIES);
-        for i in 0..entries {
-            let mut file = archive
-                .by_index(i)
-                .map_err(|e| RuleError::YaraifyFetchFailed(e.to_string()))?;
-
-            let name = file.name().to_string();
-            if name.ends_with(".yar") || name.ends_with(".yara") {
-                let uncompressed_size = file.size();
-                if uncompressed_size > MAX_SINGLE_FILE_BYTES {
-                    log::warn!(
-                        "Skipping rule {} - too large ({} bytes)",
-                        name,
-                        uncompressed_size
-                    );
-                    continue;
-                }
-                if total_uncompressed.saturating_add(uncompressed_size) > MAX_TOTAL_EXTRACTED_BYTES
-                {
-                    log::warn!(
-                        "Stopping ZIP extraction - exceeded {} bytes total",
-                        MAX_TOTAL_EXTRACTED_BYTES
-                    );
-                    break;
-                }
-
-                let mut content = String::new();
-                use std::io::Read;
-                file.read_to_string(&mut content)
-                    .map_err(|e| RuleError::YaraifyFetchFailed(e.to_string()))?;
-
-                total_uncompressed = total_uncompressed.saturating_add(uncompressed_size);
-
-                if has_unsupported_modules(&content) {
-                    log::warn!("Skipping rule {} - uses unsupported module", name);
-                    continue;
-                }
-
-                if !is_rule_compilable(&content) {
-                    log::warn!("Skipping rule {} - failed to compile", name);
-                    continue;
-                }
-
-                // Save to cache
-                let safe_name = name.replace("/", "_").replace("\\", "_");
-                let cache_path = self.cache_dir.join(&safe_name);
-                std::fs::write(&cache_path, &content)
-                    .map_err(|e| RuleError::CacheError(e.to_string()))?;
-
-                // Add to rules list
-                self.rules.push(YaraRule {
-                    name: safe_name,
-                    source: RuleSource::YARAify {
-                        rule_name: name,
-                        downloaded_at: SystemTime::now(),
-                    },
-                    content,
-                    description: None,
-                    severity: Severity::High,
-                    tags: Vec::new(),
-                });
-                count += 1;
-            }
-        }
+        self.rules.extend(fresh);
 
         self.last_yaraify_refresh = Some(SystemTime::now());
 
@@ -625,7 +587,9 @@ impl RuleManager {
             data: Option<Vec<ThreatFoxIocData>>,
         }
 
-        let client = reqwest::Client::new();
+        let client = crate::http::client_builder()
+            .build()
+            .map_err(|e| RuleError::YaraifyFetchFailed(e.to_string()))?;
         let mut request =
             client
                 .post("https://threatfox-api.abuse.ch/api/v1/")
@@ -692,17 +656,17 @@ impl RuleManager {
         match fs::read_to_string(&path) {
             Ok(content) => {
                 if has_unsupported_modules(&content) {
-                    log::warn!("Skipping rule {:?} - uses unsupported module", path);
+                    log::warn!("Skipping rule {path:?} - uses unsupported module");
                     return Ok(0);
                 }
 
                 if !is_rule_compilable(&content) {
-                    log::warn!("Skipping rule {:?} - failed to compile", path);
+                    log::warn!("Skipping rule {path:?} - failed to compile");
                     return Ok(0);
                 }
                 let modified = fs::metadata(&path)
                     .and_then(|m| m.modified())
-                    .unwrap_or(SystemTime::now());
+                    .unwrap_or_else(|_| SystemTime::now());
                 self.rules.push(YaraRule {
                     name: path
                         .file_name()
@@ -735,8 +699,7 @@ impl RuleManager {
                 .path();
             if p.extension()
                 .and_then(|s| s.to_str())
-                .map(|s| s.eq_ignore_ascii_case("yar") || s.eq_ignore_ascii_case("yara"))
-                .unwrap_or(false)
+                .is_some_and(|s| s.eq_ignore_ascii_case("yar") || s.eq_ignore_ascii_case("yara"))
                 && self.load_local_file(p.clone()).is_ok()
             {
                 total += 1;

@@ -1,4 +1,4 @@
-use pmonnt_core::yara::rules::{has_unsupported_modules, RuleManager};
+use pmonnt_core::yara::rules::{RuleManager, has_unsupported_modules};
 use std::fs;
 use tempfile::tempdir;
 

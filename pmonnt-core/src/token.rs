@@ -1,8 +1,8 @@
 //! Process token inspection functionality
 
 use crate::process::Process;
-use std::collections::hash_map::Entry;
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::time::{Duration, Instant};
 
 /// Information about a process token
@@ -99,6 +99,7 @@ impl TokenCache {
                     gpu_memory_bytes: None,
                     path: None,
                     signature: None,
+                    create_time: None,
                 };
                 let info = TokenInfo::from_process(&process);
 
@@ -117,6 +118,7 @@ impl TokenCache {
                     gpu_memory_bytes: None,
                     path: None,
                     signature: None,
+                    create_time: None,
                 };
                 let info = TokenInfo::from_process(&process);
                 &vacant.insert((info, now)).0
@@ -129,6 +131,11 @@ impl TokenCache {
         let now = Instant::now();
         self.cache
             .retain(|_, (_, timestamp)| now.duration_since(*timestamp) < self.ttl);
+    }
+
+    /// Drop entries for PIDs `keep` rejects (exited, or recycled by another process).
+    pub fn retain_pids(&mut self, keep: impl Fn(u32) -> bool) {
+        self.cache.retain(|&pid, _| keep(pid));
     }
 
     /// Get cache size

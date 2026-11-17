@@ -50,7 +50,7 @@ fn test_local_cache_eviction_over_max_entries() {
 
     // Store 1001 entries
     for i in 0..1001 {
-        let hash = format!("{:064x}", i);
+        let hash = format!("{i:064x}");
         let stats = VtStats {
             malicious: 1,
             suspicious: 0,
@@ -68,10 +68,10 @@ fn test_local_cache_eviction_over_max_entries() {
     let _provider = LocalCacheProvider::new(cache_path.clone());
 
     // Check that we have at most 1000 entries
-    if let Ok(content) = fs::read_to_string(&cache_path) {
-        if let Ok(entries) = serde_json::from_str::<Vec<serde_json::Value>>(&content) {
-            assert!(entries.len() <= 1000);
-        }
+    if let Ok(content) = fs::read_to_string(&cache_path)
+        && let Ok(entries) = serde_json::from_str::<Vec<serde_json::Value>>(&content)
+    {
+        assert!(entries.len() <= 1000);
     }
 }
 
@@ -113,7 +113,7 @@ fn test_local_cache_concurrent_access() {
     for i in 0..10 {
         let provider_clone = Arc::clone(&provider);
         let handle = thread::spawn(move || {
-            let hash = format!("{:064x}", i);
+            let hash = format!("{i:064x}");
             let stats = VtStats {
                 malicious: 1,
                 suspicious: 0,

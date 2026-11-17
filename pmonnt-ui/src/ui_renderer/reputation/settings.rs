@@ -108,8 +108,7 @@ pub fn render_reputation_settings_panel(
     ui.separator();
     ui.label(
         egui::RichText::new(format!(
-            "Online lookups: {} • VT: {} • MB: {} • TF: {}",
-            on_off, vt_cfg, mb_cfg, tf_cfg
+            "Online lookups: {on_off} • VT: {vt_cfg} • MB: {mb_cfg} • TF: {tf_cfg}"
         ))
         .small()
         .color(ui.visuals().weak_text_color()),
@@ -261,7 +260,7 @@ pub fn render_reputation_settings_panel(
 
             if ui.button("Save key").clicked() && !key_input.trim().is_empty() {
                 match crate::credentials::save_vt_key(key_input.trim()) {
-                    Ok(_) => {
+                    Ok(()) => {
                         *vt_api_key = key_input.trim().to_string();
                         vt_provider.set_api_key(key_input.trim().to_string());
                         *vt_enabled = true;
@@ -282,8 +281,8 @@ pub fn render_reputation_settings_panel(
                         ui.ctx().request_repaint();
                     }
                     Err(e) => {
-                        log::error!("Failed to save VT API key: {}", e);
-                        ui.colored_label(egui::Color32::RED, format!("Failed to save key: {}", e));
+                        log::error!("Failed to save VT API key: {e}");
+                        ui.colored_label(egui::Color32::RED, format!("Failed to save key: {e}"));
                     }
                 }
             }
@@ -296,7 +295,7 @@ pub fn render_reputation_settings_panel(
         ui.separator();
         if ui.button("Clear saved key").clicked() {
             match crate::credentials::delete_vt_key() {
-                Ok(_) => {
+                Ok(()) => {
                     vt_api_key.clear();
                     *vt_enabled = false;
                     *online_lookups_enabled = false;
@@ -312,8 +311,8 @@ pub fn render_reputation_settings_panel(
                     ui.ctx().request_repaint();
                 }
                 Err(e) => {
-                    log::error!("Failed to delete VT key: {}", e);
-                    ui.colored_label(egui::Color32::RED, format!("Failed to clear key: {}", e));
+                    log::error!("Failed to delete VT key: {e}");
+                    ui.colored_label(egui::Color32::RED, format!("Failed to clear key: {e}"));
                 }
             }
         }
@@ -366,7 +365,7 @@ pub fn render_reputation_settings_panel(
 
             if ui.button("Set key").clicked() && !mb_key_input.trim().is_empty() {
                 match crate::credentials::save_mb_key(mb_key_input.trim()) {
-                    Ok(_) => {
+                    Ok(()) => {
                         *mb_api_key = mb_key_input.trim().to_string();
                         push_reputation_config(
                             reputation_service.as_ref(),
@@ -383,8 +382,8 @@ pub fn render_reputation_settings_panel(
                         ui.ctx().request_repaint();
                     }
                     Err(e) => {
-                        log::error!("Failed to save MB API key: {}", e);
-                        ui.colored_label(egui::Color32::RED, format!("Failed to save key: {}", e));
+                        log::error!("Failed to save MB API key: {e}");
+                        ui.colored_label(egui::Color32::RED, format!("Failed to save key: {e}"));
                     }
                 }
             }
@@ -422,7 +421,7 @@ pub fn render_reputation_settings_panel(
 
             if ui.button("Set key").clicked() && !tf_key_input.trim().is_empty() {
                 match crate::credentials::save_tf_key(tf_key_input.trim()) {
-                    Ok(_) => {
+                    Ok(()) => {
                         *tf_api_key = tf_key_input.trim().to_string();
                         push_reputation_config(
                             reputation_service.as_ref(),
@@ -439,8 +438,8 @@ pub fn render_reputation_settings_panel(
                         ui.ctx().request_repaint();
                     }
                     Err(e) => {
-                        log::error!("Failed to save TF API key: {}", e);
-                        ui.colored_label(egui::Color32::RED, format!("Failed to save key: {}", e));
+                        log::error!("Failed to save TF API key: {e}");
+                        ui.colored_label(egui::Color32::RED, format!("Failed to save key: {e}"));
                     }
                 }
             }

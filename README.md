@@ -3,7 +3,7 @@
 **A Process Monitor for Windows** — A modern, feature-rich alternative to Task Manager and Process Explorer, built in Rust.
 
 ![Windows](https://img.shields.io/badge/platform-Windows-0078D6?logo=windows)
-![Rust](https://img.shields.io/badge/rust-1.75%2B-orange?logo=rust)
+![Rust](https://img.shields.io/badge/rust-1.99%2B-orange?logo=rust)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
 <!-- 
@@ -44,7 +44,7 @@
 ## Requirements
 
 - **Windows 10/11** (x64)
-- **Rust 1.75+** (for building from source)
+- **Rust 1.99+** (for building from source)
 - **Administrator privileges** recommended for full functionality
 
 ## Building
@@ -59,8 +59,8 @@ The binary will be at `target/release/pmonnt.exe`.
 
 ### Build Requirements
 
-- Visual Studio Build Tools (for `windows` crate)
-- Rust toolchain: `rustup default stable`
+- Visual Studio Build Tools (MSVC linker)
+- Rust 1.99.0. `rust-toolchain.toml` pins it, so `rustup` installs it automatically.
 
 ## Usage
 
@@ -91,16 +91,20 @@ pmonnt/
 ├── pmonnt-core/     # Core library (process enum, Windows APIs, providers)
 │   ├── src/
 │   │   ├── win/         # Windows-specific implementations
+│   │   ├── view/        # Process-list view model (sorting, grouping, filtering)
 │   │   ├── providers/   # MalwareBazaar, ThreatFox integrations
 │   │   ├── yara/        # YARA scanning engine
 │   │   └── ...
+│   ├── benches/     # Gungraun (Valgrind) benchmarks
 │   └── tests/
 ├── pmonnt-ui/       # GUI application (egui-based)
 │   └── src/
 │       ├── app/         # Application state and update logic
 │       ├── ui_renderer/ # UI components and dialogs
 │       └── ...
-├── Cargo.toml       # Workspace configuration
+├── tools/valgrind/  # Memcheck script and suppressions
+├── docs/            # Code review notes, performance tooling
+├── Cargo.toml       # Workspace configuration (shared lints, profiles)
 └── README.md
 ```
 
@@ -114,6 +118,28 @@ pmonnt/
 | `Ctrl+F` | Focus search box |
 | `Escape` | Clear selection / close dialog |
 | `F5` | Refresh process list |
+
+## Development
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings   # workspace lints live in Cargo.toml
+cargo test --workspace
+```
+
+Everything outside `pmonnt-core/src/win` and the UI also builds on Linux. There,
+`cargo test -p pmonnt-core` runs the portable tests, and the Valgrind tooling measures the
+hot paths:
+
+```bash
+cargo bench -p pmonnt-core --bench view_model --bench core_paths   # Gungraun: Callgrind + DHAT
+tools/valgrind/memcheck-core-tests.sh                               # unit tests under Memcheck
+```
+
+See [docs/performance.md](docs/performance.md) for setup, how to compare against a
+baseline, and the current numbers. CI (`.github/workflows/ci.yml`) runs the Windows build
+and tests, the Linux core tests under Memcheck, the benchmarks, `cargo audit` and
+`cargo deny`.
 
 ## Contributing
 

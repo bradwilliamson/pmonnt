@@ -4,10 +4,10 @@ const TOKEN_PRIVILEGES_CLASS: TOKEN_INFORMATION_CLASS = TOKEN_INFORMATION_CLASS(
 const TOKEN_ELEVATION_CLASS: TOKEN_INFORMATION_CLASS = TOKEN_INFORMATION_CLASS(20); // TokenElevation
 const TOKEN_INTEGRITY_LEVEL_CLASS: TOKEN_INFORMATION_CLASS = TOKEN_INFORMATION_CLASS(25); // TokenIntegrityLevel
 const TOKEN_IS_APP_CONTAINER_CLASS: TOKEN_INFORMATION_CLASS = TOKEN_INFORMATION_CLASS(29); // TokenIsAppContainer
-                                                                                           // Windows API wrappers for process token inspection
-                                                                                           //
-                                                                                           // This module provides safe wrappers around Windows token APIs.
-                                                                                           // All unsafe code is contained here with documented invariants.
+// Windows API wrappers for process token inspection
+//
+// This module provides safe wrappers around Windows token APIs.
+// All unsafe code is contained here with documented invariants.
 
 use crate::token::{PrivilegeInfo, TokenInfo};
 use crate::win::HandleGuard;
@@ -33,9 +33,9 @@ pub fn inspect_process_token(pid: u32) -> TokenInfo {
         Ok(handle) => handle,
         Err(e) => {
             return TokenInfo {
-                error: Some(format!("Failed to open process: {}", e)),
+                error: Some(format!("Failed to open process: {e}")),
                 ..Default::default()
-            }
+            };
         }
     };
 
@@ -45,7 +45,7 @@ pub fn inspect_process_token(pid: u32) -> TokenInfo {
     // Try to open the process token
     let mut token_handle = HANDLE::default();
     // SAFETY: OpenProcessToken is called with a valid process handle and TOKEN_QUERY access rights.
-    if unsafe { OpenProcessToken(process_handle, TOKEN_QUERY, &mut token_handle) }.is_err() {
+    if unsafe { OpenProcessToken(process_handle, TOKEN_QUERY, &raw mut token_handle) }.is_err() {
         return TokenInfo {
             error: Some(format!(
                 "Failed to open process token: {}",
@@ -97,13 +97,14 @@ fn get_token_user(token: HANDLE) -> Option<String> {
     // SAFETY: Only called with a valid token handle. All buffer allocations checked.
     use std::ffi::OsString;
     use std::os::windows::ffi::OsStringExt;
-    use windows::core::PWSTR;
     use windows::Win32::Security::LookupAccountSidW;
+    use windows::core::PWSTR;
 
     // Query TOKEN_USER size
     let mut required_size = 0u32;
     // SAFETY: GetTokenInformation size query with valid token handle
-    let _ = unsafe { GetTokenInformation(token, TOKEN_USER_CLASS, None, 0, &mut required_size) };
+    let _ =
+        unsafe { GetTokenInformation(token, TOKEN_USER_CLASS, None, 0, &raw mut required_size) };
     if required_size == 0 {
         return None;
     }
@@ -113,9 +114,9 @@ fn get_token_user(token: HANDLE) -> Option<String> {
         GetTokenInformation(
             token,
             TOKEN_USER_CLASS,
-            Some(buffer.as_mut_ptr() as *mut _),
+            Some(buffer.as_mut_ptr().cast()),
             required_size,
-            &mut required_size,
+            &raw mut required_size,
         )
     }
     .is_err()
@@ -124,7 +125,7 @@ fn get_token_user(token: HANDLE) -> Option<String> {
     }
     // Alignment-safe parsing: read TOKEN_USER struct with read_unaligned
     // SAFETY: buffer is valid and large enough for TOKEN_USER
-    let token_user = unsafe { std::ptr::read_unaligned(buffer.as_ptr() as *const TOKEN_USER) };
+    let token_user = unsafe { std::ptr::read_unaligned(buffer.as_ptr().cast::<TOKEN_USER>()) };
     let sid = token_user.User.Sid;
 
     // Try LookupAccountSidW for DOMAIN\User
@@ -138,11 +139,11 @@ fn get_token_user(token: HANDLE) -> Option<String> {
         LookupAccountSidW(
             None,
             sid,
-            PWSTR(name.as_mut_ptr()),
-            &mut name_len,
-            PWSTR(domain.as_mut_ptr()),
-            &mut domain_len,
-            &mut sid_type,
+            Some(PWSTR(name.as_mut_ptr())),
+            &raw mut name_len,
+            Some(PWSTR(domain.as_mut_ptr())),
+            &raw mut domain_len,
+            &raw mut sid_type,
         )
     };
     if lookup_result.is_ok() {
@@ -153,9 +154,9 @@ fn get_token_user(token: HANDLE) -> Option<String> {
             .to_string_lossy()
             .into_owned();
         let full = if !domain.is_empty() {
-            format!("{}\\{}", domain, name)
+            format!("{domain}\\{name}")
         } else {
-            name.to_owned()
+            name
         };
         return Some(full);
     }
@@ -195,7 +196,7 @@ fn get_token_integrity(token: HANDLE) -> Option<String> {
             TOKEN_INTEGRITY_LEVEL_CLASS,
             None,
             0,
-            &mut required_size,
+            &raw mut required_size,
         )
     };
     if required_size == 0 {
@@ -207,9 +208,9 @@ fn get_token_integrity(token: HANDLE) -> Option<String> {
         GetTokenInformation(
             token,
             TOKEN_INTEGRITY_LEVEL_CLASS,
-            Some(buffer.as_mut_ptr() as *mut _),
+            Some(buffer.as_mut_ptr().cast()),
             required_size,
-            &mut required_size,
+            &raw mut required_size,
         )
     }
     .is_err()
@@ -219,7 +220,7 @@ fn get_token_integrity(token: HANDLE) -> Option<String> {
     // Alignment-safe parsing: read TOKEN_MANDATORY_LABEL struct with read_unaligned
     // SAFETY: buffer is valid and large enough for TOKEN_MANDATORY_LABEL
     let label =
-        unsafe { std::ptr::read_unaligned(buffer.as_ptr() as *const TOKEN_MANDATORY_LABEL) };
+        unsafe { std::ptr::read_unaligned(buffer.as_ptr().cast::<TOKEN_MANDATORY_LABEL>()) };
     let sid = label.Label.Sid;
 
     // Parse last subauthority RID using Win32 helpers
@@ -229,7 +230,7 @@ fn get_token_integrity(token: HANDLE) -> Option<String> {
         if count.is_null() || *count == 0 {
             return None;
         }
-        let rid_ptr = windows::Win32::Security::GetSidSubAuthority(sid, (*count - 1) as u32);
+        let rid_ptr = windows::Win32::Security::GetSidSubAuthority(sid, u32::from(*count - 1));
         if rid_ptr.is_null() {
             return None;
         }
@@ -242,7 +243,7 @@ fn get_token_integrity(token: HANDLE) -> Option<String> {
             0x3000 => Some("High".to_string()),
             0x4000 => Some("System".to_string()),
             0x5000 => Some("Protected".to_string()),
-            _ => Some(format!("Unknown (0x{:X})", rid)),
+            _ => Some(format!("Unknown (0x{rid:X})")),
         }
     }
 }
@@ -257,9 +258,9 @@ fn get_token_elevation(token: HANDLE) -> Option<bool> {
         GetTokenInformation(
             token,
             TOKEN_ELEVATION_CLASS, // TokenElevation
-            Some(&mut elevation as *mut _ as *mut _),
+            Some((&raw mut elevation).cast()),
             required_size,
-            &mut required_size,
+            &raw mut required_size,
         )
     }
     .is_ok()
@@ -280,9 +281,9 @@ fn get_token_is_app_container(token: HANDLE) -> Option<bool> {
         GetTokenInformation(
             token,
             TOKEN_IS_APP_CONTAINER_CLASS, // TokenIsAppContainer
-            Some(&mut is_app_container as *mut _ as *mut _),
+            Some((&raw mut is_app_container).cast()),
             required_size,
-            &mut required_size,
+            &raw mut required_size,
         )
     }
     .is_ok()
@@ -299,7 +300,13 @@ fn get_token_privileges(token: HANDLE) -> Vec<PrivilegeInfo> {
     let mut required_size = 0u32;
     // SAFETY: GetTokenInformation is called with a valid token handle. Passing None with size 0 is the documented pattern for querying buffer size.
     let _ = unsafe {
-        GetTokenInformation(token, TOKEN_PRIVILEGES_CLASS, None, 0, &mut required_size)
+        GetTokenInformation(
+            token,
+            TOKEN_PRIVILEGES_CLASS,
+            None,
+            0,
+            &raw mut required_size,
+        )
         // TokenPrivileges
     };
 
@@ -314,9 +321,9 @@ fn get_token_privileges(token: HANDLE) -> Vec<PrivilegeInfo> {
         GetTokenInformation(
             token,
             TOKEN_PRIVILEGES_CLASS, // TokenPrivileges
-            Some(buffer.as_mut_ptr() as *mut _),
+            Some(buffer.as_mut_ptr().cast()),
             required_size,
-            &mut required_size,
+            &raw mut required_size,
         )
     }
     .is_err()
@@ -342,7 +349,7 @@ fn get_token_privileges(token: HANDLE) -> Vec<PrivilegeInfo> {
         }
         // SAFETY: We use read_unaligned to avoid UB
         let entry =
-            unsafe { ptr::read_unaligned(buffer[offset..].as_ptr() as *const LUID_AND_ATTRIBUTES) };
+            unsafe { ptr::read_unaligned(buffer[offset..].as_ptr().cast::<LUID_AND_ATTRIBUTES>()) };
         if let Some(name) = luid_to_privilege_name(entry.Luid) {
             let enabled = (entry.Attributes.0 & 0x00000002) != 0; // SE_PRIVILEGE_ENABLED
             privileges.push(PrivilegeInfo::new(name, enabled));
@@ -354,13 +361,13 @@ fn get_token_privileges(token: HANDLE) -> Vec<PrivilegeInfo> {
 fn luid_to_privilege_name(luid: windows::Win32::Foundation::LUID) -> Option<String> {
     use std::ffi::OsString;
     use std::os::windows::ffi::OsStringExt;
-    use windows::core::PWSTR;
     use windows::Win32::Security::LookupPrivilegeNameW;
+    use windows::core::PWSTR;
 
     // First call to get required buffer size
     let mut required_size = 0u32;
     // SAFETY: LookupPrivilegeNameW is called with a valid LUID. Passing null buffer with size query is the documented pattern.
-    let _ = unsafe { LookupPrivilegeNameW(None, &luid, PWSTR::null(), &mut required_size) };
+    let _ = unsafe { LookupPrivilegeNameW(None, &raw const luid, None, &raw mut required_size) };
 
     if required_size == 0 {
         return None;
@@ -369,12 +376,19 @@ fn luid_to_privilege_name(luid: windows::Win32::Foundation::LUID) -> Option<Stri
     // Allocate buffer and get the name
     let mut buffer = vec![0u16; required_size as usize];
     // SAFETY: LookupPrivilegeNameW is called with a valid LUID and properly allocated buffer of required_size elements.
-    if unsafe { LookupPrivilegeNameW(None, &luid, PWSTR(buffer.as_mut_ptr()), &mut required_size) }
-        .is_ok()
+    if unsafe {
+        LookupPrivilegeNameW(
+            None,
+            &raw const luid,
+            Some(PWSTR(buffer.as_mut_ptr())),
+            &raw mut required_size,
+        )
+    }
+    .is_ok()
     {
         // Convert UTF-16 to String
         let os_string = OsString::from_wide(&buffer[..(required_size as usize).saturating_sub(1)]);
-        os_string.to_str().map(|s| s.to_string())
+        os_string.to_str().map(std::string::ToString::to_string)
     } else {
         None
     }

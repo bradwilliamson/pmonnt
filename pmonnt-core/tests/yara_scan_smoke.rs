@@ -7,7 +7,7 @@ use pmonnt_core::yara::scanner::{ProcessScanner, ScanError, ScanOptions};
 use tokio_util::sync::CancellationToken;
 
 #[test]
-#[ignore]
+#[ignore = "scans live process memory; run with --ignored"]
 fn yara_scan_can_be_cancelled_via_token() {
     // Integration-style test: scans process memory and verifies cancellation path.
     // Ignored by default because it depends on OS state + may be slow.
@@ -52,9 +52,12 @@ fn yara_scan_can_be_cancelled_via_token() {
                 .await
         });
 
-        // Wait until we see at least one progress update, then cancel.
+        // Wait until we see at least one progress update, then cancel. Drop the receiver too:
+        // the channel is bounded, and a scanner blocked on a full channel would never get
+        // back to its cancellation check.
         let _ = progress_rx.recv().await;
         cancel.cancel();
+        drop(progress_rx);
 
         let res = task.await.expect("task join");
         assert!(matches!(res, Err(ScanError::Cancelled)));

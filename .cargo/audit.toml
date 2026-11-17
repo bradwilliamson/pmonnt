@@ -1,0 +1,7 @@
+# cargo-audit configuration. Keep in sync with the `ignore` list in deny.toml, which
+# records the reasoning for each accepted advisory.
+[advisories]
+ignore = [
+    "RUSTSEC-2025-0141", # bincode unmaintained; only via yara-x compiled-rule serialization
+    "RUSTSEC-2023-0071", # rsa Marvin attack needs a decryption oracle; yara-x only verifies signatures
+]

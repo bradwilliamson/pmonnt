@@ -89,7 +89,7 @@ pub fn parse_threatfox_search_hash_response_json(
             match serde_json::from_value::<Vec<TfIoc>>(data_val.clone()) {
                 Ok(d) => data_vec = d,
                 Err(e) => {
-                    meta.last_error_message = Some(format!("parse data error: {}", e));
+                    meta.last_error_message = Some(format!("parse data error: {e}"));
                 }
             }
         } else if data_val.is_string() {
@@ -136,12 +136,11 @@ impl ThreatFoxProvider {
     }
 
     fn is_rate_limited(&self) -> bool {
-        if let Ok(rate_limit) = self.rate_limit_until.lock() {
-            if let Some(until) = *rate_limit {
-                if Instant::now() < until {
-                    return true;
-                }
-            }
+        if let Ok(rate_limit) = self.rate_limit_until.lock()
+            && let Some(until) = *rate_limit
+            && Instant::now() < until
+        {
+            return true;
         }
         false
     }
@@ -166,10 +165,10 @@ impl ThreatFoxProvider {
         };
 
         // Build client
-        let client = reqwest::blocking::Client::builder()
+        let client = crate::http::blocking_client_builder()
             .timeout(Duration::from_secs(15))
             .build()
-            .map_err(|e| format!("http build error: {}", e))?;
+            .map_err(|e| format!("http build error: {e}"))?;
 
         let api_key = self
             .api_key
@@ -178,7 +177,7 @@ impl ThreatFoxProvider {
             .clone();
 
         let mut req = client.post(url).json(&body);
-        if let Some(k) = api_key.clone() {
+        if let Some(k) = api_key {
             // Log presence of API key (length only, do not log value)
             debug!("ThreatFox API key present (len={})", k.len());
             // ThreatFox expects "Auth-Key" header
@@ -187,16 +186,13 @@ impl ThreatFoxProvider {
             debug!("ThreatFox API key not present");
         }
 
-        let resp = req.send().map_err(|e| format!("http send error: {}", e))?;
+        let resp = req.send().map_err(|e| format!("http send error: {e}"))?;
         meta.last_http_status = Some(resp.status().as_u16());
 
         let status_code = resp.status().as_u16();
         // Read body for parsing and diagnostics
-        let text = resp.text().map_err(|e| format!("http read error: {}", e))?;
-        debug!(
-            "ThreatFox search_hash_verbose HTTP {} for {}",
-            status_code, hash
-        );
+        let text = resp.text().map_err(|e| format!("http read error: {e}"))?;
+        debug!("ThreatFox search_hash_verbose HTTP {status_code} for {hash}");
 
         // Log full response for non-200 to aid debugging
         if status_code != 200 {
@@ -204,13 +200,13 @@ impl ThreatFoxProvider {
                 "ThreatFox non-200 response: HTTP {} for hash {}\nBody: {}",
                 status_code,
                 hash,
-                &text[..text.len().min(2048)]
+                &text[..text.floor_char_boundary(2048)]
             );
-            meta.last_error_message = Some(format!("HTTP {}", status_code));
+            meta.last_error_message = Some(format!("HTTP {status_code}"));
         }
 
         let (data_vec, parsed_meta) = parse_threatfox_search_hash_response_json(&text)
-            .map_err(|e| format!("parse error: {}", e))?;
+            .map_err(|e| format!("parse error: {e}"))?;
 
         // Preserve HTTP status and only override fields we parse from body.
         meta.last_query_status = parsed_meta.last_query_status;
@@ -240,11 +236,11 @@ impl ReputationProvider for ThreatFoxProvider {
             return LookupState::Error("Invalid SHA256 hash".to_string());
         }
         // Check cache first
-        let cache_key = format!("tf:{}", sha256);
+        let cache_key = format!("tf:{sha256}");
         if let Some((cached, provider)) = self.local_cache.get_with_provider(&cache_key) {
             // Only return cached result if it was cached by this provider
             if provider.as_deref() == Some("TF") || provider.is_none() {
-                debug!("ThreatFox cache hit for {}", sha256);
+                debug!("ThreatFox cache hit for {sha256}");
                 return match cached {
                     // Cached positive hit is stored as VT-shaped stats; rehydrate into TF-shaped Aggregated.
                     LookupState::Hit(_) => {
@@ -280,13 +276,13 @@ impl ReputationProvider for ThreatFoxProvider {
         }
 
         // Build HTTP client
-        let client = match reqwest::blocking::Client::builder()
+        let client = match crate::http::blocking_client_builder()
             .timeout(Duration::from_secs(10))
             .build()
         {
             Ok(c) => c,
             Err(e) => {
-                warn!("ThreatFox client build error: {}", e);
+                warn!("ThreatFox client build error: {e}");
                 return LookupState::Offline;
             }
         };
@@ -316,15 +312,15 @@ impl ReputationProvider for ThreatFoxProvider {
             Ok(r) => r,
             Err(e) => {
                 if e.is_timeout() {
-                    warn!("ThreatFox request timeout for {}", sha256);
+                    warn!("ThreatFox request timeout for {sha256}");
                     return LookupState::Offline;
                 }
                 if e.is_connect() {
-                    warn!("ThreatFox connection error for {}: {}", sha256, e);
+                    warn!("ThreatFox connection error for {sha256}: {e}");
                     return LookupState::Offline;
                 }
-                warn!("ThreatFox request error for {}: {}", sha256, e);
-                return LookupState::Error(format!("Request error: {}", e));
+                warn!("ThreatFox request error for {sha256}: {e}");
+                return LookupState::Error(format!("Request error: {e}"));
             }
         };
 
@@ -342,7 +338,7 @@ impl ReputationProvider for ThreatFoxProvider {
             warn!(
                 "ThreatFox 401 Unauthorized for {}: {}",
                 sha256,
-                &body_text[..body_text.len().min(500)]
+                &body_text[..body_text.floor_char_boundary(500)]
             );
             return LookupState::NotConfigured;
         }
@@ -352,7 +348,7 @@ impl ReputationProvider for ThreatFoxProvider {
             let body_text = response.text().unwrap_or_default();
             warn!(
                 "ThreatFox 429 Rate Limited: {}",
-                &body_text[..body_text.len().min(500)]
+                &body_text[..body_text.floor_char_boundary(500)]
             );
             self.set_rate_limited();
             return LookupState::Error("Rate limited".to_string());
@@ -364,31 +360,31 @@ impl ReputationProvider for ThreatFoxProvider {
                 "ThreatFox HTTP {} for {}: {}",
                 status.as_u16(),
                 sha256,
-                &body_text[..body_text.len().min(500)]
+                &body_text[..body_text.floor_char_boundary(500)]
             );
-            return LookupState::Error(format!("HTTP {}", status));
+            return LookupState::Error(format!("HTTP {status}"));
         }
 
         // Read response body
         let text = match response.text() {
             Ok(t) => t,
             Err(e) => {
-                warn!("ThreatFox response read error for {}: {}", sha256, e);
-                return LookupState::Error(format!("Read error: {}", e));
+                warn!("ThreatFox response read error for {sha256}: {e}");
+                return LookupState::Error(format!("Read error: {e}"));
             }
         };
 
         debug!(
             "ThreatFox response body (first 512 chars): {}",
-            &text[..text.len().min(512)]
+            &text[..text.floor_char_boundary(512)]
         );
 
         // Parse response flexibly - "data" can be array OR string
         let v: serde_json::Value = match serde_json::from_str(&text) {
             Ok(v) => v,
             Err(e) => {
-                warn!("ThreatFox JSON parse error for {}: {}", sha256, e);
-                return LookupState::Error(format!("Parse error: {}", e));
+                warn!("ThreatFox JSON parse error for {sha256}: {e}");
+                return LookupState::Error(format!("Parse error: {e}"));
             }
         };
 
@@ -397,7 +393,7 @@ impl ReputationProvider for ThreatFoxProvider {
             .and_then(|s| s.as_str())
             .unwrap_or("unknown");
 
-        debug!("ThreatFox query_status='{}' for {}", query_status, sha256);
+        debug!("ThreatFox query_status='{query_status}' for {sha256}");
 
         // Handle "data" field - can be array (results) or string (error message)
         let data: Vec<serde_json::Value> = match v.get("data") {
@@ -423,12 +419,12 @@ impl ReputationProvider for ThreatFoxProvider {
                 .get("malware")
                 .or_else(|| first.get("malware_printable"))
                 .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
+                .map(std::string::ToString::to_string);
 
             let threat_type_desc = first
                 .get("threat_type_desc")
                 .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
+                .map(std::string::ToString::to_string);
 
             let family = malware
                 .or(threat_type_desc)
@@ -436,20 +432,17 @@ impl ReputationProvider for ThreatFoxProvider {
 
             let confidence = first
                 .get("confidence_level")
-                .and_then(|v| v.as_i64())
+                .and_then(serde_json::Value::as_i64)
                 .unwrap_or(80) as u32;
 
             let ioc_id = first.get("id").and_then(|v| v.as_str()).unwrap_or(sha256);
 
-            debug!(
-                "ThreatFox FOUND for {}: family={}, confidence={}",
-                sha256, family, confidence
-            );
+            debug!("ThreatFox FOUND for {sha256}: family={family}, confidence={confidence}");
 
             let finding = ProviderFinding {
                 provider_name: "TF".to_string(),
                 verdict: Verdict::Malicious,
-                link: Some(format!("https://threatfox.abuse.ch/ioc/{}", ioc_id)),
+                link: Some(format!("https://threatfox.abuse.ch/ioc/{ioc_id}")),
                 family: Some(family.clone()),
                 confidence: Some(confidence),
             };
@@ -457,8 +450,8 @@ impl ReputationProvider for ThreatFoxProvider {
             let agg = AggregatedReputation {
                 findings: vec![finding],
                 best_verdict: Verdict::Malicious,
-                summary: format!("TF: {} ({}%)", family, confidence),
-                primary_link: Some(format!("https://threatfox.abuse.ch/ioc/{}", ioc_id)),
+                summary: format!("TF: {family} ({confidence}%)"),
+                primary_link: Some(format!("https://threatfox.abuse.ch/ioc/{ioc_id}")),
             };
 
             // Cache the positive result
@@ -478,7 +471,7 @@ impl ReputationProvider for ThreatFoxProvider {
             LookupState::Aggregated(agg)
         } else {
             // No results - cache as not found
-            debug!("ThreatFox NOT FOUND for {}", sha256);
+            debug!("ThreatFox NOT FOUND for {sha256}");
             self.local_cache.store(cache_key, None, true, Some("TF"));
             LookupState::NotFound
         }
@@ -495,23 +488,26 @@ mod tests {
         let temp = tempdir().unwrap();
         let cache = Arc::new(LocalCacheProvider::new(temp.path().join("cache.json")));
         let provider = ThreatFoxProvider::new(cache, None);
-        
+
         let result = provider.lookup_hash("invalid");
         // ThreatFox validates hash format
-        assert!(matches!(result, LookupState::Error(_) | LookupState::NotFound));
+        assert!(matches!(
+            result,
+            LookupState::Error(_) | LookupState::NotFound
+        ));
     }
-    
+
     #[test]
     fn test_api_key_update() {
         let temp = tempdir().unwrap();
         let cache = Arc::new(LocalCacheProvider::new(temp.path().join("cache.json")));
         let provider = ThreatFoxProvider::new(cache, Some("initial".to_string()));
-        
+
         assert_eq!(provider.get_api_key(), Some("initial".to_string()));
-        
+
         provider.update_api_key(Some("updated".to_string()));
         assert_eq!(provider.get_api_key(), Some("updated".to_string()));
-        
+
         provider.update_api_key(None);
         assert!(provider.get_api_key().is_none());
     }
@@ -520,10 +516,10 @@ mod tests {
     fn test_new_provider_with_env_fallback() {
         let temp = tempdir().unwrap();
         let cache = Arc::new(LocalCacheProvider::new(temp.path().join("cache.json")));
-        
+
         // Provider should work even without explicit API key
         let provider = ThreatFoxProvider::new(cache, None);
-        
+
         // Should construct successfully
         assert!(provider.get_api_key().is_none() || provider.get_api_key().is_some());
     }
@@ -533,21 +529,22 @@ mod tests {
         let temp = tempdir().unwrap();
         let cache = Arc::new(LocalCacheProvider::new(temp.path().join("cache.json")));
         let provider = ThreatFoxProvider::new(cache, Some("explicit_key".to_string()));
-        
+
         assert_eq!(provider.get_api_key(), Some("explicit_key".to_string()));
     }
 
     #[test]
+    #[ignore = "sends a real lookup to threatfox-api.abuse.ch (and fails offline); \
+                provider_http_state_tests cover this path against a local server"]
     fn test_valid_hash_format_no_crash() {
         let temp = tempdir().unwrap();
         let cache = Arc::new(LocalCacheProvider::new(temp.path().join("cache.json")));
         let provider = ThreatFoxProvider::new(cache, None);
-        
+
         // Valid hash should not panic, even without API key
-        let result = provider.lookup_hash(
-            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-        );
-        
+        let result = provider
+            .lookup_hash("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+
         // Result could be NotConfigured, Error, or cached result
         assert!(
             matches!(result, LookupState::NotConfigured)
@@ -562,13 +559,10 @@ mod tests {
         let temp = tempdir().unwrap();
         let cache = Arc::new(LocalCacheProvider::new(temp.path().join("cache.json")));
         let provider = ThreatFoxProvider::new(cache, None);
-        
+
         let result = provider.lookup_hash("deadbeef");
         // Should handle gracefully, not panic
-        assert!(
-            matches!(result, LookupState::Error(_))
-                || matches!(result, LookupState::NotFound)
-        );
+        assert!(matches!(result, LookupState::Error(_)) || matches!(result, LookupState::NotFound));
     }
 
     #[test]
@@ -576,15 +570,15 @@ mod tests {
         let temp = tempdir().unwrap();
         let cache = Arc::new(LocalCacheProvider::new(temp.path().join("cache.json")));
         let provider = ThreatFoxProvider::new(cache, Some("key1".to_string()));
-        
+
         assert_eq!(provider.get_api_key(), Some("key1".to_string()));
-        
+
         provider.update_api_key(Some("key2".to_string()));
         assert_eq!(provider.get_api_key(), Some("key2".to_string()));
-        
+
         provider.update_api_key(Some("key3".to_string()));
         assert_eq!(provider.get_api_key(), Some("key3".to_string()));
-        
+
         provider.update_api_key(None);
         assert!(provider.get_api_key().is_none());
     }

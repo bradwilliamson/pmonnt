@@ -67,14 +67,15 @@ fn handle_hash_and_lookup_job(
     let sha256 = match hash_computer.compute_sha256(&image_path) {
         Ok(hash) => hash,
         Err(e) => {
-            log::warn!("Hash computation failed for {}: {}", image_path, e);
-            let mut results = write_or_recover(results);
-            results.insert(
+            log::warn!("Hash computation failed for {image_path}: {e}");
+            // Never hold `results` while taking `in_flight` (retain_paths takes them one at a
+            // time; nesting them in opposite orders would deadlock).
+            write_or_recover(results).insert(
                 image_path.clone(),
                 ReputationResult {
                     image_path: image_path.clone(),
                     sha256: None,
-                    state: LookupState::Error(format!("Hash error: {}", e)),
+                    state: LookupState::Error(format!("Hash error: {e}")),
                 },
             );
             lock_or_recover(in_flight).remove(&image_path);
@@ -130,11 +131,8 @@ impl ReputationService {
         let vt_provider_for_thread = vt_provider.clone();
 
         // Create aggregator with all providers
-        let providers: Vec<Arc<dyn crate::reputation::ReputationProvider>> = vec![
-            vt_provider.clone(),
-            mb_provider.clone(),
-            tf_provider.clone(),
-        ];
+        let providers: Vec<Arc<dyn crate::reputation::ReputationProvider>> =
+            vec![vt_provider, mb_provider.clone(), tf_provider.clone()];
 
         let aggregator = Arc::new(AggregatorProvider::new(providers));
 
@@ -220,7 +218,7 @@ impl ReputationService {
                             Ok((sample_opt, meta)) => {
                                 let mut guard = mb_cache_for_thread
                                     .write()
-                                    .unwrap_or_else(|p| p.into_inner());
+                                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                                 guard.insert(sha256, (sample_opt, meta));
                             }
                             Err(e) => {
@@ -229,11 +227,11 @@ impl ReputationService {
                                     last_http_status: None,
                                     last_query_status: None,
                                     last_result_count: None,
-                                    last_error_message: Some(format!("{}", e)),
+                                    last_error_message: Some(format!("{e}")),
                                 };
                                 let mut guard = mb_cache_for_thread
                                     .write()
-                                    .unwrap_or_else(|p| p.into_inner());
+                                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                                 guard.insert(sha256, (None, meta));
                             }
                         }
@@ -261,7 +259,7 @@ impl ReputationService {
                             Ok((iocs, meta)) => {
                                 let mut guard = tf_cache_for_thread
                                     .write()
-                                    .unwrap_or_else(|p| p.into_inner());
+                                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                                 guard.insert(sha256, (Some(iocs), meta));
                             }
                             Err(e) => {
@@ -270,17 +268,20 @@ impl ReputationService {
                                     last_http_status: None,
                                     last_query_status: None,
                                     last_result_count: None,
-                                    last_error_message: Some(e.to_string()),
+                                    last_error_message: Some(e.clone()),
                                 };
                                 let mut guard = tf_cache_for_thread
                                     .write()
-                                    .unwrap_or_else(|p| p.into_inner());
+                                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                                 guard.insert(sha256, (None, meta));
                             }
                         }
                     }
 
-                    Ok(Job::VtLookupHash { sha256 }) => {
+                    Ok(Job::VtLookupHash {
+                        sha256,
+                        bypass_cache,
+                    }) => {
                         use crate::vt::VtQueryMeta;
 
                         struct InFlightRemover {
@@ -300,7 +301,11 @@ impl ReputationService {
                             sha: sha256.clone(),
                         };
 
-                        let res = vt_provider_for_thread.lookup_hash_sync(&sha256);
+                        let res = if bypass_cache {
+                            vt_provider_for_thread.refresh_hash_sync(&sha256)
+                        } else {
+                            vt_provider_for_thread.lookup_hash_sync(&sha256)
+                        };
                         let (stats_opt, meta) = match res {
                             LookupState::Hit(stats) => {
                                 let engine_count = stats.total_engines() as usize;
@@ -369,7 +374,7 @@ impl ReputationService {
 
                         let mut guard = vt_cache_for_thread
                             .write()
-                            .unwrap_or_else(|p| p.into_inner());
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
                         guard.insert(sha256, (stats_opt, meta));
                     }
 
@@ -394,6 +399,7 @@ impl ReputationService {
             tf_in_flight,
             vt_cache,
             vt_in_flight,
+            image_hashes: Arc::new(Mutex::new(HashMap::new())),
             _local_cache: local_cache,
         }
     }
@@ -434,6 +440,7 @@ impl ReputationService {
             tf_in_flight,
             vt_cache,
             vt_in_flight,
+            image_hashes: Arc::new(Mutex::new(HashMap::new())),
             _local_cache: local_cache,
         };
 
@@ -573,6 +580,7 @@ impl ReputationService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::reputation_service::ImageHashState;
     use std::fs;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -649,6 +657,145 @@ mod tests {
         assert_eq!(tf.get_api_key(), Some("mb_key".to_string()));
     }
 
+    fn vt_meta(status: &str) -> crate::vt::VtQueryMeta {
+        crate::vt::VtQueryMeta {
+            last_query: Some("lookup".to_string()),
+            last_http_status: None,
+            last_query_status: Some(status.to_string()),
+            last_result_count: None,
+            last_error_message: None,
+        }
+    }
+
+    #[test]
+    fn vt_request_reuses_definitive_answers_and_retries_failures() {
+        let local_cache = Arc::new(LocalCacheProvider::new(temp_path("cache_vt_req")));
+        let (service, job_rx, _cmd_rx) =
+            ReputationService::new_without_worker_for_tests(HashComputer::new(), local_cache);
+        let found = "a".repeat(64);
+        let failed = "b".repeat(64);
+        {
+            let mut cache = service.vt_cache.write().unwrap();
+            cache.insert(found.clone(), (None, vt_meta("ok")));
+            cache.insert(failed.clone(), (None, vt_meta("not_configured")));
+        }
+
+        assert!(!service.request_vt_lookup_for_hash(&found, false));
+        assert!(service.request_vt_lookup_for_hash(&failed, false));
+        // Already in flight: not queued twice, even when forced.
+        assert!(!service.request_vt_lookup_for_hash(&failed, true));
+        service.vt_in_flight.lock().unwrap().clear();
+        assert!(service.request_vt_lookup_for_hash(&found, true));
+
+        let jobs: Vec<(String, bool)> = job_rx
+            .try_iter()
+            .map(|job| match job {
+                Job::VtLookupHash {
+                    sha256,
+                    bypass_cache,
+                } => (sha256, bypass_cache),
+                other => panic!("unexpected job {other:?}"),
+            })
+            .collect();
+        assert_eq!(jobs, vec![(failed, false), (found, true)]);
+    }
+
+    #[test]
+    fn retain_paths_drops_results_and_answers_for_other_images() {
+        let local_cache = Arc::new(LocalCacheProvider::new(temp_path("cache_retain")));
+        let (service, _job_rx, _cmd_rx) =
+            ReputationService::new_without_worker_for_tests(HashComputer::new(), local_cache);
+        let result = |path: &str, sha: &str| ReputationResult {
+            image_path: path.to_string(),
+            sha256: Some(sha.to_string()),
+            state: LookupState::NotFound,
+        };
+        {
+            let mut results = service.results.write().unwrap();
+            results.insert("C:/live.exe".to_string(), result("C:/live.exe", "live"));
+            results.insert("C:/gone.exe".to_string(), result("C:/gone.exe", "gone"));
+            let mut vt = service.vt_cache.write().unwrap();
+            for sha in ["live", "gone", "busy", "revalidated"] {
+                vt.insert(sha.to_string(), (None, vt_meta("ok")));
+            }
+        }
+        // The live image was re-hashed to a new value (upgraded in place).
+        service.image_hashes.lock().unwrap().insert(
+            "C:/live.exe".to_string(),
+            ImageHashState::Ready("revalidated".to_string()),
+        );
+        service
+            .vt_in_flight
+            .lock()
+            .unwrap()
+            .insert("busy".to_string());
+
+        service.retain_paths(|path| path == "C:/live.exe");
+
+        assert_eq!(service.cached_path_count(), 1);
+        let vt = service.vt_cache.read().unwrap();
+        assert!(vt.contains_key("live") && vt.contains_key("busy"));
+        assert!(vt.contains_key("revalidated"));
+        assert!(!vt.contains_key("gone"));
+    }
+
+    fn wait_for_hash(service: &ReputationService, path: &str) -> ImageHashState {
+        for _ in 0..200 {
+            match service.image_hash_state(path) {
+                Some(ImageHashState::Pending) | None => {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Some(done) => return done,
+            }
+        }
+        panic!("re-hash of {path} did not finish");
+    }
+
+    #[test]
+    fn rehash_image_sees_a_replaced_binary_and_retries_failures() {
+        let local_cache = Arc::new(LocalCacheProvider::new(temp_path("cache_rehash")));
+        let (service, _job_rx, _cmd_rx) =
+            ReputationService::new_without_worker_for_tests(HashComputer::new(), local_cache);
+        let file = temp_path("rehash_target");
+        let path = file.to_string_lossy().to_string();
+
+        // Missing file: the failure is reported, and a later request tries again.
+        service.rehash_image(&path);
+        assert!(matches!(
+            wait_for_hash(&service, &path),
+            ImageHashState::Failed(_)
+        ));
+
+        std::fs::write(&file, b"version one").unwrap();
+        service.rehash_image(&path);
+        let ImageHashState::Ready(first) = wait_for_hash(&service, &path) else {
+            panic!("expected a hash");
+        };
+
+        // The panel's path result was computed for version one.
+        service.results.write().unwrap().insert(
+            path.clone(),
+            ReputationResult {
+                image_path: path.clone(),
+                sha256: Some(first.clone()),
+                state: LookupState::NotFound,
+            },
+        );
+
+        // Same path, new contents and size (an upgraded binary): the hash follows the file.
+        std::fs::write(&file, b"version two, longer").unwrap();
+        service.rehash_image(&path);
+        let ImageHashState::Ready(second) = wait_for_hash(&service, &path) else {
+            panic!("expected a hash");
+        };
+        let expected = HashComputer::new().compute_sha256(&path).unwrap();
+        let _ = std::fs::remove_file(&file);
+        assert_ne!(first, second);
+        assert_eq!(second, expected);
+        // The stale path result (and its verdict) was dropped so it gets rebuilt.
+        assert!(service.get_result(&path).is_none());
+    }
+
     #[test]
     fn request_lookup_dedupes_in_flight() {
         let cache_path = temp_path("cache_req");
@@ -658,7 +805,7 @@ mod tests {
 
         let path = "C:/fake/image.exe".to_string();
         assert!(service.request_lookup(path.clone(), true));
-        assert!(!service.request_lookup(path.clone(), true));
+        assert!(!service.request_lookup(path, true));
 
         let queued = job_rx.try_iter().count();
         assert_eq!(queued, 1);

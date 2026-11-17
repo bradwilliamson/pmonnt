@@ -1,3 +1,4 @@
+#![cfg(windows)]
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -43,7 +44,7 @@ fn request_lookup_dedupes_in_flight_and_completes_offline_when_disabled() {
     assert!(matches!(state, LookupState::Disabled));
 
     // Once complete, a second request with the same params should not re-run.
-    assert!(!svc.request_lookup(target_path.clone(), false));
+    assert!(!svc.request_lookup(target_path, false));
 }
 
 #[test]
@@ -63,7 +64,7 @@ fn request_lookup_allows_retry_after_hash_error() {
     assert!(matches!(state, LookupState::Error(_)));
 
     // Error states are retryable.
-    assert!(svc.request_lookup(missing_str.clone(), false));
+    assert!(svc.request_lookup(missing_str, false));
 }
 
 #[test]

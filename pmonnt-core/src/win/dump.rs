@@ -4,10 +4,10 @@ use chrono::Local;
 use thiserror::Error;
 use windows::Win32::Foundation::{GetLastError, HANDLE};
 use windows::Win32::System::Diagnostics::Debug::{
-    MiniDumpIgnoreInaccessibleMemory, MiniDumpScanMemory, MiniDumpWithFullMemory,
+    MINIDUMP_TYPE, MiniDumpIgnoreInaccessibleMemory, MiniDumpScanMemory, MiniDumpWithFullMemory,
     MiniDumpWithFullMemoryInfo, MiniDumpWithHandleData, MiniDumpWithIndirectlyReferencedMemory,
     MiniDumpWithThreadInfo, MiniDumpWithTokenInformation, MiniDumpWithUnloadedModules,
-    MiniDumpWriteDump, MINIDUMP_TYPE,
+    MiniDumpWriteDump,
 };
 use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ};
 
@@ -42,9 +42,13 @@ impl DumpError {
 
         // A few targeted hints that are useful in the UI.
         let hint = match code {
-            5 => "Access denied. Try running elevated (Admin) and ensure SeDebugPrivilege is enabled.",
+            5 => {
+                "Access denied. Try running elevated (Admin) and ensure SeDebugPrivilege is enabled."
+            }
             87 => "Invalid parameter. The process may have exited.",
-            299 => "Only part of a ReadProcessMemory request was completed. Try a minidump instead of full dump.",
+            299 => {
+                "Only part of a ReadProcessMemory request was completed. Try a minidump instead of full dump."
+            }
             _ => "",
         };
 
@@ -58,7 +62,9 @@ impl DumpError {
 
     fn dbghelp_failed() -> Self {
         // Best-effort guidance. In practice dbghelp.dll is present on Windows, but this helps if the call fails.
-        DumpError::win32("MiniDumpWriteDump failed. Ensure dbghelp.dll is present and the target process is accessible")
+        DumpError::win32(
+            "MiniDumpWriteDump failed. Ensure dbghelp.dll is present and the target process is accessible",
+        )
     }
 }
 

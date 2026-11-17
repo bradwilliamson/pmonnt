@@ -1,0 +1,122 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  schedule:
+    # Weekly RustSec advisory sweep even when nothing changes.
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  # Keep in sync with rust-toolchain.toml.
+  RUST_TOOLCHAIN: "1.99.0"
+
+jobs:
+  windows:
+    name: Windows (fmt, clippy, build, test)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+      - name: Clippy (all targets, warnings are errors)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Build (all targets)
+        run: cargo build --workspace --all-targets
+
+      - name: Test
+        run: cargo test --workspace
+
+  linux-core:
+    # The platform-independent core (snapshot/diff, process-list view model, handle
+    # summaries, hashing, YARA engine, providers) also builds on Linux, which lets CI run
+    # it under Valgrind.
+    name: Linux core (clippy, test, Memcheck)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install Valgrind
+        run: sudo apt-get update && sudo apt-get install -y valgrind
+
+      - name: Clippy (pmonnt-core, warnings are errors)
+        run: cargo clippy -p pmonnt-core --all-targets -- -D warnings
+
+      - name: Test (pmonnt-core)
+        run: cargo test -p pmonnt-core
+
+      - name: Unit tests under Memcheck
+        run: tools/valgrind/memcheck-core-tests.sh
+
+  benchmarks:
+    # Gungraun runs each benchmark once under Callgrind/DHAT, so instruction and
+    # allocation counts are deterministic and comparable between runs.
+    name: Benchmarks (Gungraun / Valgrind)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install Valgrind
+        run: sudo apt-get update && sudo apt-get install -y valgrind
+
+      - name: Install gungraun-runner (must match the gungraun crate version)
+        run: cargo install gungraun-runner --version 0.20.0 --locked
+
+      - name: Run benchmarks
+        run: cargo bench -p pmonnt-core --bench view_model --bench core_paths
+
+  rustsec:
+    name: RustSec advisories (cargo audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: cargo audit
+        uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  cargo-deny:
+    name: Licenses, bans and sources (cargo deny)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: cargo deny
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories bans licenses sources
+          arguments: --all-features

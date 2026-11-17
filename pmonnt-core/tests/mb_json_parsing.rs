@@ -73,11 +73,10 @@ fn parse_get_taginfo_variants() {
 
     let v: serde_json::Value = serde_json::from_str(&ok_json).unwrap();
     let data = v.get("data").and_then(|d| d.as_array()).unwrap();
-    let samples: Vec<MbTagInfoSample> = data
+    let samples = data
         .iter()
-        .filter_map(|i| serde_json::from_value(i.clone()).ok())
-        .collect();
-    assert_eq!(samples.len(), 2);
+        .filter_map(|i| serde_json::from_value::<MbTagInfoSample>(i.clone()).ok());
+    assert_eq!(samples.count(), 2);
 
     let tn = json!({"query_status": "tag_not_found", "data": []}).to_string();
     let v2: serde_json::Value = serde_json::from_str(&tn).unwrap();
@@ -134,7 +133,7 @@ fn parse_threatfox_valid_response() {
     );
     assert_eq!(
         ioc.get("confidence_level")
-            .and_then(|v| v.as_i64())
+            .and_then(serde_json::Value::as_i64)
             .unwrap(),
         85
     );
@@ -163,7 +162,7 @@ fn mb_malicious_hit_parses_correctly() {
     let v: serde_json::Value = serde_json::from_str(json).unwrap();
     let data = v.get("data").and_then(|d| d.as_array()).unwrap();
     let sample: MbSampleInfo = serde_json::from_value(data[0].clone()).unwrap();
-    
+
     assert_eq!(sample.signature.as_deref(), Some("Emotet"));
     assert!(sample.tags.contains(&"emotet".to_string()));
     assert!(sample.tags.contains(&"trojan".to_string()));

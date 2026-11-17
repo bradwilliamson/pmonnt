@@ -1,89 +1,98 @@
-//! Windows process enumeration implementation
-//!
-//! This module provides unsafe Windows API calls for process enumeration.
-//! All unsafe blocks are documented with their invariants.
+//! Windows process enumeration (one `SystemProcessInformation` snapshot).
 
 use crate::process::Process;
-use crate::win::HandleGuard;
-use anyhow::{anyhow, Result};
-use windows::Win32::Foundation::INVALID_HANDLE_VALUE;
-use windows::Win32::System::Diagnostics::ToolHelp::{
-    CreateToolhelp32Snapshot, Process32First, Process32Next, PROCESSENTRY32, TH32CS_SNAPPROCESS,
-};
+use anyhow::Result;
 
-/// Enumerate all running processes on the system
+/// Enumerate all running processes on the system.
 ///
-/// # Safety
-/// This function uses Windows API calls that are inherently unsafe.
-/// The invariants are:
-/// - All handles are properly closed using CloseHandle
-/// - Memory is managed by Rust's ownership system
-/// - No dangling pointers or use-after-free
+/// Uses one `SystemProcessInformation` query, so each process's PID, parent, creation time
+/// and name come from the same kernel snapshot. (ToolHelp plus a second query for creation
+/// times could pair a name with a different instance that reused the PID in between.)
+/// Names are decoded from UTF-16, so executables in any language come back intact.
 pub fn enumerate_processes() -> Result<Vec<Process>> {
-    let mut processes = Vec::new();
-
-    // SAFETY: CreateToolhelp32Snapshot is a Windows API that creates a snapshot
-    // of the current processes. The handle returned is valid and must be closed.
-    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)? };
-
-    if snapshot == INVALID_HANDLE_VALUE {
-        return Err(anyhow!("Failed to create process snapshot"));
-    }
-
-    // SAFETY: Creating zero-initialized POD struct PROCESSENTRY32 which will be filled by Process32First
-    let mut process_entry: PROCESSENTRY32 = unsafe { std::mem::zeroed() };
-    process_entry.dwSize = std::mem::size_of::<PROCESSENTRY32>() as u32;
-
-    // SAFETY: Process32First enumerates the first process in the snapshot.
-    // The process_entry structure is properly initialized with dwSize.
-    let success = unsafe { Process32First(snapshot, &mut process_entry) };
-
-    if success.is_err() {
-        // SAFETY: Close the snapshot handle even on failure
-        drop(HandleGuard::new(snapshot));
-        return Err(anyhow!("Failed to get first process"));
-    }
-
-    loop {
-        // Convert the ANSI string to a Rust String
-        let name = ansi_to_string(&process_entry.szExeFile)?;
-
-        let process = Process {
-            pid: process_entry.th32ProcessID,
-            name,
-            ppid: Some(process_entry.th32ParentProcessID),
+    let entries = crate::win::process_metrics::query_processes_with_names()?;
+    Ok(entries
+        .into_iter()
+        .map(|(entry, name)| Process {
+            pid: entry.pid,
+            // The idle process has no image name; keep ToolHelp's label for it.
+            name: if entry.pid == 0 && name.is_empty() {
+                "[System Process]".to_string()
+            } else {
+                name
+            },
+            ppid: Some(entry.parent_pid),
             cpu_percent: None,
             memory_bytes: None,
             gpu_percent: None,
             gpu_memory_bytes: None,
             path: None,
             signature: None,
-        };
-
-        processes.push(process);
-
-        // SAFETY: Process32Next enumerates the next process in the snapshot.
-        // The process_entry structure remains valid for reuse.
-        let success = unsafe { Process32Next(snapshot, &mut process_entry) };
-
-        if success.is_err() {
-            break;
-        }
-    }
-
-    // SAFETY: Close the snapshot handle when done (HandleGuard will close on drop)
-    drop(HandleGuard::new(snapshot));
-
-    Ok(processes)
+            create_time: Some(entry.create_time),
+        })
+        .collect())
 }
 
-/// Convert an ANSI (8-bit) string to a Rust String
-fn ansi_to_string(ansi: &[i8]) -> Result<String> {
-    // Find the null terminator
-    let len = ansi.iter().position(|&c| c == 0).unwrap_or(ansi.len());
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    // Convert i8 to u8 (safe since we're dealing with ASCII/ANSI)
-    let bytes: Vec<u8> = ansi[..len].iter().map(|&c| c as u8).collect();
+    #[test]
+    fn enumerate_finds_current_process_by_name() {
+        let me = std::process::id();
+        let exe = std::env::current_exe().unwrap();
+        let exe_name = exe.file_name().unwrap().to_string_lossy();
+        let procs = enumerate_processes().unwrap();
+        let mine = procs
+            .iter()
+            .find(|p| p.pid == me)
+            .expect("current process listed");
+        assert!(mine.name.eq_ignore_ascii_case(&exe_name), "{:?}", mine.name);
+        assert!(procs.iter().any(|p| p.pid == 4 && p.name == "System"));
+        assert!(
+            procs
+                .iter()
+                .any(|p| p.pid == 0 && p.name == "[System Process]")
+        );
+    }
 
-    String::from_utf8(bytes).map_err(|_| anyhow!("Invalid ANSI string"))
+    #[test]
+    fn enumerate_reports_creation_times() {
+        let me = std::process::id();
+        let procs = enumerate_processes().unwrap();
+        let mine = procs.iter().find(|p| p.pid == me).unwrap();
+        let expected = crate::win::process_metrics::system_process_entry(me)
+            .unwrap()
+            .create_time;
+        assert_eq!(mine.create_time, Some(expected));
+        assert!(expected > 0);
+    }
+
+    #[test]
+    fn non_ascii_executable_names_survive() {
+        // A copy of a tiny system executable under a non-ASCII name (review H4: the ANSI
+        // ToolHelp API used to abort the whole snapshot on such names).
+        let dir = std::env::temp_dir().join(format!("pmonnt_enum_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join("日本語プロセス.exe");
+        std::fs::copy(r"C:\Windows\System32\PING.EXE", &exe).unwrap();
+        let mut child = std::process::Command::new(&exe)
+            .args(["-n", "30", "127.0.0.1"])
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        let procs = enumerate_processes();
+        let _ = child.kill();
+        let _ = child.wait();
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let procs = procs.unwrap();
+        let name = &procs
+            .iter()
+            .find(|p| p.pid == pid)
+            .expect("child listed")
+            .name;
+        assert_eq!(name, "日本語プロセス.exe");
+    }
 }

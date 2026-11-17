@@ -9,7 +9,6 @@ pub(super) use std::sync::Arc;
 pub(super) use std::time::Instant;
 
 pub(super) use crate::gpu_pdh::should_warn;
-pub(super) use crate::process_rows::{build_grouped_rows, build_process_rows, compare_tree_pids};
 pub(super) use crate::process_table::{process_table_policy, ProcessColumns};
 pub(super) use crate::theme::{apply_theme, Theme};
 pub(super) use crate::util::{

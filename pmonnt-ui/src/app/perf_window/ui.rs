@@ -39,8 +39,7 @@ impl PMonNTApp {
             .processes
             .iter()
             .find(|p| p.pid == pid)
-            .map(|p| p.name.clone())
-            .unwrap_or_else(|| "<unknown>".to_string())
+            .map_or_else(|| "<unknown>".to_string(), |p| p.name.clone())
     }
 
     pub(crate) fn show_perf_windows(&mut self, ctx: &egui::Context) {
@@ -51,8 +50,7 @@ impl PMonNTApp {
         let main_inner = ctx.input(|i| {
             i.viewport()
                 .inner_rect
-                .map(|r| r.size())
-                .unwrap_or(egui::Vec2::ZERO)
+                .map_or(egui::Vec2::ZERO, |r| r.size())
         });
 
         let pids: Vec<u32> = self.perf_windows.keys().copied().collect();
@@ -83,10 +81,12 @@ impl PMonNTApp {
                 let elapsed = w
                     .last_sample
                     .map_or(1.0, |last| now.duration_since(last).as_secs_f64());
+                // Deltas are against the most recent sample, over the interval since it was
+                // taken (comparing with `last_stats` doubled every rate: two ticks / one tick).
                 if let Some(new_stats) =
-                    PMonNTApp::sample_perf_stats(pid, w.last_stats.as_ref(), elapsed)
+                    PMonNTApp::sample_perf_stats(pid, w.current_stats.as_ref(), elapsed)
                 {
-                    w.last_stats = w.current_stats.clone();
+                    w.last_stats = w.current_stats.take();
                     w.current_stats = Some(new_stats);
                     w.last_sample = Some(now);
 
@@ -119,7 +119,7 @@ impl PMonNTApp {
                 result
             };
 
-            let title = format!("{} (PID {})", process_name, pid);
+            let title = format!("{process_name} (PID {pid})");
 
             let reputation_service = self.reputation_service.clone();
 
@@ -131,12 +131,15 @@ impl PMonNTApp {
             let current_tab = w.tab;
             let current_security_filter = w.security_filter.clone();
 
-            let cpu_values: Vec<f32> = w.history.cpu_percent.iter().copied().collect();
-            let mem_values: Vec<u64> = w.history.memory_bytes.iter().copied().collect();
-            let priv_values: Vec<u64> = w.history.private_bytes.iter().copied().collect();
-            let gpu_values: Vec<f32> = w.history.gpu_percent.iter().copied().collect();
-            let io_read_values: Vec<f32> = w.history.io_read_bps.iter().copied().collect();
-            let io_write_values: Vec<f32> = w.history.io_write_bps.iter().copied().collect();
+            // The graphs borrow the history ring buffers instead of copying them every frame.
+            // make_contiguous only moves data when a new sample wrapped the ring.
+            let history = &mut w.history;
+            let cpu_values: &[f32] = history.cpu_percent.make_contiguous();
+            let mem_values: &[u64] = history.memory_bytes.make_contiguous();
+            let priv_values: &[u64] = history.private_bytes.make_contiguous();
+            let gpu_values: &[f32] = history.gpu_percent.make_contiguous();
+            let io_read_values: &[f32] = history.io_read_bps.make_contiguous();
+            let io_write_values: &[f32] = history.io_write_bps.make_contiguous();
 
             // Snapshot data needed for right-pane parity tabs.
             let stats_opt = w.current_stats.as_ref();
@@ -244,7 +247,8 @@ impl PMonNTApp {
                 let current_include_child_pids = w.include_child_pids;
                 let current_selected_tid = w.selected_tid;
 
-                ctx.show_viewport_immediate(viewport_id, builder, move |ctx, class| {
+                ctx.show_viewport_immediate(viewport_id, builder, move |vp_ui, class| {
+                    let ctx = &vp_ui.ctx().clone();
                     let mut should_close = ctx.input(|i| i.viewport().close_requested());
                     let mut tab = current_tab;
                     let mut security_filter = current_security_filter.clone();
@@ -269,8 +273,7 @@ impl PMonNTApp {
                     let inner_size = ctx.input(|i| {
                         i.viewport()
                             .inner_rect
-                            .map(|r| r.size())
-                            .unwrap_or(egui::Vec2::ZERO)
+                            .map_or(egui::Vec2::ZERO, |r| r.size())
                     });
 
                     let mut render_tab_content = |ui: &mut egui::Ui, current_tab: RightTab| {
@@ -280,12 +283,12 @@ impl PMonNTApp {
                             current_tab,
                             &mut temp_perf_window,
                             &mut security_filter,
-                            &cpu_values,
-                            &mem_values,
-                            &priv_values,
-                            &gpu_values,
-                            &io_read_values,
-                            &io_write_values,
+                            cpu_values,
+                            mem_values,
+                            priv_values,
+                            gpu_values,
+                            io_read_values,
+                            io_write_values,
                             stats_opt,
                             &module_result,
                             gpu_opt,
@@ -335,7 +338,7 @@ impl PMonNTApp {
                     };
 
                     match class {
-                        egui::ViewportClass::Embedded => {
+                        egui::ViewportClass::EmbeddedWindow => {
                             let mut open = true;
                             egui::Window::new(title.clone())
                                 .open(&mut open)
@@ -345,14 +348,13 @@ impl PMonNTApp {
                                     );
 
                                     egui::ScrollArea::vertical()
-                                        .id_source(("perf_window_details_scroll", pid))
+                                        .id_salt(("perf_window_details_scroll", pid))
                                         .show(ui, |ui| {
                                             render_tab_content(ui, tab);
                                         });
 
                                     crate::app::perf_window::tabs::render_optional_gpu_footer(
-                                        ui,
-                                        &gpu_values,
+                                        ui, gpu_values,
                                     );
                                 });
                             if !open {
@@ -360,21 +362,20 @@ impl PMonNTApp {
                             }
                         }
                         _ => {
-                            egui::CentralPanel::default().show(ctx, |ui| {
+                            egui::CentralPanel::default().show(vp_ui, |ui| {
                                 crate::app::perf_window::tabs::render_window_header(
                                     ui, pid, &title, &mut tab,
                                 );
 
                                 egui::ScrollArea::vertical()
-                                    .id_source(("perf_window_details_scroll", pid))
+                                    .id_salt(("perf_window_details_scroll", pid))
                                     .auto_shrink([false; 2])
                                     .show(ui, |ui| {
                                         render_tab_content(ui, tab);
                                     });
 
                                 crate::app::perf_window::tabs::render_optional_gpu_footer(
-                                    ui,
-                                    &gpu_values,
+                                    ui, gpu_values,
                                 );
                             });
                         }
@@ -424,41 +425,5 @@ impl PMonNTApp {
         for path in paths_to_check {
             self.request_signature_check_for_path(&path);
         }
-    }
-
-    /// Collect all descendant PIDs for a root PID (recursive tree traversal)
-    #[cfg(feature = "dev-tools")]
-    #[allow(dead_code)]
-    pub(super) fn collect_descendants(&self, root_pid: u32) -> Vec<u32> {
-        use std::collections::{HashMap, HashSet};
-
-        // Build parent -> children map
-        let mut children_map: HashMap<u32, Vec<u32>> = HashMap::new();
-        for proc in &self.current_snapshot.processes {
-            if let Some(ppid) = proc.ppid {
-                if ppid != 0 {
-                    children_map.entry(ppid).or_default().push(proc.pid);
-                }
-            }
-        }
-
-        let mut result = Vec::new();
-        let mut visited = HashSet::new();
-        let mut stack = vec![root_pid];
-
-        while let Some(pid) = stack.pop() {
-            if !visited.insert(pid) {
-                continue; // Already visited (cycle detection)
-            }
-            result.push(pid);
-
-            if let Some(children) = children_map.get(&pid) {
-                for &child in children {
-                    stack.push(child);
-                }
-            }
-        }
-
-        result
     }
 }

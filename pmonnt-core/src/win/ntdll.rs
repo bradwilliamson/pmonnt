@@ -2,7 +2,7 @@ use std::ffi::c_void;
 use windows::Win32::Foundation::{HANDLE, NTSTATUS};
 
 #[link(name = "ntdll")]
-extern "system" {
+unsafe extern "system" {
     pub fn NtQueryInformationProcess(
         ProcessHandle: HANDLE,
         ProcessInformationClass: u32,

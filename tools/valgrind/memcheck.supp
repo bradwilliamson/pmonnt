@@ -1,0 +1,17 @@
+# Memcheck suppressions for third-party crypto/TLS code.
+#
+# ring's AEAD tag comparison is constant-time assembly that Memcheck cannot see through,
+# and TLS record buffers are written with (deliberately) uninitialised padding. Both are
+# well-known false positives; PMonNT's own code is not suppressed.
+{
+   ring-constant-time-verify
+   Memcheck:Cond
+   fun:*ring*verify_slices_are_equal*
+}
+{
+   tls-record-writev-padding
+   Memcheck:Param
+   writev(vector[...])
+   ...
+   fun:*tokio*poll_write_vectored*
+}

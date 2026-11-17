@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::fmt::Write as _;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -9,7 +10,6 @@ use pmonnt_core::{
     hashing::HashComputer,
     local_cache::LocalCacheProvider,
     module::ModuleCache,
-    process,
     reputation_service::ReputationService,
     snapshot::ProcessSnapshot,
     thread::{ThreadCache, ThreadInfo},
@@ -62,10 +62,10 @@ fn get_ui_layout_path() -> std::path::PathBuf {
         let path = std::path::Path::new(&local_appdata)
             .join("PMonNT")
             .join("pmonnt_ui_layout.ini");
-        if let Some(parent) = path.parent() {
-            if std::fs::create_dir_all(parent).is_ok() {
-                return path;
-            }
+        if let Some(parent) = path.parent()
+            && std::fs::create_dir_all(parent).is_ok()
+        {
+            return path;
         }
     }
 
@@ -190,8 +190,9 @@ pub fn serialize_ui_layout_config(cfg: &UiLayoutConfig) -> String {
 
     let mut out = String::new();
     out.push_str("# PMonNT UI layout\n# Auto-generated; safe to delete\n");
-    out.push_str(&format!(
-        "left_panel_width={}\nright_panel_width={}\ndetails_panel_visible={}\ndensity={}\ntheme={}\nperf_window_width={}\nperf_window_height={}\n",
+    let _ = writeln!(
+        out,
+        "left_panel_width={}\nright_panel_width={}\ndetails_panel_visible={}\ndensity={}\ntheme={}\nperf_window_width={}\nperf_window_height={}",
         cfg.left_panel_width,
         cfg.right_panel_width,
         cfg.details_panel_visible,
@@ -199,7 +200,7 @@ pub fn serialize_ui_layout_config(cfg: &UiLayoutConfig) -> String {
         cfg.theme.as_key(),
         cfg.perf_window_width,
         cfg.perf_window_height,
-    ));
+    );
 
     out.push_str("process_columns_order=");
     for (i, col) in cfg.process_columns_order.iter().enumerate() {
@@ -224,9 +225,8 @@ pub fn serialize_ui_layout_config(cfg: &UiLayoutConfig) -> String {
 
 fn load_ui_layout_config() -> (UiLayoutConfig, bool) {
     let path = get_ui_layout_path();
-    let s = match std::fs::read_to_string(&path) {
-        Ok(s) => s,
-        Err(_) => return (UiLayoutConfig::default(), false),
+    let Ok(s) = std::fs::read_to_string(&path) else {
+        return (UiLayoutConfig::default(), false);
     };
 
     // Determine whether the perf-window size was explicitly persisted.
@@ -261,10 +261,10 @@ fn get_config_path() -> std::path::PathBuf {
             .join("PMonNT")
             .join("pmonnt_handle_leak_config.json");
         // Test writability by attempting to create parent dir
-        if let Some(parent) = path.parent() {
-            if std::fs::create_dir_all(parent).is_ok() {
-                return path;
-            }
+        if let Some(parent) = path.parent()
+            && std::fs::create_dir_all(parent).is_ok()
+        {
+            return path;
         }
     }
 
@@ -281,14 +281,7 @@ pub(super) fn try_build_app() -> anyhow::Result<PMonNTApp> {
     let bg_worker = crate::background_worker::BackgroundWorker::new("pmonnt-ui-bg");
     let selection_hash_generation = Arc::new(std::sync::atomic::AtomicU64::new(0));
 
-    let current_snapshot = ProcessSnapshot::new().unwrap_or_default();
-    let mut process_tree: HashMap<Option<u32>, Vec<process::Process>> = HashMap::new();
-    for process in &current_snapshot.processes {
-        process_tree
-            .entry(process.ppid)
-            .or_default()
-            .push(process.clone());
-    }
+    let current_snapshot = Arc::new(ProcessSnapshot::new().unwrap_or_default());
 
     // Initialize reputation providers
     let cache_path = std::env::current_dir()
@@ -304,8 +297,11 @@ pub(super) fn try_build_app() -> anyhow::Result<PMonNTApp> {
 
     // Create channels for thread fetches using crossbeam for multi-consumer
     let (thread_request_tx, thread_request_rx) = crossbeam_channel::unbounded::<u32>();
-    let (thread_result_tx, thread_result_rx) =
-        crossbeam_channel::unbounded::<(u32, Result<Vec<ThreadInfo>, String>)>();
+    let (thread_result_tx, thread_result_rx) = crossbeam_channel::unbounded::<(
+        u32,
+        super::ReplyIdentity,
+        Result<Vec<ThreadInfo>, String>,
+    )>();
 
     // Signature verification results (background; keyed by image path)
     let (signature_result_tx, signature_result_rx) =
@@ -317,7 +313,7 @@ pub(super) fn try_build_app() -> anyhow::Result<PMonNTApp> {
 
     // Kill action results (background)
     let (kill_action_result_tx, kill_action_result_rx) =
-        crossbeam_channel::unbounded::<(u32, bool, bool, Result<(), String>)>();
+        crossbeam_channel::unbounded::<(u32, bool, Result<(), String>)>();
 
     // Dump action results (background)
     let (dump_action_result_tx, dump_action_result_rx) =
@@ -333,7 +329,7 @@ pub(super) fn try_build_app() -> anyhow::Result<PMonNTApp> {
 
     // Spawn parallel worker pool (4-8 threads based on CPU count)
     let num_workers = num_cpus::get().clamp(4, 8);
-    log::info!("Spawning {} thread fetch workers", num_workers);
+    log::info!("Spawning {num_workers} thread fetch workers");
 
     for worker_id in 0..num_workers {
         let rx = thread_request_rx.clone();
@@ -343,19 +339,18 @@ pub(super) fn try_build_app() -> anyhow::Result<PMonNTApp> {
             while let Ok(pid) = rx.recv() {
                 let start = std::time::Instant::now();
 
-                // Fetch threads
-                let result = match win_thread::list_threads(pid) {
-                    Ok(threads) => Ok(threads),
-                    Err(e) => Err(format!("Thread fetch error: {}", e)),
-                };
+                // Fetch threads, noting which process instance they came from.
+                let (result, identity) = super::ReplyIdentity::around(pid, || {
+                    win_thread::list_threads(pid).map_err(|e| format!("Thread fetch error: {e}"))
+                });
 
                 let elapsed = start.elapsed().as_millis();
                 if elapsed > 200 {
-                    log::debug!("Worker {} fetched PID {} in {}ms", worker_id, pid, elapsed);
+                    log::debug!("Worker {worker_id} fetched PID {pid} in {elapsed}ms");
                 }
 
                 // Send result back
-                let _ = tx.send((pid, result));
+                let _ = tx.send((pid, identity, result));
             }
         });
     }
@@ -364,7 +359,9 @@ pub(super) fn try_build_app() -> anyhow::Result<PMonNTApp> {
     drop(thread_result_tx);
 
     // Load handle leak detector config
-    let mut handle_cache = HandleCache::new(5);
+    // Must outlive the slowest adaptive scan interval (10 s) plus a slow scan, or handle
+    // counts blink out between scans and shuffle the handle sort.
+    let mut handle_cache = HandleCache::new(30);
     let config_path = get_config_path();
     let _ = handle_cache.load_config(&config_path);
 
@@ -411,6 +408,9 @@ pub(super) fn try_build_app() -> anyhow::Result<PMonNTApp> {
         _tokio_rt: tokio_rt,
         bg_worker,
         selection_hash_generation,
+        selection_hash_pid: None,
+        selection_sha_pending: Arc::new(Mutex::new(None)),
+        selected_sha: None,
         last_update: Instant::now(),
         tick: 0,
         current_snapshot,
@@ -418,7 +418,6 @@ pub(super) fn try_build_app() -> anyhow::Result<PMonNTApp> {
         last_diff: None,
         exited_buffer: ExitedProcessBuffer::default(),
         last_snapshot_update: Instant::now(),
-        process_tree,
         token_cache: TokenCache::default(),
         thread_cache: ThreadCache::new(4),
         thread_prev: HashMap::new(),
@@ -442,6 +441,7 @@ pub(super) fn try_build_app() -> anyhow::Result<PMonNTApp> {
         filter_text: String::new(),
         last_filter_text_lower: String::new(),
         cached_visible_pids: None,
+        cached_visible_pids_snapshot: None,
         slash_focus_pending: false,
         expanded_pids: HashSet::new(),
         expanded_groups: HashSet::new(),
@@ -455,18 +455,18 @@ pub(super) fn try_build_app() -> anyhow::Result<PMonNTApp> {
         network_sort: super::network_sort::NetworkSortState::default(),
         vt_api_key: api_keys.vt.clone().unwrap_or_default(),
         mb_api_key: api_keys.mb.clone().unwrap_or_default(),
-        tf_api_key: api_keys.tf.clone().unwrap_or_default(),
+        tf_api_key: api_keys.tf.unwrap_or_default(),
         vt_enabled: vt_has_key,
         mb_enabled: mb_has_key,
         tf_enabled: tf_has_key,
-        vt_provider: vt_provider.clone(),
+        vt_provider,
         vt_ui_state: VtUiState {
             querying_vt_pid: None,
             querying_vt_sha: None,
             querying_started_at: None,
             last_seen_pid: None,
             current_process_sha: None,
-            current_process_sha_pending: Arc::new(Mutex::new(None)),
+            pending_checks: HashMap::new(),
             last_query_meta: None,
         },
         tf_ui_state: TfUiState::default(),
@@ -478,7 +478,7 @@ pub(super) fn try_build_app() -> anyhow::Result<PMonNTApp> {
         yara_state: {
             let cache_dir = std::env::current_exe()
                 .ok()
-                .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+                .and_then(|p| p.parent().map(std::path::Path::to_path_buf))
                 .unwrap_or_else(|| std::path::PathBuf::from("."))
                 .join("yara_cache");
             let mut rule_manager = pmonnt_core::yara::rules::RuleManager::new(cache_dir.clone());
@@ -521,24 +521,8 @@ pub(super) fn try_build_app() -> anyhow::Result<PMonNTApp> {
                 let _ = rule_manager.load_cached_rules();
             }
             log::info!("YARA rule_manager has {} rules", rule_manager.rules().len());
-            log::info!(
-                "YARA combined source length: {} bytes",
-                rule_manager.combined_source().len()
-            );
-            let yara_engine =
-                match pmonnt_core::yara::engine::YaraEngine::from_rule_manager(&rule_manager) {
-                    Ok(engine) => {
-                        log::info!("YARA engine compiled successfully");
-                        Some(Arc::new(engine))
-                    }
-                    Err(e) => {
-                        log::error!("YARA engine compilation failed: {}", e);
-                        // Log first 500 chars of combined source for debugging
-                        let src = rule_manager.combined_source();
-                        log::error!("Combined source preview: {}", &src[..src.len().min(500)]);
-                        None
-                    }
-                };
+            // The engine is compiled in the background after startup (needs_engine_rebuild),
+            // so a large cached rule set does not delay the first window.
             YaraScanState {
                 scanning: false,
                 last_result: None,
@@ -548,9 +532,10 @@ pub(super) fn try_build_app() -> anyhow::Result<PMonNTApp> {
                 min_severity: pmonnt_core::yara::rules::Severity::High,
                 rt_handle: tokio_handle,
                 rule_manager: Arc::new(std::sync::Mutex::new(rule_manager)),
-                yara_engine,
+                yara_engine: None,
                 progress_rx: None,
-                needs_engine_rebuild: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                needs_engine_rebuild: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+                engine_build_rx: None,
             }
         },
         handle_cache,

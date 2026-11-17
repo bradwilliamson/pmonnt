@@ -1,4 +1,4 @@
-use pmonnt_core::providers::{parse_threatfox_search_hash_response_json, TfIoc};
+use pmonnt_core::providers::{TfIoc, parse_threatfox_search_hash_response_json};
 
 #[test]
 fn threatfox_fixture_ok_parses() {

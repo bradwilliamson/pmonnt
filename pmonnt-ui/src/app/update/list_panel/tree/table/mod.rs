@@ -2,7 +2,7 @@ use eframe::egui;
 use egui_extras::{Column, TableBuilder};
 
 use crate::app::PMonNTApp;
-use crate::process_table::{process_table_policy, ProcessColumnId};
+use crate::process_table::{ProcessColumnId, process_table_policy};
 use crate::view::ProcRow;
 
 mod header;

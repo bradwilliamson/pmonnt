@@ -1,12 +1,11 @@
-use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::time::Instant;
 
 use eframe::egui;
 use pmonnt_core::diff::ProcessDiff;
-use pmonnt_core::process;
 
 use crate::app::{CompactView, Density, PMonNTApp};
-use crate::process_table::{process_table_policy, ProcessColumnId};
+use crate::process_table::{ProcessColumnId, process_table_policy};
 use crate::view::{GroupSort, ViewMode};
 
 mod grouped;
@@ -16,7 +15,7 @@ impl PMonNTApp {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn show_list_panel(
         &mut self,
-        ctx: &egui::Context,
+        ui: &mut egui::Ui,
         is_compact: bool,
         _available_width: f32,
         _left_min_width: f32,
@@ -29,7 +28,8 @@ impl PMonNTApp {
         selection_changed: &mut bool,
     ) {
         // List Panel is now the CentralPanel, taking up remaining space
-        egui::CentralPanel::default().show(ctx, |ui| {
+        let ctx = &ui.ctx().clone();
+        egui::CentralPanel::default().show(ui, |ui| {
             // (details tabs, scroll areas) keep their existing feel.
             match self.density {
                 Density::Comfortable => {
@@ -45,19 +45,19 @@ impl PMonNTApp {
             ui.heading("PMonNT");
             ui.separator();
 
-            ui.label(format!("Tick: {}", tick));
-            ui.label(format!("Process count: {}", process_count));
+            ui.label(format!("Tick: {tick}"));
+            ui.label(format!("Process count: {process_count}"));
 
-            if let Some(diff) = last_diff.as_ref() {
-                if diff.has_changes() {
-                    ui.separator();
-                    ui.label(format!(
-                        "Changes: +{} new, -{} exited, ~{} changed",
-                        diff.new_pids.len(),
-                        diff.exited_pids.len(),
-                        diff.changed_pids.len()
-                    ));
-                }
+            if let Some(diff) = last_diff.as_ref()
+                && diff.has_changes()
+            {
+                ui.separator();
+                ui.label(format!(
+                    "Changes: +{} new, -{} exited, ~{} changed",
+                    diff.new_pids.len(),
+                    diff.exited_pids.len(),
+                    diff.changed_pids.len()
+                ));
             }
 
             ui.separator();
@@ -108,7 +108,7 @@ impl PMonNTApp {
                     ui.separator();
                     if ui.button("Reset columns").clicked() {
                         self.reset_process_columns_to_default();
-                        ui.close_menu();
+                        ui.close();
                     }
                 });
 
@@ -277,7 +277,7 @@ impl PMonNTApp {
             ui.horizontal(|ui| {
                 ui.label("Filter:");
                 egui::TextEdit::singleline(&mut self.filter_text)
-                    .id(egui::Id::new("process_filter_input"))
+                    .id(egui::Id::unique("process_filter_input"))
                     .hint_text("/ or Ctrl+F to focus, Esc to clear")
                     .show(ui);
 
@@ -297,27 +297,11 @@ impl PMonNTApp {
                 }
             });
 
-            // Build PID-based data structures for clean tree rendering.
-            // NOTE: Clone the process list so we can pass references to the tree renderer
-            // without holding an immutable borrow of `self` across an `&mut self` call.
-            let processes = self.current_snapshot.processes.clone();
-            let pid_to_proc: HashMap<u32, &process::Process> =
-                processes.iter().map(|p| (p.pid, p)).collect();
+            // Process relationships (children, roots, groups) come from the snapshot's view
+            // index, built once per snapshot rather than every frame. Holding the Arc lets us
+            // borrow it across the `&mut self` calls below without copying the process list.
+            let snapshot = Arc::clone(&self.current_snapshot);
 
-            let pid_set: HashSet<u32> = pid_to_proc.keys().copied().collect();
-
-            // Build parent -> children map
-            let mut children_map: HashMap<u32, Vec<u32>> = HashMap::new();
-            for proc in &processes {
-                // Only add to children map when PPID is present and non-zero; roots are handled separately
-                if let Some(parent) = proc.ppid {
-                    if parent != 0 {
-                        children_map.entry(parent).or_default().push(proc.pid);
-                    }
-                }
-            }
-
-            // DEBOUNCE: Only recompute filter if filter_text changed
             let filter_timer = Instant::now();
             let filter_lower = self.filter_text.to_lowercase();
 
@@ -328,80 +312,29 @@ impl PMonNTApp {
                 if filter_active && !self.grouped_filter_was_active {
                     self.expanded_groups_before_filter = Some(self.expanded_groups.clone());
                 }
-                if !filter_active && self.grouped_filter_was_active {
-                    if let Some(prev) = self.expanded_groups_before_filter.take() {
-                        self.expanded_groups = prev;
-                    }
+                if !filter_active
+                    && self.grouped_filter_was_active
+                    && let Some(prev) = self.expanded_groups_before_filter.take()
+                {
+                    self.expanded_groups = prev;
                 }
                 self.grouped_filter_was_active = filter_active;
             }
-            let visible_pids: Option<HashSet<u32>> = if filter_lower != self.last_filter_text_lower
+            // Recompute the filtered PID set only when the filter text or the snapshot changes
+            // (new processes must show up while a filter is active).
+            if filter_lower != self.last_filter_text_lower
+                || self.cached_visible_pids_snapshot != Some(snapshot.taken_at)
             {
-                // Filter text changed - recompute and cache
-                self.last_filter_text_lower = filter_lower.clone();
-
-                let result = if !filter_lower.is_empty() {
-                    let mut matching_pids = HashSet::new();
-
-                    // Find all processes that match the filter (name or PID)
-                    for proc in &processes {
-                        if proc.name.to_lowercase().contains(&filter_lower)
-                            || proc.pid.to_string().contains(&filter_lower)
-                        {
-                            matching_pids.insert(proc.pid);
-                        }
-                    }
-
-                    // Include all ancestors of matching processes with cycle detection
-                    let mut expanded = matching_pids.clone();
-                    for &pid in &matching_pids {
-                        let mut current = pid;
-                        let mut visited = HashSet::new();
-                        let mut depth = 0;
-                        const MAX_DEPTH: usize = 128;
-
-                        while depth < MAX_DEPTH && !visited.contains(&current) {
-                            visited.insert(current);
-
-                            if let Some(proc) = pid_to_proc.get(&current) {
-                                if let Some(parent_pid) = proc.ppid {
-                                    if parent_pid != 0 && parent_pid != current {
-                                        expanded.insert(parent_pid);
-                                        current = parent_pid;
-                                        depth += 1;
-                                        continue;
-                                    }
-                                }
-                            }
-                            break;
-                        }
-                    }
-
-                    // Include direct children of matching processes for context
-                    let matching_with_children: Vec<u32> = matching_pids.iter().copied().collect();
-                    for &pid in &matching_with_children {
-                        if let Some(children) = children_map.get(&pid) {
-                            for &child in children {
-                                expanded.insert(child);
-                            }
-                        }
-                    }
-
-                    Some(expanded)
-                } else {
-                    None
-                };
-
-                self.cached_visible_pids = result.clone();
-                result
-            } else {
-                // Filter unchanged - reuse cached result
-                self.cached_visible_pids.clone()
-            };
+                self.last_filter_text_lower.clone_from(&filter_lower);
+                self.cached_visible_pids_snapshot = Some(snapshot.taken_at);
+                self.cached_visible_pids =
+                    pmonnt_core::view::filter_visible_pids(&snapshot, &filter_lower).map(Arc::new);
+            }
+            let visible_pids = self.cached_visible_pids.clone();
 
             let filter_elapsed = filter_timer.elapsed().as_millis() as u64;
             if filter_elapsed > 10 {
-                log::warn!("slow section filter computation: {}ms", filter_elapsed);
+                log::warn!("slow section filter computation: {filter_elapsed}ms");
             }
 
             // TableBuilder manages its own layout; no explicit height needed.
@@ -422,6 +355,7 @@ impl PMonNTApp {
                         input,
                         row_height,
                         policy,
+                        &snapshot,
                         selection_changed,
                     );
                 }
@@ -431,10 +365,8 @@ impl PMonNTApp {
                         ui,
                         input,
                         row_height,
-                        &pid_set,
-                        &pid_to_proc,
-                        &children_map,
-                        visible_pids.as_ref(),
+                        &snapshot,
+                        visible_pids.as_deref(),
                         selection_changed,
                     );
                 }
@@ -448,7 +380,7 @@ impl PMonNTApp {
                 ui.label("Exited (last 30s):");
 
                 egui::ScrollArea::vertical()
-                    .id_source("exited_scroll")
+                    .id_salt("exited_scroll")
                     .max_height(150.0)
                     .show(ui, |ui| {
                         for exited in recent_exited {

@@ -39,7 +39,7 @@ fn header_cell_button(
         ui.separator();
         if ui.button("Reset columns").clicked() {
             app.reset_process_columns_to_default();
-            ui.close_menu();
+            ui.close();
         }
     });
 
@@ -54,12 +54,11 @@ fn header_cell_button(
     if released {
         released_any.set(true);
     }
-    if released {
-        if let Some(drag_col) = app.process_columns_drag {
-            if response.hovered() {
-                app.move_process_column_before(drag_col, col);
-            }
-        }
+    if released
+        && let Some(drag_col) = app.process_columns_drag
+        && response.hovered()
+    {
+        app.move_process_column_before(drag_col, col);
     }
 
     response
@@ -77,11 +76,7 @@ pub(super) fn render_header(
             ProcessColumnId::Name => {
                 header.col(|ui| {
                     let name_label = if app.group_sort == GroupSort::Name {
-                        if app.sort_desc {
-                            "Name v"
-                        } else {
-                            "Name ^"
-                        }
+                        if app.sort_desc { "Name v" } else { "Name ^" }
                     } else {
                         "Name"
                     };
@@ -128,11 +123,7 @@ pub(super) fn render_header(
                 header.col(|ui| {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let cpu_label = if app.group_sort == GroupSort::CPU {
-                            if app.sort_desc {
-                                "v CPU"
-                            } else {
-                                "^ CPU"
-                            }
+                            if app.sort_desc { "v CPU" } else { "^ CPU" }
                         } else {
                             "CPU"
                         };
@@ -176,11 +167,7 @@ pub(super) fn render_header(
                 header.col(|ui| {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let disk_label = if app.group_sort == GroupSort::Disk {
-                            if app.sort_desc {
-                                "v Disk"
-                            } else {
-                                "^ Disk"
-                            }
+                            if app.sort_desc { "v Disk" } else { "^ Disk" }
                         } else {
                             "Disk"
                         };
@@ -200,11 +187,7 @@ pub(super) fn render_header(
                 header.col(|ui| {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let gpu_label = if app.group_sort == GroupSort::GPU {
-                            if app.sort_desc {
-                                "v GPU"
-                            } else {
-                                "^ GPU"
-                            }
+                            if app.sort_desc { "v GPU" } else { "^ GPU" }
                         } else {
                             "GPU"
                         };
@@ -308,11 +291,7 @@ pub(super) fn render_header(
                 header.col(|ui| {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let pid_label = if app.group_sort == GroupSort::PID {
-                            if app.sort_desc {
-                                "v PID"
-                            } else {
-                                "^ PID"
-                            }
+                            if app.sort_desc { "v PID" } else { "^ PID" }
                         } else {
                             "PID"
                         };

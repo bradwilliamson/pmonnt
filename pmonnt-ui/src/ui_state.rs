@@ -3,8 +3,11 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 /// UI state for MalwareBazaar interactions
-#[allow(dead_code)]
 #[derive(Clone)]
+#[expect(
+    dead_code,
+    reason = "status/visibility fields are written by the MalwareBazaar panel but never read"
+)]
 pub(crate) struct MbUiState {
     pub(crate) status: Option<String>,
     pub(crate) last_query_state: Option<MbQueryState>,
@@ -40,7 +43,8 @@ pub(crate) struct MbUiState {
     pub(crate) querying_started_at: Option<Instant>,
     pub(crate) last_seen_pid: Option<u32>,
     pub(crate) current_process_sha: Option<String>,
-    pub(crate) current_process_sha_pending: Arc<Mutex<Option<String>>>,
+    /// Explicit lookups waiting for their image hash: PID -> force (Refresh).
+    pub(crate) pending_checks: std::collections::HashMap<u32, bool>,
     // CSCB cache
     pub(crate) cscb_entries: Vec<pmonnt_core::providers::MbCscbEntry>,
     pub(crate) cscb_fetch_in_progress: bool,
@@ -86,7 +90,7 @@ impl Default for MbUiState {
             querying_started_at: None,
             last_seen_pid: None,
             current_process_sha: None,
-            current_process_sha_pending: Arc::new(Mutex::new(None)),
+            pending_checks: std::collections::HashMap::new(),
             cscb_entries: Vec::new(),
             cscb_fetch_in_progress: false,
             cscb_error: None,
@@ -98,8 +102,11 @@ impl Default for MbUiState {
 }
 
 /// Light-weight query state for UI display
-#[allow(dead_code)]
 #[derive(Clone)]
+#[expect(
+    dead_code,
+    reason = "query diagnostics are recorded but no view shows them yet; read them or drop the writers"
+)]
 pub(crate) struct MbQueryState {
     pub(crate) last_query: Option<String>,
     pub(crate) last_http_status: Option<u16>,
@@ -109,7 +116,6 @@ pub(crate) struct MbQueryState {
 }
 
 /// UI state for VirusTotal manual lookups
-#[allow(dead_code)]
 #[derive(Clone)]
 pub(crate) struct VtUiState {
     pub(crate) querying_vt_pid: Option<u32>,
@@ -117,7 +123,8 @@ pub(crate) struct VtUiState {
     pub(crate) querying_started_at: Option<std::time::Instant>,
     pub(crate) last_seen_pid: Option<u32>,
     pub(crate) current_process_sha: Option<String>,
-    pub(crate) current_process_sha_pending: Arc<Mutex<Option<String>>>,
+    /// Explicit lookups waiting for their image hash: PID -> force (Refresh).
+    pub(crate) pending_checks: std::collections::HashMap<u32, bool>,
     pub(crate) last_query_meta: Option<pmonnt_core::vt::VtQueryMeta>,
 }
 
@@ -129,10 +136,15 @@ pub(crate) struct TfUiState {
     pub(crate) querying_tf_sha: Option<String>,
     pub(crate) current_process_sha: Option<String>,
     pub(crate) last_seen_pid: Option<u32>,
+    /// See [`VtUiState::pending_checks`].
+    pub(crate) pending_checks: std::collections::HashMap<u32, bool>,
 }
 
 #[derive(Clone)]
-#[allow(dead_code)]
+#[expect(
+    dead_code,
+    reason = "query diagnostics are recorded but no view shows them yet; read them or drop the writers"
+)]
 pub(crate) struct TfQueryState {
     pub(crate) last_query: Option<String>,
     pub(crate) last_http_status: Option<u16>,
@@ -155,11 +167,74 @@ pub(crate) struct YaraScanState {
     pub(crate) progress_rx:
         Option<std::sync::mpsc::Receiver<pmonnt_core::yara::scanner::ScanProgress>>,
     pub(crate) needs_engine_rebuild: Arc<AtomicBool>,
+    /// Result of the engine compile running in the background, if one is. Starting another
+    /// build replaces the receiver, so only the newest rule set's engine is ever installed.
+    pub(crate) engine_build_rx:
+        Option<std::sync::mpsc::Receiver<Result<pmonnt_core::yara::engine::YaraEngine, String>>>,
 }
 
 impl YaraScanState {
+    /// Compile the current rules into a new engine on a background thread. The rules are
+    /// copied out first, so neither the UI thread nor rule downloads wait on the compile, and
+    /// the previous engine stays usable until the new one is ready.
+    pub(crate) fn start_engine_build(&mut self) {
+        let rules = self
+            .rule_manager
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .rules()
+            .to_vec();
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.engine_build_rx = Some(rx);
+        log::info!("Compiling YARA engine with {} rules", rules.len());
+        std::thread::spawn(move || {
+            let result = pmonnt_core::yara::engine::YaraEngine::from_rules(&rules)
+                .map_err(|e| e.to_string());
+            // Fails only if a newer build replaced this one; its result is then irrelevant.
+            let _ = tx.send(result);
+        });
+    }
+
+    /// Install a finished engine build, if any.
+    pub(crate) fn poll_engine_build(&mut self) {
+        let Some(rx) = &self.engine_build_rx else {
+            return;
+        };
+        let outcome = match rx.try_recv() {
+            Ok(outcome) => outcome,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                Err("engine compile stopped unexpectedly".to_string())
+            }
+        };
+        self.engine_build_rx = None;
+        match outcome {
+            Ok(engine) => {
+                log::info!("YARA engine compiled ({} rules)", engine.rule_count());
+                self.yara_engine = Some(Arc::new(engine));
+                self.error = None;
+            }
+            Err(e) => {
+                log::error!("YARA engine compile failed: {e}");
+                // Keep scanning with the previous engine, if there is one.
+                self.error = Some(if self.yara_engine.is_some() {
+                    format!("Engine compile failed (still using the previous rules): {e}")
+                } else {
+                    format!("Engine compile failed: {e}")
+                });
+            }
+        }
+    }
+
+    pub(crate) fn engine_building(&self) -> bool {
+        self.engine_build_rx.is_some()
+    }
+
     pub(crate) fn rule_count(&self) -> usize {
-        let rm = self.rule_manager.lock().unwrap_or_else(|e| e.into_inner());
+        let rm = self
+            .rule_manager
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         rm.rules().len()
     }
 
@@ -202,28 +277,26 @@ impl YaraScanState {
                     );
                 }
                 Err(e) => {
-                    log::error!("YARA scan failed: {}", e);
+                    log::error!("YARA scan failed: {e}");
                 }
             }
         });
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn refresh_rules(&mut self) {
-        self.refresh_yaraify_rules();
-    }
-
     pub(crate) fn load_local_file(&mut self, path: std::path::PathBuf) {
-        let mut rm = self.rule_manager.lock().unwrap_or_else(|e| e.into_inner());
+        let mut rm = self
+            .rule_manager
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         match rm.load_local_file(path.clone()) {
             Ok(count) => {
-                log::info!("Loaded {} rule(s) from {:?}", count, path);
+                log::info!("Loaded {count} rule(s) from {path:?}");
                 self.needs_engine_rebuild.store(true, Ordering::Release);
                 self.error = None;
             }
             Err(e) => {
-                log::error!("Failed to load rule file: {}", e);
-                self.error = Some(format!("Failed to load: {}", e));
+                log::error!("Failed to load rule file: {e}");
+                self.error = Some(format!("Failed to load: {e}"));
             }
         }
     }
@@ -236,18 +309,22 @@ impl YaraScanState {
 
         rt_handle.spawn(async move {
             let ctx = {
-                let rm = rule_manager.lock().unwrap_or_else(|e| e.into_inner());
+                let rm = rule_manager
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 rm.yaraify_refresh_context()
             };
 
             match pmonnt_core::yara::rules::RuleManager::fetch_yaraify(ctx).await {
                 Ok(result) => {
-                    let mut rm = rule_manager.lock().unwrap_or_else(|e| e.into_inner());
+                    let mut rm = rule_manager
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
                     let count = rm.apply_yaraify_refresh(result);
-                    log::info!("YARAify: loaded {} rules", count);
+                    log::info!("YARAify: loaded {count} rules");
                     needs_engine_rebuild.store(true, Ordering::Release);
                 }
-                Err(e) => log::error!("YARAify failed: {}", e),
+                Err(e) => log::error!("YARAify failed: {e}"),
             }
         });
     }
@@ -260,7 +337,9 @@ impl YaraScanState {
 
         rt_handle.spawn(async move {
             let cache_dir = {
-                let rm = rule_manager.lock().unwrap_or_else(|e| e.into_inner());
+                let rm = rule_manager
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 rm.cache_dir.clone()
             };
 
@@ -271,18 +350,23 @@ impl YaraScanState {
             .await
             {
                 Ok(rules) => {
-                    let mut rm = rule_manager.lock().unwrap_or_else(|e| e.into_inner());
+                    let mut rm = rule_manager
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
                     let count = rm.apply_threatfox_rules(rules);
-                    log::info!("ThreatFox: generated {} rules", count);
+                    log::info!("ThreatFox: generated {count} rules");
                     needs_engine_rebuild.store(true, Ordering::Release);
                 }
-                Err(e) => log::error!("ThreatFox failed: {}", e),
+                Err(e) => log::error!("ThreatFox failed: {e}"),
             }
         });
     }
 
     pub(crate) fn rule_source_counts(&self) -> (usize, usize, usize) {
-        let rm = self.rule_manager.lock().unwrap_or_else(|e| e.into_inner());
+        let rm = self
+            .rule_manager
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut yaraify = 0;
         let mut threatfox = 0;
         let mut local = 0;
@@ -296,5 +380,49 @@ impl YaraScanState {
         }
 
         (yaraify, threatfox, local)
+    }
+}
+
+impl VtUiState {
+    /// Drop state for processes that exited or whose PID now belongs to another process.
+    /// The panel resets only when the shown PID changes, so a recycled PID would otherwise
+    /// keep showing the previous process's hash and verdict.
+    pub(crate) fn forget_departed(&mut self, keep: impl Fn(u32) -> bool) {
+        self.pending_checks.retain(|&pid, _| keep(pid));
+        if self.last_seen_pid.is_some_and(|pid| !keep(pid)) {
+            self.last_seen_pid = None;
+            self.querying_vt_pid = None;
+            self.querying_vt_sha = None;
+            self.current_process_sha = None;
+            self.last_query_meta = None;
+        }
+    }
+}
+
+impl MbUiState {
+    /// See [`VtUiState::forget_departed`].
+    pub(crate) fn forget_departed(&mut self, keep: impl Fn(u32) -> bool) {
+        self.pending_checks.retain(|&pid, _| keep(pid));
+        if self.last_seen_pid.is_some_and(|pid| !keep(pid)) {
+            self.last_seen_pid = None;
+            self.querying_mb_pid = None;
+            self.querying_mb_sha = None;
+            self.current_process_sha = None;
+            self.last_query_state = None;
+        }
+    }
+}
+
+impl TfUiState {
+    /// See [`VtUiState::forget_departed`].
+    pub(crate) fn forget_departed(&mut self, keep: impl Fn(u32) -> bool) {
+        self.pending_checks.retain(|&pid, _| keep(pid));
+        if self.last_seen_pid.is_some_and(|pid| !keep(pid)) {
+            self.last_seen_pid = None;
+            self.querying_tf_pid = None;
+            self.querying_tf_sha = None;
+            self.current_process_sha = None;
+            self.last_query_state = None;
+        }
     }
 }

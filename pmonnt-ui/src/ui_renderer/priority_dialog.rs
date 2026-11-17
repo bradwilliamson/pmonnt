@@ -2,7 +2,7 @@
 
 use eframe::egui;
 
-use pmonnt_core::win::{set_priority_class, PriorityClass};
+use pmonnt_core::win::{PriorityClass, set_priority_class};
 
 use crate::app::PMonNTApp;
 
@@ -37,7 +37,7 @@ pub(crate) fn render_priority_dialog(app: &mut PMonNTApp, ctx: &egui::Context) {
 
             ui.horizontal(|ui| {
                 ui.label("Priority:");
-                egui::ComboBox::from_id_source("priority_combo")
+                egui::ComboBox::from_id_salt("priority_combo")
                     .selected_text(selected.display_name())
                     .show_ui(ui, |ui| {
                         for &p in PriorityClass::all() {
@@ -68,7 +68,7 @@ pub(crate) fn render_priority_dialog(app: &mut PMonNTApp, ctx: &egui::Context) {
                         ui.label("Priority changed successfully.");
                     }
                     Err(e) => {
-                        ui.label(format!("Error: {}", e));
+                        ui.label(format!("Error: {e}"));
                     }
                 };
                 ui.add_space(6.0);

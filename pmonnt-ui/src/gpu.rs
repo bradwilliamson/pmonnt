@@ -7,6 +7,9 @@ pub struct GpuSnapshot {
     pub gpu_shared_bytes: HashMap<u32, u64>,
     pub gpu_total_bytes: HashMap<u32, u64>,
     pub sample_timestamp: std::time::Instant,
+    /// The first collection after the counters were (re)built: PDH needs a second one before
+    /// it can report rates, so this sample carries no data and should not replace any.
+    pub warming_up: bool,
 }
 
 impl Default for GpuSnapshot {
@@ -17,6 +20,7 @@ impl Default for GpuSnapshot {
             gpu_shared_bytes: HashMap::new(),
             gpu_total_bytes: HashMap::new(),
             sample_timestamp: std::time::Instant::now(),
+            warming_up: false,
         }
     }
 }
@@ -52,25 +56,13 @@ impl Default for GpuSampler {
 }
 
 impl GpuSampler {
-    #[allow(dead_code)]
-    pub fn is_available(&self) -> bool {
-        #[cfg(windows)]
-        {
-            matches!(self, GpuSampler::Windows(_))
-        }
-        #[cfg(not(windows))]
-        {
-            false
-        }
-    }
-
     pub fn rebuild_counters(&mut self) {
         #[cfg(windows)]
         {
-            if let GpuSampler::Windows(inner) = self {
-                if let Err(err) = inner.rebuild_counters() {
-                    log::warn!("GPU PDH rebuild failed: {err}");
-                }
+            if let GpuSampler::Windows(inner) = self
+                && let Err(err) = inner.rebuild_counters()
+            {
+                log::warn!("GPU PDH rebuild failed: {err}");
             }
         }
     }

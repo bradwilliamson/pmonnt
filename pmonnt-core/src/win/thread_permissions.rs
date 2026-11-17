@@ -3,7 +3,7 @@ use std::os::windows::ffi::OsStringExt;
 
 use thiserror::Error;
 use windows::Win32::Foundation::{
-    GetLastError, ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, WIN32_ERROR,
+    ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, GetLastError, WIN32_ERROR,
 };
 use windows::Win32::Security::Authorization::{GetSecurityInfo, SE_KERNEL_OBJECT};
 use windows::Win32::Security::{
@@ -17,14 +17,14 @@ use crate::win::HandleGuard;
 // GetSecurityInfo and ConvertSecurityDescriptorToStringSecurityDescriptorW allocate memory
 // that must be freed with LocalFree.
 #[link(name = "kernel32")]
-extern "system" {
+unsafe extern "system" {
     fn LocalFree(hmem: *mut core::ffi::c_void) -> *mut core::ffi::c_void;
 }
 
 // windows-rs doesn't always expose ConvertSecurityDescriptorToStringSecurityDescriptorW
 // depending on enabled features, so bind it directly.
 #[link(name = "advapi32")]
-extern "system" {
+unsafe extern "system" {
     fn ConvertSecurityDescriptorToStringSecurityDescriptorW(
         security_descriptor: *const core::ffi::c_void,
         requested_string_sd_revision: u32,
@@ -98,7 +98,7 @@ pub fn thread_security_sddl(tid: u32) -> Result<String, ThreadPermissionsError> 
             None,
             None,
             None,
-            Some(&mut sd),
+            Some(&raw mut sd),
         )
     };
 
@@ -118,7 +118,7 @@ pub fn thread_security_sddl(tid: u32) -> Result<String, ThreadPermissionsError> 
         }
     }
 
-    let _sd_free = LocalFreeGuard(sd.0 as *mut _);
+    let _sd_free = LocalFreeGuard(sd.0.cast());
 
     let mut sddl_ptr: *mut u16 = std::ptr::null_mut();
     let mut sddl_len: u32 = 0;
@@ -126,11 +126,11 @@ pub fn thread_security_sddl(tid: u32) -> Result<String, ThreadPermissionsError> 
     // SAFETY: ConvertSecurityDescriptorToStringSecurityDescriptorW is called with valid security descriptor from GetSecurityInfo
     let ok = unsafe {
         ConvertSecurityDescriptorToStringSecurityDescriptorW(
-            sd.0 as *const _,
+            sd.0.cast_const(),
             SDDL_REVISION_1,
             sec_info.0,
-            &mut sddl_ptr,
-            &mut sddl_len,
+            &raw mut sddl_ptr,
+            &raw mut sddl_len,
         )
     };
 
@@ -138,7 +138,7 @@ pub fn thread_security_sddl(tid: u32) -> Result<String, ThreadPermissionsError> 
         return Err(map_last_error(tid));
     }
 
-    let _sddl_free = LocalFreeGuard(sddl_ptr as *mut _);
+    let _sddl_free = LocalFreeGuard(sddl_ptr.cast());
 
     // sddl_len includes the NUL terminator.
     let len = (sddl_len as usize).saturating_sub(1);

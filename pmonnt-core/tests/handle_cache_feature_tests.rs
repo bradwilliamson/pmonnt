@@ -99,7 +99,11 @@ fn test_path_normalization_extended_prefix() {
 #[test]
 fn test_save_config_creates_parent_directory() {
     let temp = tempdir().unwrap();
-    let nested_path = temp.path().join("subdir").join("nested").join("config.json");
+    let nested_path = temp
+        .path()
+        .join("subdir")
+        .join("nested")
+        .join("config.json");
 
     let mut cache = HandleCache::new(60);
     cache.update_detector_config(1000, Some("c:\\test.exe"), 5, 100, 2);
@@ -181,7 +185,8 @@ fn test_update_with_paths_applies_config_to_detector() {
         1234,
         HandleSummary {
             total: 100,
-            by_type: Vec::new(), timestamp: std::time::Instant::now(),
+            by_type: Vec::new(),
+            timestamp: std::time::Instant::now(),
         },
     );
 
@@ -208,7 +213,8 @@ fn test_update_with_paths_defaults_without_config() {
         5678,
         HandleSummary {
             total: 50,
-            by_type: Vec::new(), timestamp: std::time::Instant::now(),
+            by_type: Vec::new(),
+            timestamp: std::time::Instant::now(),
         },
     );
 
@@ -247,13 +253,14 @@ fn test_is_leaking_detects_sustained_increase() {
     pid_to_path.insert(1000, "c:\\test.exe".to_string());
 
     // Feed increasing samples
-    for count in [100, 105, 110, 115].iter() {
+    for count in &[100, 105, 110, 115] {
         let mut summaries = HashMap::new();
         summaries.insert(
             1000,
             HandleSummary {
                 total: *count,
-                by_type: Vec::new(), timestamp: std::time::Instant::now(),
+                by_type: Vec::new(),
+                timestamp: std::time::Instant::now(),
             },
         );
         cache2.update_with_paths(summaries, &pid_to_path);
@@ -273,13 +280,14 @@ fn test_is_leaking_false_before_threshold() {
     pid_to_path.insert(1000, "c:\\test.exe".to_string());
 
     // Feed only 3 samples (threshold is 5)
-    for count in [100, 105, 110].iter() {
+    for count in &[100, 105, 110] {
         let mut summaries = HashMap::new();
         summaries.insert(
             1000,
             HandleSummary {
                 total: *count,
-                by_type: Vec::new(), timestamp: std::time::Instant::now(),
+                by_type: Vec::new(),
+                timestamp: std::time::Instant::now(),
             },
         );
         cache.update_with_paths(summaries, &pid_to_path);
@@ -302,7 +310,8 @@ fn test_get_delta_returns_handle_difference() {
         2000,
         HandleSummary {
             total: 100,
-            by_type: Vec::new(), timestamp: std::time::Instant::now(),
+            by_type: Vec::new(),
+            timestamp: std::time::Instant::now(),
         },
     );
     cache.update_with_paths(summaries.clone(), &pid_to_path);
@@ -312,7 +321,8 @@ fn test_get_delta_returns_handle_difference() {
         2000,
         HandleSummary {
             total: 125,
-            by_type: Vec::new(), timestamp: std::time::Instant::now(),
+            by_type: Vec::new(),
+            timestamp: std::time::Instant::now(),
         },
     );
     cache.update_with_paths(summaries, &pid_to_path);
@@ -338,13 +348,14 @@ fn test_get_leak_explanation_returns_metrics() {
     pid_to_path.insert(3000, "c:\\leaky.exe".to_string());
 
     // Feed leak pattern
-    for count in [100, 110, 120, 130].iter() {
+    for count in &[100, 110, 120, 130] {
         let mut summaries = HashMap::new();
         summaries.insert(
             3000,
             HandleSummary {
                 total: *count,
-                by_type: Vec::new(), timestamp: std::time::Instant::now(),
+                by_type: Vec::new(),
+                timestamp: std::time::Instant::now(),
             },
         );
         cache2.update_with_paths(summaries, &pid_to_path);
@@ -369,13 +380,14 @@ fn test_reset_detector_clears_leak_state() {
     pid_to_path.insert(4000, "c:\\test.exe".to_string());
 
     // Feed leak pattern
-    for count in [100, 110, 120].iter() {
+    for count in &[100, 110, 120] {
         let mut summaries = HashMap::new();
         summaries.insert(
             4000,
             HandleSummary {
                 total: *count,
-                by_type: Vec::new(), timestamp: std::time::Instant::now(),
+                by_type: Vec::new(),
+                timestamp: std::time::Instant::now(),
             },
         );
         cache.update_with_paths(summaries, &pid_to_path);
@@ -444,7 +456,7 @@ fn test_get_top_growing_types_respects_cap() {
     let mut sample2 = HashMap::new();
     for i in 1u16..=10u16 {
         sample1.insert(i, 10u32);
-        sample2.insert(i, 10 + (i as u32) * 5); // Each type grows by different amount
+        sample2.insert(i, 10 + u32::from(i) * 5); // Each type grows by different amount
     }
 
     let mut pid_data = HashMap::new();

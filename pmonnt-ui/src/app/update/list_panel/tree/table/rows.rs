@@ -32,7 +32,7 @@ pub(super) fn render_rows(
 
         let apply_selected_text_color = |ui: &mut egui::Ui| {
             if is_selected_row && is_3270 {
-                let visuals = ui.ctx().style().visuals.clone();
+                let visuals = ui.style().visuals.clone();
                 let sel_fg = visuals.panel_fill;
                 ui.style_mut().visuals.override_text_color = Some(sel_fg);
             }
@@ -54,11 +54,7 @@ pub(super) fn render_rows(
                             }
                             // Show triangle only for processes with children
                             let glyph = if item.has_children {
-                                if item.is_expanded {
-                                    "v"
-                                } else {
-                                    ">"
-                                }
+                                if item.is_expanded { "v" } else { ">" }
                             } else {
                                 "."
                             };
@@ -77,9 +73,9 @@ pub(super) fn render_rows(
 
                             // Render label with optional bold for processes with children
                             let label_text = if item.has_children {
-                                egui::RichText::new(&item.label).strong()
+                                egui::RichText::new(&*item.label).strong()
                             } else {
-                                egui::RichText::new(&item.label)
+                                egui::RichText::new(&*item.label)
                             };
 
                             let response = if item.is_selected {
@@ -92,10 +88,10 @@ pub(super) fn render_rows(
                             label_response = Some(response);
                         });
 
-                        let response = label_response.unwrap_or_else(|| ui.label(&item.label));
+                        let response = label_response.unwrap_or_else(|| ui.label(&*item.label));
 
                         if is_selected_row && is_3270 {
-                            let sel_fg = ui.ctx().style().visuals.panel_fill;
+                            let sel_fg = ui.style().visuals.panel_fill;
                             let _marker =
                                 ui.label(egui::RichText::new("SEL").small().color(sel_fg));
                             #[cfg(test)]
@@ -109,17 +105,16 @@ pub(super) fn render_rows(
                         if response.hovered() {
                             if app.hover_pid == Some(item_pid) {
                                 // Already tracking this PID
-                                if let Some(start) = app.hover_start {
-                                    if start.elapsed().as_millis() > 400 {
-                                        // Pre-fetch threads if not cached and not in-flight
-                                        if app.thread_cache.peek(item_pid).is_none()
-                                            && !app.thread_fetch_in_flight.contains(&item_pid)
-                                        {
-                                            app.thread_fetch_in_flight.insert(item_pid);
-                                            app.thread_fetch_started
-                                                .insert(item_pid, Instant::now());
-                                            let _ = app.thread_fetch_tx.send(item_pid);
-                                        }
+                                if let Some(start) = app.hover_start
+                                    && start.elapsed().as_millis() > 400
+                                {
+                                    // Pre-fetch threads if not cached and not in-flight
+                                    if app.thread_cache.peek(item_pid).is_none()
+                                        && !app.thread_fetch_in_flight.contains(&item_pid)
+                                    {
+                                        app.thread_fetch_in_flight.insert(item_pid);
+                                        app.thread_fetch_started.insert(item_pid, Instant::now());
+                                        let _ = app.thread_fetch_tx.send(item_pid);
                                     }
                                 }
                             } else {
@@ -195,9 +190,7 @@ pub(super) fn render_rows(
                                 if *cpu > 0.0 {
                                     // Paint inline usage bar
                                     crate::util::paint_inline_usage_bar(ui, *cpu);
-                                    ui.label(
-                                        egui::RichText::new(format!("{:.1}%", cpu)).monospace(),
-                                    );
+                                    ui.label(egui::RichText::new(format!("{cpu:.1}%")).monospace());
                                 } else {
                                     ui.label(egui::RichText::new("—").monospace());
                                 }
@@ -249,8 +242,7 @@ pub(super) fn render_rows(
                             let bytes_per_sec = app
                                 .io_rate_by_pid
                                 .get(&item.pid)
-                                .map(|r| r.read_bytes_per_sec + r.write_bytes_per_sec)
-                                .unwrap_or(0.0);
+                                .map_or(0.0, |r| r.read_bytes_per_sec + r.write_bytes_per_sec);
                             if bytes_per_sec > 0.0 {
                                 ui.label(
                                     egui::RichText::new(format_bytes_per_sec(bytes_per_sec))
@@ -269,9 +261,7 @@ pub(super) fn render_rows(
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if let Some((pct, _ded, _shr, _total)) = app.gpu_data.get(&item.pid) {
                                 if *pct > 0.0 {
-                                    ui.label(
-                                        egui::RichText::new(format!("{:.1}%", pct)).monospace(),
-                                    );
+                                    ui.label(egui::RichText::new(format!("{pct:.1}%")).monospace());
                                 } else {
                                     ui.label(egui::RichText::new("—").monospace());
                                 }
@@ -360,7 +350,7 @@ pub(super) fn render_rows(
                         apply_selected_text_color(ui);
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if let Some(&count) = app.global_thread_counts.get(&item.pid) {
-                                ui.label(egui::RichText::new(format!("{}", count)).monospace());
+                                ui.label(egui::RichText::new(format!("{count}")).monospace());
                             } else {
                                 ui.label(egui::RichText::new("—").monospace());
                             }
@@ -410,37 +400,37 @@ pub(super) fn render_rows(
                 .add_enabled(!dump_busy, egui::Button::new("Create minidump…"))
                 .clicked()
             {
-                app.request_mini_dump(item.pid, item.label.clone());
-                ui.close_menu();
+                app.request_mini_dump(item.pid, item.label.to_string());
+                ui.close();
             }
             if ui
                 .add_enabled(!dump_busy, egui::Button::new("Create full dump…"))
                 .clicked()
             {
-                app.request_full_dump_with_confirm(item.pid, item.label.clone());
-                ui.close_menu();
+                app.request_full_dump_with_confirm(item.pid, item.label.to_string());
+                ui.close();
             }
 
             if let Some(path) = app.last_dump_path() {
                 ui.separator();
                 if ui.button("Copy dump path").clicked() {
-                    ui.output_mut(|o| o.copied_text = path.to_string_lossy().to_string());
-                    ui.close_menu();
+                    ui.copy_text(path.to_string_lossy().to_string());
+                    ui.close();
                 }
                 if ui.button("Open dump folder").clicked() {
                     if let Some(parent) = path.parent() {
                         let _ = std::process::Command::new("explorer").arg(parent).spawn();
                     }
-                    ui.close_menu();
+                    ui.close();
                 }
             }
 
             ui.separator();
             if ui.button("Copy path").clicked() {
                 if let Some(path) = app.pid_to_image_path.get(&item.pid) {
-                    ui.output_mut(|o| o.copied_text = path.clone());
+                    ui.copy_text(path.clone());
                 }
-                ui.close_menu();
+                ui.close();
             }
             if ui.button("Open containing folder").clicked() {
                 if let Some(path) = app.pid_to_image_path.get(&item.pid) {
@@ -449,12 +439,12 @@ pub(super) fn render_rows(
                         .arg(path)
                         .spawn();
                 }
-                ui.close_menu();
+                ui.close();
             }
             if ui.button("Copy SHA-256 (computes if needed)").clicked() {
                 if app.selected_pid == Some(item.pid) {
-                    if let Some(sha) = &app.mb_ui_state.current_process_sha {
-                        ui.output_mut(|o| o.copied_text = sha.clone());
+                    if let Some(sha) = app.selected_sha_for(item.pid) {
+                        ui.copy_text(sha.to_string());
                     } else {
                         app.pending_copy_sha_pid = Some(item.pid);
                     }
@@ -462,33 +452,33 @@ pub(super) fn render_rows(
                     app.selected_pid = Some(item.pid);
                     app.pending_copy_sha_pid = Some(item.pid);
                 }
-                ui.close_menu();
+                ui.close();
             }
 
             ui.separator();
             if ui.button("Kill Process (Del)").clicked() {
                 app.open_kill_dialog(item.pid, false);
-                ui.close_menu();
+                ui.close();
             }
             if item.has_children && ui.button("Kill Process Tree (Shift+Del)").clicked() {
                 app.open_kill_dialog(item.pid, true);
-                ui.close_menu();
+                ui.close();
             }
 
             ui.separator();
             if ui.button("Set Priority...").clicked() {
                 app.open_priority_dialog(item.pid);
-                ui.close_menu();
+                ui.close();
             }
             if ui.button("Set Affinity...").clicked() {
                 app.open_affinity_dialog(item.pid);
-                ui.close_menu();
+                ui.close();
             }
 
             ui.separator();
             if ui.button("Services...").clicked() {
                 app.open_service_dialog(item.pid);
-                ui.close_menu();
+                ui.close();
             }
         });
 
@@ -538,7 +528,7 @@ mod tests {
         ProcRow {
             pid,
             depth,
-            label: name.to_string(),
+            label: name.into(),
             has_children,
             is_expanded: false,
             is_selected,
@@ -579,7 +569,7 @@ mod tests {
         // Verify row structure is set up for 3270 readability:
         assert_eq!(rows_flat[0].pid, 200);
         assert!(rows_flat[0].is_selected);
-        assert_eq!(rows_flat[0].label, "svchost.exe");
+        assert_eq!(&*rows_flat[0].label, "svchost.exe");
 
         // In actual rendering context, apply_selected_text_color closure would
         // set override_text_color = Some(sel_fg) for each column, making text

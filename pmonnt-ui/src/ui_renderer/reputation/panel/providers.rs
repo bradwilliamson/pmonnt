@@ -23,10 +23,10 @@ fn cached_hint_for(
         last_result_count: Option<usize>,
         last_error_message: Option<&str>,
     ) -> Option<String> {
-        if let Some(err) = last_error_message {
-            if !err.trim().is_empty() {
-                return Some("cached: error".to_string());
-            }
+        if let Some(err) = last_error_message
+            && !err.trim().is_empty()
+        {
+            return Some("cached: error".to_string());
         }
 
         let status = last_query_status?.trim();
@@ -35,9 +35,9 @@ fn cached_hint_for(
         }
 
         if let Some(count) = last_result_count {
-            Some(format!("cached: {} ({})", status, count))
+            Some(format!("cached: {status} ({count})"))
         } else {
-            Some(format!("cached: {}", status))
+            Some(format!("cached: {status}"))
         }
     }
 
@@ -141,7 +141,7 @@ pub(super) fn render_providers_section(
                 (
                     "Disabled".to_string(),
                     egui::Color32::GRAY,
-                    "".to_string(),
+                    String::new(),
                     None,
                 )
             } else if !online_lookups_enabled {
@@ -165,17 +165,17 @@ pub(super) fn render_providers_section(
                     Verdict::Malicious => "Malicious",
                 };
                 let signal = match (&f.family, f.confidence) {
-                    (Some(family), Some(conf)) => format!("{} ({}%)", family, conf),
+                    (Some(family), Some(conf)) => format!("{family} ({conf}%)"),
                     (Some(family), None) => family.clone(),
-                    (None, Some(conf)) => format!("{}% confidence", conf),
-                    (None, None) => "".to_string(),
+                    (None, Some(conf)) => format!("{conf}% confidence"),
+                    (None, None) => String::new(),
                 };
                 (status.to_string(), color, signal, f.link.clone())
             } else if lookup_in_progress {
                 (
                     "Querying".to_string(),
                     ui.visuals().weak_text_color(),
-                    "".to_string(),
+                    String::new(),
                     None,
                 )
             } else {
@@ -211,7 +211,7 @@ pub(super) fn render_providers_section(
                 if signal_text.is_empty() {
                     signal_text = hint;
                 } else {
-                    signal_text = format!("{} • {}", signal_text, hint);
+                    signal_text = format!("{signal_text} • {hint}");
                 }
             }
 
@@ -225,7 +225,7 @@ pub(super) fn render_providers_section(
             let mut chevron_clicked = false;
             let mut open_clicked = false;
 
-            ui.allocate_ui_at_rect(rect, |ui| {
+            ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new(label).strong());
                     ui.add_space(6.0);
@@ -250,10 +250,10 @@ pub(super) fn render_providers_section(
                             .clicked()
                         {
                             open_clicked = true;
-                            if let Some(link) = &link {
-                                if let Err(e) = open::that(link) {
-                                    log::error!("Failed to open link {}: {}", link, e);
-                                }
+                            if let Some(link) = &link
+                                && let Err(e) = open::that(link)
+                            {
+                                log::error!("Failed to open link {link}: {e}");
                             }
                         }
                     });

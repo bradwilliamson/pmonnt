@@ -5,7 +5,7 @@ use egui_extras::{Column, TableBuilder};
 use pmonnt_core::module::fetch_modules;
 use pmonnt_core::services::{ServiceStartType, ServiceStatus};
 
-use crate::app::network_sort::{sort_connections, NetworkSortKey, NetworkSortState};
+use crate::app::network_sort::{NetworkSortKey, NetworkSortState, sort_connections};
 use crate::app::{Density, PMonNTApp, RightTab};
 use crate::process_table::ProcessColumnId;
 use crate::ui_renderer;
@@ -88,18 +88,18 @@ impl PMonNTApp {
         ui_renderer::render_reputation_settings_panel_ctx(&mut ctx);
     }
 
-    pub(super) fn show_details_panel(&mut self, ctx: &egui::Context, selected_pid: Option<u32>) {
-        egui::SidePanel::right("details_panel")
+    pub(super) fn show_details_panel(&mut self, ui: &mut egui::Ui, selected_pid: Option<u32>) {
+        egui::Panel::right("details_panel")
             .resizable(true)
-            .default_width(self.right_panel_width)
-            .width_range(200.0..=1200.0)
-            .show(ctx, |ui| {
+            .default_size(self.right_panel_width)
+            .size_range(200.0..=1200.0)
+            .show(ui, |ui| {
                 // Persist width
                 self.right_panel_width = ui.available_width();
 
                 let has_pid = selected_pid.is_some();
 
-                egui::TopBottomPanel::top("thread_tabs").show_inside(ui, |ui| {
+                egui::Panel::top("thread_tabs").show(ui, |ui| {
                     ui.horizontal(|ui| {
                         // Close button - flat to align with tabs
                         if ui
@@ -129,7 +129,7 @@ impl PMonNTApp {
                 });
 
                 egui::ScrollArea::vertical()
-                    .id_source("central_panel_scroll")
+                    .id_salt("central_panel_scroll")
                     .show(ui, |ui| {
                         if self.right_tab == RightTab::Settings {
                             self.render_settings_tab(ui);
@@ -210,16 +210,16 @@ impl PMonNTApp {
 
                 ui.horizontal(|ui| {
                     ui.label("PID:");
-                    ui.monospace(format!("{}", pid));
+                    ui.monospace(format!("{pid}"));
                     if ui.button("📋").on_hover_text("Copy PID").clicked() {
-                        ui.output_mut(|o| o.copied_text = format!("{}", pid));
+                        ui.copy_text(format!("{pid}"));
                     }
                 });
 
                 if let Some(ppid) = proc.ppid {
                     ui.horizontal(|ui| {
                         ui.label("Parent PID:");
-                        ui.monospace(format!("{}", ppid));
+                        ui.monospace(format!("{ppid}"));
                     });
                 }
             });
@@ -233,7 +233,7 @@ impl PMonNTApp {
 
                     ui.horizontal(|ui| {
                         ui.label("CPU:");
-                        ui.monospace(format!("{:.1}%", cpu_pct));
+                        ui.monospace(format!("{cpu_pct:.1}%"));
                     });
 
                     ui.horizontal(|ui| {
@@ -254,7 +254,7 @@ impl PMonNTApp {
                     if let Some((gpu_pct, _, _, gpu_total)) = self.gpu_data.get(&pid) {
                         ui.horizontal(|ui| {
                             ui.label("GPU:");
-                            ui.monospace(format!("{:.1}%", gpu_pct));
+                            ui.monospace(format!("{gpu_pct:.1}%"));
                         });
 
                         ui.horizontal(|ui| {
@@ -267,7 +267,7 @@ impl PMonNTApp {
                     if let Some(thread_count) = self.global_thread_counts.get(&pid) {
                         ui.horizontal(|ui| {
                             ui.label("Threads:");
-                            ui.monospace(format!("{}", thread_count));
+                            ui.monospace(format!("{thread_count}"));
                         });
                     }
 
@@ -300,7 +300,7 @@ impl PMonNTApp {
                                     .on_hover_text(path); // Show full path on hover
                             }
                             if ui.button("📋").on_hover_text("Copy Full Path").clicked() {
-                                ui.output_mut(|o| o.copied_text = path.clone());
+                                ui.copy_text(path.clone());
                             }
                         });
                     }
@@ -314,7 +314,7 @@ impl PMonNTApp {
                                 ui.label("").on_hover_text(cmd);
                             }
                             if ui.button("📋").on_hover_text("Copy Command Line").clicked() {
-                                ui.output_mut(|o| o.copied_text = cmd.clone());
+                                ui.copy_text(cmd.clone());
                             }
                         });
                     }
@@ -328,54 +328,52 @@ impl PMonNTApp {
                 || self
                     .pid_to_image_path
                     .get(&pid)
-                    .map(|p| !p.is_empty())
-                    .unwrap_or(false);
+                    .is_some_and(|p| !p.is_empty());
 
             if has_security_info {
                 ui.group(|ui| {
                     ui.label(egui::RichText::new("Security").strong());
 
-                    if let Some(path) = self.pid_to_image_path.get(&pid) {
-                        if !path.is_empty() {
-                            let path_cloned = path.clone();
-                            // Request signature check
-                            self.request_signature_check_for_path(&path_cloned);
+                    if let Some(path) = self.pid_to_image_path.get(&pid)
+                        && !path.is_empty()
+                    {
+                        let path_cloned = path.clone();
+                        // Request signature check
+                        self.request_signature_check_for_path(&path_cloned);
 
-                            if let Some(info) = self.signature_cache_by_path.get(&path_cloned) {
-                                let (label, color) = match info.status() {
-                                    pmonnt_core::SignatureStatus::Valid => (
-                                        info.signer_name
-                                            .clone()
-                                            .unwrap_or_else(|| "Verified".to_string()),
-                                        egui::Color32::GREEN,
-                                    ),
-                                    pmonnt_core::SignatureStatus::CatalogSigned => (
-                                        info.signer_name
-                                            .clone()
-                                            .unwrap_or_else(|| "Verified (Catalog)".to_string()),
-                                        egui::Color32::GREEN,
-                                    ),
-                                    pmonnt_core::SignatureStatus::NotSigned => {
-                                        ("Not Signed".to_string(), egui::Color32::GRAY)
-                                    }
-                                    pmonnt_core::SignatureStatus::Untrusted => (
-                                        "Untrusted".to_string(),
-                                        egui::Color32::from_rgb(255, 100, 0),
-                                    ),
-                                    pmonnt_core::SignatureStatus::Invalid => {
-                                        ("Invalid".to_string(), egui::Color32::RED)
-                                    }
-                                    pmonnt_core::SignatureStatus::Expired => (
-                                        "Expired".to_string(),
-                                        egui::Color32::from_rgb(255, 150, 0),
-                                    ),
-                                };
+                        if let Some(info) = self.signature_cache_by_path.get(&path_cloned) {
+                            let (label, color) = match info.status() {
+                                pmonnt_core::SignatureStatus::Valid => (
+                                    info.signer_name
+                                        .clone()
+                                        .unwrap_or_else(|| "Verified".to_string()),
+                                    egui::Color32::GREEN,
+                                ),
+                                pmonnt_core::SignatureStatus::CatalogSigned => (
+                                    info.signer_name
+                                        .clone()
+                                        .unwrap_or_else(|| "Verified (Catalog)".to_string()),
+                                    egui::Color32::GREEN,
+                                ),
+                                pmonnt_core::SignatureStatus::NotSigned => {
+                                    ("Not Signed".to_string(), egui::Color32::GRAY)
+                                }
+                                pmonnt_core::SignatureStatus::Untrusted => (
+                                    "Untrusted".to_string(),
+                                    egui::Color32::from_rgb(255, 100, 0),
+                                ),
+                                pmonnt_core::SignatureStatus::Invalid => {
+                                    ("Invalid".to_string(), egui::Color32::RED)
+                                }
+                                pmonnt_core::SignatureStatus::Expired => {
+                                    ("Expired".to_string(), egui::Color32::from_rgb(255, 150, 0))
+                                }
+                            };
 
-                                ui.horizontal(|ui| {
-                                    ui.label("Signature:");
-                                    ui.colored_label(color, label);
-                                });
-                            }
+                            ui.horizontal(|ui| {
+                                ui.label("Signature:");
+                                ui.colored_label(color, label);
+                            });
                         }
                     }
                 });
@@ -545,7 +543,7 @@ impl PMonNTApp {
                 // Session ID
                 ui.label("Session ID:");
                 if let Some(session) = self.pid_to_session_id.get(&pid) {
-                    ui.label(format!("{}", session));
+                    ui.label(format!("{session}"));
                 } else {
                     ui.label(egui::RichText::new("—").color(egui::Color32::GRAY));
                 }
@@ -567,7 +565,7 @@ impl PMonNTApp {
             if let Some(env_rows) = self.pid_to_environment.get(&pid) {
                 egui::ScrollArea::vertical()
                     .max_height(260.0)
-                    .id_source(("env_scroll", pid))
+                    .id_salt(("env_scroll", pid))
                     .show(ui, |ui| {
                         egui::Grid::new(("env_grid", pid))
                             .num_columns(2)
@@ -603,7 +601,7 @@ impl PMonNTApp {
                     Ok(details) => {
                         if let Some(env) = details.environment {
                             let mut rows: Vec<(String, String)> = env.into_iter().collect();
-                            rows.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
+                            rows.sort_by_key(|a| a.0.to_lowercase());
                             self.pid_to_environment.insert(pid, rows);
                         }
                     }
@@ -628,8 +626,7 @@ impl PMonNTApp {
         let refresh_due = self
             .services_cache_by_pid
             .get(&pid)
-            .map(|(t, _)| t.elapsed().as_secs() >= 2)
-            .unwrap_or(true);
+            .is_none_or(|(t, _)| t.elapsed().as_secs() >= 2);
 
         if refresh_due {
             match pmonnt_core::services::get_services_for_process(pid) {
@@ -740,7 +737,7 @@ impl PMonNTApp {
                                     .clicked();
 
                                 if restart_clicked {
-                                    self.service_action_in_flight.insert(restart_key.clone());
+                                    self.service_action_in_flight.insert(restart_key);
                                     let tx = self.service_action_result_tx.clone();
                                     let name = svc.name.clone();
                                     self.bg_worker.spawn(move || {
@@ -751,11 +748,11 @@ impl PMonNTApp {
                                         .map_err(|e| format!("{e}"));
                                         let _ = tx.send((pid, name, "Restart".to_string(), r));
                                     });
-                                    ui.close_menu();
+                                    ui.close();
                                 }
 
                                 if pause_clicked {
-                                    self.service_action_in_flight.insert(pause_key.clone());
+                                    self.service_action_in_flight.insert(pause_key);
                                     let tx = self.service_action_result_tx.clone();
                                     let name = svc.name.clone();
                                     self.bg_worker.spawn(move || {
@@ -766,11 +763,11 @@ impl PMonNTApp {
                                         .map_err(|e| format!("{e}"));
                                         let _ = tx.send((pid, name, "Pause".to_string(), r));
                                     });
-                                    ui.close_menu();
+                                    ui.close();
                                 }
 
                                 if resume_clicked {
-                                    self.service_action_in_flight.insert(resume_key.clone());
+                                    self.service_action_in_flight.insert(resume_key);
                                     let tx = self.service_action_result_tx.clone();
                                     let name = svc.name.clone();
                                     self.bg_worker.spawn(move || {
@@ -781,7 +778,7 @@ impl PMonNTApp {
                                         .map_err(|e| format!("{e}"));
                                         let _ = tx.send((pid, name, "Resume".to_string(), r));
                                     });
-                                    ui.close_menu();
+                                    ui.close();
                                 }
                             });
                         });
@@ -846,7 +843,7 @@ impl PMonNTApp {
                                 .clicked();
 
                             if stop_clicked {
-                                self.service_action_in_flight.insert(stop_key.clone());
+                                self.service_action_in_flight.insert(stop_key);
                                 let tx = self.service_action_result_tx.clone();
                                 let name = svc.name.clone();
                                 self.bg_worker.spawn(move || {
@@ -860,7 +857,7 @@ impl PMonNTApp {
                             }
 
                             if restart_clicked {
-                                self.service_action_in_flight.insert(restart_key.clone());
+                                self.service_action_in_flight.insert(restart_key);
                                 let tx = self.service_action_result_tx.clone();
                                 let name = svc.name.clone();
                                 self.bg_worker.spawn(move || {
@@ -895,23 +892,23 @@ impl PMonNTApp {
             ui.horizontal(|ui| {
                 ui.label(format!("Modules found: {}", module_result.modules.len()));
                 if let Some(err) = &module_result.error {
-                    ui.colored_label(egui::Color32::YELLOW, format!("({})", err));
+                    ui.colored_label(egui::Color32::YELLOW, format!("({err})"));
                 }
             });
 
             // Debug: Show first thread's address and first few module ranges
-            if let Some(first_thread) = threads.first() {
-                if let Some(addr) = first_thread.start_address {
-                    ui.horizontal(|ui| {
-                        ui.label(format!("First thread addr: 0x{:x}", addr));
-                    });
-                }
+            if let Some(first_thread) = threads.first()
+                && let Some(addr) = first_thread.start_address
+            {
+                ui.horizontal(|ui| {
+                    ui.label(format!("First thread addr: 0x{addr:x}"));
+                });
             }
 
             // Show first 3 modules with their ranges
             ui.collapsing("Module ranges (first 5)", |ui| {
                 for (i, m) in module_result.modules.iter().take(5).enumerate() {
-                    let end = m.base_address.saturating_add(m.size as u64);
+                    let end = m.base_address.saturating_add(u64::from(m.size));
                     ui.label(format!(
                         "{}: {} @ 0x{:x} - 0x{:x} (size: 0x{:x})",
                         i, m.name, m.base_address, end, m.size
@@ -994,9 +991,10 @@ impl PMonNTApp {
                             ),
                             None => format!(
                                 "Module: <unknown> (start={})",
-                                start_addr
-                                    .map(|a| format!("0x{a:x}"))
-                                    .unwrap_or_else(|| "<unknown>".to_string())
+                                start_addr.map_or_else(
+                                    || "<unknown>".to_string(),
+                                    |a| format!("0x{a:x}")
+                                )
                             ),
                         };
                         self.thread_action_message_by_key
@@ -1040,7 +1038,7 @@ impl PMonNTApp {
                                 tid,
                                 action: ThreadActionKind::Suspend,
                                 payload: None,
-                                result: r.map(|_| ()),
+                                result: r,
                             });
                         });
                     }
@@ -1059,7 +1057,7 @@ impl PMonNTApp {
                                 tid,
                                 action: ThreadActionKind::Resume,
                                 payload: None,
-                                result: r.map(|_| ()),
+                                result: r,
                             });
                         });
                     }
@@ -1082,7 +1080,7 @@ impl PMonNTApp {
                                 tid,
                                 action: ThreadActionKind::Kill,
                                 payload: None,
-                                result: r.map(|_| ()),
+                                result: r,
                             });
                         });
                     }
@@ -1090,12 +1088,11 @@ impl PMonNTApp {
             }
             let threads_elapsed = threads_timer.elapsed().as_millis() as u64;
             if threads_elapsed > 10 {
-                log::warn!("slow section threads panel: {}ms", threads_elapsed);
+                log::warn!("slow section threads panel: {threads_elapsed}ms");
             }
         } else {
             // Cache miss - enqueue fetch and show loading
-            if !self.thread_fetch_in_flight.contains(&pid) {
-                self.thread_fetch_in_flight.insert(pid);
+            if self.thread_fetch_in_flight.insert(pid) {
                 self.thread_fetch_started.insert(pid, Instant::now());
                 let _ = self.thread_fetch_tx.send(pid);
             }
@@ -1108,7 +1105,7 @@ impl PMonNTApp {
                 let elapsed = self
                     .thread_fetch_started
                     .get(&pid)
-                    .map(|start| start.elapsed())
+                    .map(std::time::Instant::elapsed)
                     .unwrap_or_default();
 
                 if elapsed.as_millis() > 800 {
@@ -1130,7 +1127,7 @@ impl PMonNTApp {
         if let Some((gpu_pct, dedicated, shared, total)) = self.gpu_data.get(&pid) {
             ui.horizontal(|ui| {
                 ui.label("GPU Usage:");
-                ui.label(format!("{:.1}%", gpu_pct));
+                ui.label(format!("{gpu_pct:.1}%"));
             });
 
             ui.horizontal(|ui| {
@@ -1171,7 +1168,7 @@ impl PMonNTApp {
         ui_renderer::render_handles_panel_ctx(&mut ctx);
         let handles_elapsed = handles_timer.elapsed().as_millis() as u64;
         if handles_elapsed > 10 {
-            log::warn!("slow section handles panel: {}ms", handles_elapsed);
+            log::warn!("slow section handles panel: {handles_elapsed}ms");
         }
     }
     fn render_network_tab(&mut self, ui: &mut egui::Ui, pid: u32) {
@@ -1287,7 +1284,7 @@ impl PMonNTApp {
                                         if let (Some(ip), Some(port)) =
                                             (c.remote_address, c.remote_port)
                                         {
-                                            ui.label(format!("{}:{}", ip, port));
+                                            ui.label(format!("{ip}:{port}"));
                                         } else {
                                             ui.label(
                                                 egui::RichText::new("—").color(egui::Color32::GRAY),
@@ -1297,7 +1294,7 @@ impl PMonNTApp {
 
                                     row.col(|ui| {
                                         if let Some(state) = c.state {
-                                            ui.label(format!("{:?}", state));
+                                            ui.label(format!("{state:?}"));
                                         } else {
                                             ui.label(
                                                 egui::RichText::new("—").color(egui::Color32::GRAY),
@@ -1318,7 +1315,7 @@ impl PMonNTApp {
             Err(e) => {
                 ui.colored_label(
                     egui::Color32::LIGHT_RED,
-                    format!("Failed to enumerate connections: {}", e),
+                    format!("Failed to enumerate connections: {e}"),
                 );
             }
         }

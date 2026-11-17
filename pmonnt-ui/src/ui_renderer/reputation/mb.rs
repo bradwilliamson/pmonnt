@@ -1,8 +1,63 @@
+use super::sha::{PendingLookups, known_image_sha, request_check};
 use crate::ui_state::{MbQueryState, MbUiState};
 use eframe::egui;
 use pmonnt_core::reputation_service::ReputationService;
 use std::collections::HashMap;
 use std::sync::Arc;
+
+impl PendingLookups for MbUiState {
+    fn pending_checks(&mut self) -> &mut HashMap<u32, bool> {
+        &mut self.pending_checks
+    }
+
+    fn shown_pid(&self) -> Option<u32> {
+        self.last_seen_pid
+    }
+
+    fn request(service: &ReputationService, sha: &str, force: bool) {
+        service.request_mb_lookup_for_hash(sha, force);
+    }
+
+    fn track(&mut self, pid: u32, sha: String) {
+        self.current_process_sha = Some(sha.clone());
+        self.querying_mb_sha = Some(sha);
+        self.querying_mb_pid = Some(pid);
+        self.querying_started_at = Some(std::time::Instant::now());
+    }
+
+    fn show_error(&mut self, message: String) {
+        set_mb_error(self, message);
+    }
+}
+
+fn set_mb_error(mb_state: &mut MbUiState, message: String) {
+    mb_state.last_query_state = Some(MbQueryState {
+        last_query: Some("get_info".to_string()),
+        last_http_status: None,
+        last_query_status: None,
+        last_result_count: None,
+        last_error_message: Some(message),
+    });
+}
+
+/// Queue an explicit lookup for `pid` (see [`request_check`]) or show why it cannot start.
+fn request_check_or_report(
+    mb_state: &mut MbUiState,
+    reputation_service: &ReputationService,
+    pid_to_image_path: &HashMap<u32, String>,
+    pid: u32,
+    force: bool,
+) {
+    if let Err(e) = request_check(
+        reputation_service,
+        pid_to_image_path,
+        pid,
+        force,
+        &mut mb_state.pending_checks,
+    ) {
+        set_mb_error(mb_state, e);
+    }
+}
 
 pub fn render_malwarebazaar_section(
     ui: &mut egui::Ui,
@@ -24,7 +79,14 @@ pub fn render_malwarebazaar_section(
         mb_state.last_query_state = None;
     }
 
-    // Button enable logic: only allow when a process selected and online lookups enabled.
+    // Show the image hash as soon as it is known.
+    if mb_state.current_process_sha.is_none()
+        && let Some(sha) =
+            pid.and_then(|pid| known_image_sha(reputation_service, pid_to_image_path, pid))
+    {
+        mb_state.current_process_sha = Some(sha);
+    }
+
     let can_query = pid.is_some() && online_lookups_enabled;
 
     // MB lookup controls
@@ -35,57 +97,33 @@ pub fn render_malwarebazaar_section(
                 egui::Button::new("Check this process in MalwareBazaar"),
             )
             .clicked()
+            && let Some(pid) = pid
         {
-            if let Some(pid) = pid {
-                match reputation_service.request_mb_lookup_for_process(pid) {
-                    Ok(sha) => {
-                        mb_state.current_process_sha = Some(sha.clone());
-                        mb_state.querying_mb_sha = Some(sha);
-                        mb_state.querying_mb_pid = Some(pid);
-                        mb_state.querying_started_at = Some(std::time::Instant::now());
-                    }
-                    Err(e) => {
-                        mb_state.last_query_state = Some(MbQueryState {
-                            last_query: Some("get_info".to_string()),
-                            last_http_status: None,
-                            last_query_status: None,
-                            last_result_count: None,
-                            last_error_message: Some(e),
-                        });
-                    }
-                }
-            }
+            request_check_or_report(mb_state, reputation_service, pid_to_image_path, pid, false);
         }
 
+        // Refresh re-validates the hash and bypasses the cached answers.
         if ui
             .add_enabled(can_query, egui::Button::new("Refresh MB data"))
             .clicked()
+            && let Some(pid) = pid
         {
-            if let Some(sha) = mb_state
-                .current_process_sha
-                .as_ref()
-                .or(mb_state.querying_mb_sha.as_ref())
-            {
-                let _ = reputation_service.request_mb_lookup_for_hash(sha, true);
-                if let Some(pid) = pid {
-                    mb_state.querying_mb_pid = Some(pid);
-                    mb_state.querying_started_at = Some(std::time::Instant::now());
-                }
-            }
+            request_check_or_report(mb_state, reputation_service, pid_to_image_path, pid, true);
         }
 
-        // Only show spinner if querying for this process, have a sha, and no cached result yet
-        if let Some(sha) = mb_state
+        if pid.is_some_and(|pid| mb_state.pending_checks.contains_key(&pid)) {
+            ui.spinner();
+            ui.label("Hashing image...");
+        } else if let Some(sha) = mb_state
             .current_process_sha
             .as_ref()
             .or(mb_state.querying_mb_sha.as_ref())
+            && (reputation_service.mb_lookup_in_flight(sha)
+                || (mb_state.querying_mb_pid == pid
+                    && reputation_service.get_mb_sample_for_hash(sha).is_none()))
         {
-            if mb_state.querying_mb_pid == pid
-                && reputation_service.get_mb_sample_for_hash(sha).is_none()
-            {
-                ui.spinner();
-                ui.label("Querying MalwareBazaar...");
-            }
+            ui.spinner();
+            ui.label("Querying MalwareBazaar...");
         }
     });
 
@@ -100,13 +138,6 @@ pub fn render_malwarebazaar_section(
         return;
     }
 
-    // Drain pending computed SHA (from background thread)
-    if let Ok(mut guard) = mb_state.current_process_sha_pending.lock() {
-        if let Some(sha) = guard.take() {
-            mb_state.current_process_sha = Some(sha);
-        }
-    }
-
     // Prefer current_process_sha, fallback to querying_mb_sha
     let sha_to_show = mb_state
         .current_process_sha
@@ -114,33 +145,33 @@ pub fn render_malwarebazaar_section(
         .or(mb_state.querying_mb_sha.as_ref());
 
     // Stuck protection: if a query has been running too long, clear it
-    if let Some(started) = mb_state.querying_started_at {
-        if started.elapsed() > std::time::Duration::from_secs(15) {
-            mb_state.querying_mb_pid = None;
-            mb_state.querying_started_at = None;
-        }
+    if let Some(started) = mb_state.querying_started_at
+        && started.elapsed() > std::time::Duration::from_secs(15)
+    {
+        mb_state.querying_mb_pid = None;
+        mb_state.querying_started_at = None;
     }
     if let Some(sha) = sha_to_show {
         // Show process file info + SHA even before MB query
-        if let Some(pid) = pid {
-            if let Some(path) = pid_to_image_path.get(&pid) {
-                let filename = std::path::Path::new(path)
-                    .file_name()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("");
-                ui.horizontal(|ui| {
-                    ui.label(format!("Process: {}", filename));
-                });
-                ui.horizontal(|ui| {
-                    ui.label(format!("Path:    {}", path));
-                });
-            }
+        if let Some(pid) = pid
+            && let Some(path) = pid_to_image_path.get(&pid)
+        {
+            let filename = std::path::Path::new(path)
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("");
+            ui.horizontal(|ui| {
+                ui.label(format!("Process: {filename}"));
+            });
+            ui.horizontal(|ui| {
+                ui.label(format!("Path:    {path}"));
+            });
         }
         ui.horizontal(|ui| {
             ui.label("SHA-256:");
             ui.monospace(sha);
             if ui.button("📋").clicked() {
-                ui.output_mut(|o| o.copied_text = sha.clone());
+                ui.copy_text(sha.clone());
             }
         });
         if let Some((sample_opt, meta)) = reputation_service.get_mb_sample_for_hash(sha) {
@@ -160,7 +191,7 @@ pub fn render_malwarebazaar_section(
                                     .unwrap_or_else(|| "(unknown)".to_string())
                             ));
                             if let Some(first) = sample.first_seen {
-                                ui.label(format!("First seen: {}", first));
+                                ui.label(format!("First seen: {first}"));
                             }
                             if !sample.tags.is_empty() {
                                 ui.label(format!("Tags: {}", sample.tags.join(", ")));
@@ -168,21 +199,21 @@ pub fn render_malwarebazaar_section(
 
                             ui.collapsing("Vendor intel", |ui| {
                                 if let Some(v) = &sample.vendor_intel {
-                                    ui.label(format!("{}", v));
+                                    ui.label(format!("{v}"));
                                 }
                             })
                             .header_response
                             .clicked();
                             ui.collapsing("YARA rules", |ui| {
                                 if let Some(y) = &sample.yara_rules {
-                                    ui.label(format!("{}", y));
+                                    ui.label(format!("{y}"));
                                 }
                             })
                             .header_response
                             .clicked();
                             ui.collapsing("Comments", |ui| {
                                 if let Some(comments) = &sample.comments {
-                                    for c in comments.iter() {
+                                    for c in comments {
                                         ui.label(format!(
                                             "{}: {}",
                                             c.date.clone().unwrap_or_default(),
@@ -217,7 +248,7 @@ pub fn render_malwarebazaar_section(
                         mb_state.querying_started_at = None;
                     }
                     s if s.starts_with("illegal_") => {
-                        ui.colored_label(egui::Color32::RED, format!("MB error: {}", s));
+                        ui.colored_label(egui::Color32::RED, format!("MB error: {s}"));
                         mb_state.querying_mb_pid = None;
                         mb_state.querying_started_at = None;
                     }
@@ -279,7 +310,7 @@ pub fn render_malwarebazaar_section(
             match meta.last_query_status.as_deref() {
                 Some("ok") => {
                     let count = meta.last_result_count.unwrap_or(0);
-                    ui.label(format!("ok ({} results)", count));
+                    ui.label(format!("ok ({count} results)"));
                 }
                 Some("hash_not_found") => {
                     ui.colored_label(egui::Color32::YELLOW, "hash_not_found (no sample known)");
@@ -299,7 +330,7 @@ pub fn render_malwarebazaar_section(
             }
             if let Some(code) = meta.last_http_status {
                 ui.add_space(6.0);
-                ui.label(format!("HTTP: {}", code));
+                ui.label(format!("HTTP: {code}"));
             }
         });
 
@@ -316,7 +347,7 @@ pub fn render_malwarebazaar_section(
                     ui.label("Tag/signature/filetype is valid, but returned no results.");
                 }
                 s if s.starts_with("illegal_") => {
-                    ui.colored_label(egui::Color32::RED, format!("MB error: {}", s));
+                    ui.colored_label(egui::Color32::RED, format!("MB error: {s}"));
                 }
                 _ => {}
             }
@@ -327,7 +358,7 @@ pub fn render_malwarebazaar_section(
                     "Invalid or blocked API key (HTTP 401/403)",
                 );
             } else if !err.is_empty() {
-                ui.colored_label(egui::Color32::RED, format!("MB error: {}", err));
+                ui.colored_label(egui::Color32::RED, format!("MB error: {err}"));
             }
         }
     } else {

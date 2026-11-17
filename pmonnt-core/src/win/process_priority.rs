@@ -5,13 +5,13 @@
 use crate::win::HandleGuard;
 use thiserror::Error;
 use windows::Win32::Foundation::{
-    GetLastError, ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, HANDLE, WIN32_ERROR,
+    ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, GetLastError, HANDLE, WIN32_ERROR,
 };
 use windows::Win32::System::Threading::{
-    GetPriorityClass, GetProcessAffinityMask, OpenProcess, SetPriorityClass,
-    SetProcessAffinityMask, ABOVE_NORMAL_PRIORITY_CLASS, BELOW_NORMAL_PRIORITY_CLASS,
-    HIGH_PRIORITY_CLASS, IDLE_PRIORITY_CLASS, NORMAL_PRIORITY_CLASS,
-    PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_INFORMATION, REALTIME_PRIORITY_CLASS,
+    ABOVE_NORMAL_PRIORITY_CLASS, BELOW_NORMAL_PRIORITY_CLASS, GetPriorityClass,
+    GetProcessAffinityMask, HIGH_PRIORITY_CLASS, IDLE_PRIORITY_CLASS, NORMAL_PRIORITY_CLASS,
+    OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_INFORMATION,
+    REALTIME_PRIORITY_CLASS, SetPriorityClass, SetProcessAffinityMask,
 };
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
@@ -150,7 +150,9 @@ pub fn get_affinity(pid: u32) -> Result<AffinityInfo, PriorityError> {
     let mut system_mask: usize = 0;
 
     // SAFETY: GetProcessAffinityMask is called with valid process handle and properly initialized output pointers
-    if unsafe { GetProcessAffinityMask(handle, &mut process_mask, &mut system_mask) }.is_err() {
+    if unsafe { GetProcessAffinityMask(handle, &raw mut process_mask, &raw mut system_mask) }
+        .is_err()
+    {
         return Err(map_last_error(pid));
     }
 
@@ -264,9 +266,16 @@ mod tests {
 
     #[test]
     fn test_get_own_priority() {
-        let pid = std::process::id();
-        let priority = get_priority_class(pid).unwrap();
-        assert_eq!(priority, PriorityClass::Normal);
+        // Compare with the class this process really has: CI runners (GitHub's Windows
+        // images) start jobs at BelowNormal, so assuming Normal fails there.
+        // SAFETY: GetCurrentProcess returns a pseudo-handle that needs no closing, and
+        // GetPriorityClass only reads from it.
+        let raw =
+            unsafe { GetPriorityClass(windows::Win32::System::Threading::GetCurrentProcess()) };
+        let expected = PriorityClass::from_win32(raw).expect("known priority class");
+
+        let priority = get_priority_class(std::process::id()).unwrap();
+        assert_eq!(priority, expected);
     }
 
     #[test]

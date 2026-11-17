@@ -13,14 +13,14 @@ use pmonnt_core::{
     vt::VirusTotalProvider,
 };
 
-use crate::app::network_sort::{sort_connections, NetworkSortState};
+use crate::app::network_sort::{NetworkSortState, sort_connections};
 use crate::background_worker::BackgroundWorker;
 use crate::ui_renderer;
 use crate::ui_state::{MbUiState, TfUiState, VtUiState, YaraScanState};
 use crate::util::format_memory_bytes;
 use crate::view::RightTab;
 
-use super::{sparkline, PerfStats};
+use super::{PerfStats, sparkline};
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn render_tab(
@@ -148,10 +148,10 @@ pub(super) fn render_tab(
                         };
 
                         let resp = ui.label(egui::RichText::new(label).color(color));
-                        if let Some(err) = info.error.as_deref() {
-                            if !err.trim().is_empty() {
-                                resp.on_hover_text(err);
-                            }
+                        if let Some(err) = info.error.as_deref()
+                            && !err.trim().is_empty()
+                        {
+                            resp.on_hover_text(err);
                         }
                     } else if signature_in_flight {
                         ui.label(egui::RichText::new("Checking...").color(egui::Color32::GRAY));
@@ -202,7 +202,7 @@ pub(super) fn render_tab(
 
                     ui.label("Session ID:");
                     if let Some(session) = session_id {
-                        ui.label(format!("{}", session));
+                        ui.label(format!("{session}"));
                     } else {
                         ui.label(egui::RichText::new("—").color(egui::Color32::GRAY));
                     }
@@ -281,8 +281,7 @@ pub(super) fn render_tab(
                     );
                 });
             } else {
-                if !thread_fetch_in_flight.contains(&pid) {
-                    thread_fetch_in_flight.insert(pid);
+                if thread_fetch_in_flight.insert(pid) {
                     thread_fetch_started.insert(pid, Instant::now());
                     let _ = thread_fetch_tx.send(pid);
                 }
@@ -293,7 +292,7 @@ pub(super) fn render_tab(
 
                     let elapsed = thread_fetch_started
                         .get(&pid)
-                        .map(|start| start.elapsed())
+                        .map(std::time::Instant::elapsed)
                         .unwrap_or_default();
 
                     if elapsed.as_millis() > 800 {
@@ -514,10 +513,10 @@ fn render_security_tab(
     ui.separator();
 
     // Transient hint/errors for the Permissions dialog.
-    if let Some((msg, at)) = process_permissions_hint_by_pid.get(&pid) {
-        if at.elapsed() <= Duration::from_secs(10) {
-            ui.label(egui::RichText::new(msg).color(ui.visuals().weak_text_color()));
-        }
+    if let Some((msg, at)) = process_permissions_hint_by_pid.get(&pid)
+        && at.elapsed() <= Duration::from_secs(10)
+    {
+        ui.label(egui::RichText::new(msg).color(ui.visuals().weak_text_color()));
     }
 
     // Fetch asynchronously and cache per PID.
@@ -531,9 +530,15 @@ fn render_security_tab(
         security_in_flight.insert(pid);
         let tx = security_result_tx.clone();
         bg_worker.spawn(move || {
-            let result = pmonnt_core::win::token_info::get_process_security_info(pid)
-                .map_err(|e| e.to_string());
-            let _ = tx.send(crate::app::SecurityJobResult { pid, result });
+            let (result, identity) = crate::app::ReplyIdentity::around(pid, || {
+                pmonnt_core::win::token_info::get_process_security_info(pid)
+                    .map_err(|e| e.to_string())
+            });
+            let _ = tx.send(crate::app::SecurityJobResult {
+                pid,
+                identity,
+                result,
+            });
         });
     }
 
@@ -562,7 +567,7 @@ fn render_security_tab(
     let cached = cached.unwrap();
     match &cached.result {
         Err(e) => {
-            ui.colored_label(egui::Color32::LIGHT_RED, e.to_string());
+            ui.colored_label(egui::Color32::LIGHT_RED, e.clone());
             ui.label(
                 egui::RichText::new(
                     "Tip: normal processes should work without admin; protected/system processes may deny token query.",
@@ -628,10 +633,10 @@ fn render_security_tab(
                 });
             });
 
-            egui::Frame::none()
+            egui::Frame::NONE
                 .fill(ui.visuals().widgets.inactive.bg_fill)
-                .rounding(egui::Rounding::same(8.0))
-                .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+                .corner_radius(egui::CornerRadius::same(8))
+                .inner_margin(egui::Margin::symmetric(10, 8))
                 .show(ui, |ui| {
                     egui::Grid::new(("security_summary_grid", pid))
                         .num_columns(2)
@@ -645,9 +650,7 @@ fn render_security_tab(
                             ui.horizontal(|ui| {
                                 ui.label(&info.summary.user_sid);
                                 if ui.small_button("Copy").clicked() {
-                                    ui.output_mut(|o| {
-                                        o.copied_text = info.summary.user_sid.clone()
-                                    });
+                                    ui.copy_text(info.summary.user_sid.clone());
                                 }
                             });
                             ui.end_row();
@@ -661,7 +664,7 @@ fn render_security_tab(
                                 if let Some(luid) = info.summary.logon_luid.as_deref() {
                                     ui.label(luid);
                                     if ui.small_button("Copy").clicked() {
-                                        ui.output_mut(|o| o.copied_text = luid.to_string());
+                                        ui.copy_text(luid.to_string());
                                     }
                                 } else {
                                     ui.label(egui::RichText::new("—").color(egui::Color32::GRAY));
@@ -909,12 +912,12 @@ pub(super) fn render_performance_tab(ui: &mut egui::Ui, stats: &PerfStats, _pid:
                         stat_row(
                             ui,
                             "Page Faults",
-                            format_count_simple(stats.page_faults.map(|v| v as u64)),
+                            format_count_simple(stats.page_faults.map(u64::from)),
                         );
                         stat_row(
                             ui,
                             "Page Fault Delta",
-                            format_count_simple(stats.page_fault_delta.map(|v| v as u64)),
+                            format_count_simple(stats.page_fault_delta.map(u64::from)),
                         );
                     });
 
@@ -998,22 +1001,22 @@ pub(super) fn render_performance_tab(ui: &mut egui::Ui, stats: &PerfStats, _pid:
                         stat_row(
                             ui,
                             "Handles",
-                            format_count_simple(stats.handles.map(|v| v as u64)),
+                            format_count_simple(stats.handles.map(u64::from)),
                         );
                         stat_row(
                             ui,
                             "Peak Handles",
-                            format_count_simple(stats.peak_handles.map(|v| v as u64)),
+                            format_count_simple(stats.peak_handles.map(u64::from)),
                         );
                         stat_row(
                             ui,
                             "GDI Handles",
-                            format_count_simple(stats.gdi_handles.map(|v| v as u64)),
+                            format_count_simple(stats.gdi_handles.map(u64::from)),
                         );
                         stat_row(
                             ui,
                             "USER Handles",
-                            format_count_simple(stats.user_handles.map(|v| v as u64)),
+                            format_count_simple(stats.user_handles.map(u64::from)),
                         );
                     });
                 });
@@ -1022,7 +1025,7 @@ pub(super) fn render_performance_tab(ui: &mut egui::Ui, stats: &PerfStats, _pid:
 }
 
 fn render_group_box(ui: &mut egui::Ui, title: &str, content: impl FnOnce(&mut egui::Ui)) {
-    let frame = egui::Frame::group(ui.style()).inner_margin(egui::Margin::same(10.0));
+    let frame = egui::Frame::group(ui.style()).inner_margin(egui::Margin::same(10));
 
     frame.show(ui, |ui| {
         ui.label(egui::RichText::new(title).strong());
@@ -1049,7 +1052,7 @@ fn format_filetime(time_opt: Option<u64>) -> String {
             let minutes = (seconds % 3600) / 60;
             let secs = seconds % 60;
             let millis = (time_100ns / 10_000) % 1000;
-            format!("{:02}:{:02}:{:02}.{:03}", hours, minutes, secs, millis)
+            format!("{hours:02}:{minutes:02}:{secs:02}.{millis:03}")
         }
         None => "—".to_string(),
     }
@@ -1081,7 +1084,7 @@ fn format_bytes_simple(val: Option<u64>) -> String {
             } else if v >= 1_024 {
                 format!("{:.1} KiB", v as f64 / 1024.0)
             } else {
-                format!("{} B", v)
+                format!("{v} B")
             }
         }
         None => "—".to_string(),
@@ -1093,189 +1096,6 @@ fn format_cycles_simple(val: Option<u64>) -> String {
         Some(v) => format_count_with_commas(v),
         None => "—".to_string(),
     }
-}
-
-// Old render_performance_tab for reference - can be removed later
-#[cfg(feature = "dev-tools")]
-#[allow(dead_code)]
-pub(super) fn render_performance_tab_old(ui: &mut egui::Ui, stats: &PerfStats, pid: u32) {
-    egui::ScrollArea::vertical()
-        .auto_shrink([false; 2])
-        .show(ui, |ui| {
-            ui.label(
-                egui::RichText::new("Live summary")
-                    .color(ui.visuals().weak_text_color())
-                    .small(),
-            );
-
-            let chip_frame = egui::Frame::none()
-                .fill(ui.visuals().widgets.inactive.bg_fill)
-                .rounding(egui::Rounding::same(8.0))
-                .inner_margin(egui::Margin::symmetric(10.0, 8.0));
-
-            chip_frame.show(ui, |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    ui.spacing_mut().item_spacing.x = 8.0;
-
-                    let (cpu_val, cpu_na) = match stats.total_delta {
-                        Some(delta) => (format_filetime_delta(Some(delta)), false),
-                        None => ("Not available".to_string(), true),
-                    };
-                    perf_chip(
-                        ui,
-                        "CPU Δ",
-                        &cpu_val,
-                        cpu_na,
-                        cpu_na.then_some(NA_REASON_SAMPLING),
-                    );
-
-                    let (ws_val, ws_na) = match stats.working_set {
-                        Some(ws) => (format_bytes(Some(ws as u64)), false),
-                        None => ("Not available".to_string(), true),
-                    };
-                    perf_chip(
-                        ui,
-                        "WS",
-                        &ws_val,
-                        ws_na,
-                        ws_na.then_some(NA_REASON_NOT_IMPLEMENTED),
-                    );
-
-                    let (priv_val, priv_na) = match stats.private_bytes {
-                        Some(pb) => (format_bytes(Some(pb as u64)), false),
-                        None => ("Not available".to_string(), true),
-                    };
-                    perf_chip(
-                        ui,
-                        "Private",
-                        &priv_val,
-                        priv_na,
-                        priv_na.then_some(NA_REASON_NOT_IMPLEMENTED),
-                    );
-
-                    let (handles_val, handles_na) = match stats.handles {
-                        Some(h) => (format_count_with_commas(h as u64), false),
-                        None => ("Not available".to_string(), true),
-                    };
-                    perf_chip(
-                        ui,
-                        "Handles",
-                        &handles_val,
-                        handles_na,
-                        handles_na.then_some(NA_REASON_NOT_IMPLEMENTED),
-                    );
-
-                    let (pri_val, pri_na) = match &stats.priority_class {
-                        Some(p) => (p.clone(), false),
-                        None => ("Not available".to_string(), true),
-                    };
-                    perf_chip(
-                        ui,
-                        "Priority",
-                        &pri_val,
-                        pri_na,
-                        pri_na.then_some(NA_REASON_NOT_IMPLEMENTED),
-                    );
-
-                    let (rw_val, rw_na) =
-                        match (stats.read_bytes_per_sec, stats.write_bytes_per_sec) {
-                            (Some(r), Some(w)) => (
-                                format!(
-                                    "R {} • W {}",
-                                    format_rate_bytes_per_s(Some(r)),
-                                    format_rate_bytes_per_s(Some(w))
-                                ),
-                                false,
-                            ),
-                            (Some(r), None) => (
-                                format!("R {} • W Not available", format_rate_bytes_per_s(Some(r))),
-                                true,
-                            ),
-                            (None, Some(w)) => (
-                                format!("R Not available • W {}", format_rate_bytes_per_s(Some(w))),
-                                true,
-                            ),
-                            _ => ("Not available".to_string(), true),
-                        };
-                    perf_chip(
-                        ui,
-                        "R/W",
-                        &rw_val,
-                        rw_na,
-                        rw_na.then_some(NA_REASON_SAMPLING),
-                    );
-                });
-            });
-
-            ui.add_space(8.0);
-            ui.separator();
-            ui.add_space(8.0);
-
-            let is_narrow = ui.available_width() < 900.0;
-            if is_narrow {
-                ui.set_min_width(ui.available_width());
-                render_cpu_card(ui, stats, pid);
-                ui.add_space(8.0);
-                render_memory_card(ui, stats, pid);
-                ui.add_space(8.0);
-                render_io_card(ui, stats, pid);
-                ui.add_space(8.0);
-                render_handles_card(ui, stats, pid);
-            } else {
-                let col_width = ui.available_width() / 2.0;
-                ui.columns(2, |cols| {
-                    cols[0].set_min_width(col_width);
-                    cols[1].set_min_width(col_width);
-
-                    cols[0].vertical(|ui| {
-                        render_cpu_card(ui, stats, pid);
-                        ui.add_space(8.0);
-                        render_memory_card(ui, stats, pid);
-                    });
-
-                    cols[1].vertical(|ui| {
-                        render_io_card(ui, stats, pid);
-                        ui.add_space(8.0);
-                        render_handles_card(ui, stats, pid);
-                    });
-                });
-            }
-
-            ui.add_space(12.0);
-
-            ui.collapsing("Advanced (optional)", |ui| {
-                egui::Frame::group(ui.style()).show(ui, |ui| {
-                    egui::Grid::new(("advanced_grid", pid))
-                        .num_columns(2)
-                        .spacing([10.0, 4.0])
-                        .show(ui, |ui| {
-                            ui.label("Hard faults/sec:");
-                            na_value(ui, NA_REASON_SAMPLING);
-                            ui.end_row();
-
-                            ui.label("Context switches/sec:");
-                            na_value(ui, NA_REASON_SAMPLING);
-                            ui.end_row();
-
-                            ui.label("I/O latency (avg read/write):");
-                            na_value(ui, NA_REASON_SAMPLING);
-                            ui.end_row();
-
-                            ui.label("Handle breakdown by type:");
-                            na_value(ui, NA_REASON_SAMPLING);
-                            ui.end_row();
-
-                            ui.label("Power throttling/efficiency mode:");
-                            na_value(ui, NA_REASON_SAMPLING);
-                            ui.end_row();
-
-                            ui.label("Per-engine GPU breakdown:");
-                            na_value(ui, NA_REASON_SAMPLING);
-                            ui.end_row();
-                        });
-                });
-            });
-        });
 }
 
 pub(super) fn render_performance_graph_tab(
@@ -1302,7 +1122,7 @@ pub(super) fn render_performance_graph_tab(
         return;
     }
 
-    let sample_interval = super::PERF_SAMPLE_INTERVAL_SECS as f64;
+    let sample_interval = f64::from(super::PERF_SAMPLE_INTERVAL_SECS);
 
     egui::ScrollArea::vertical()
         .auto_shrink([false; 2])
@@ -1322,16 +1142,16 @@ pub(super) fn render_performance_graph_tab(
                     "CPU",
                     cpu_values.last().copied().unwrap_or(0.0),
                     100.0,
-                    |v| format!("{:.1}%", v),
+                    |v| format!("{v:.1}%"),
                 );
 
                 ui.add_space(10.0);
 
                 // Right: Graph
-                let cpu_points: PlotPoints = cpu_values
+                let cpu_points: PlotPoints<'_> = cpu_values
                     .iter()
                     .enumerate()
-                    .map(|(i, &v)| [i as f64 * sample_interval, v as f64])
+                    .map(|(i, &v)| [i as f64 * sample_interval, f64::from(v)])
                     .collect();
 
                 Plot::new("cpu_plot")
@@ -1347,7 +1167,7 @@ pub(super) fn render_performance_graph_tab(
                     .show_y(false)
                     .show(ui, |plot_ui| {
                         plot_ui.line(
-                            Line::new(cpu_points)
+                            Line::new("CPU %", cpu_points)
                                 .color(egui::Color32::from_rgb(100, 200, 100))
                                 .width(1.5),
                         );
@@ -1370,7 +1190,7 @@ pub(super) fn render_performance_graph_tab(
                 ui.add_space(10.0);
 
                 // Right: Graph
-                let priv_points: PlotPoints = priv_values
+                let priv_points: PlotPoints<'_> = priv_values
                     .iter()
                     .enumerate()
                     .map(|(i, &v)| [i as f64 * sample_interval, v as f64])
@@ -1388,7 +1208,7 @@ pub(super) fn render_performance_graph_tab(
                     .show_y(false)
                     .show(ui, |plot_ui| {
                         plot_ui.line(
-                            Line::new(priv_points)
+                            Line::new("Private bytes", priv_points)
                                 .color(egui::Color32::from_rgb(100, 150, 255))
                                 .width(1.5)
                                 .fill(0.0),
@@ -1417,16 +1237,16 @@ pub(super) fn render_performance_graph_tab(
                 ui.add_space(10.0);
 
                 // Right: Graph with read and write lines
-                let read_points: PlotPoints = io_read_values
+                let read_points: PlotPoints<'_> = io_read_values
                     .iter()
                     .enumerate()
-                    .map(|(i, &v)| [i as f64 * sample_interval, v as f64])
+                    .map(|(i, &v)| [i as f64 * sample_interval, f64::from(v)])
                     .collect();
 
-                let write_points: PlotPoints = io_write_values
+                let write_points: PlotPoints<'_> = io_write_values
                     .iter()
                     .enumerate()
-                    .map(|(i, &v)| [i as f64 * sample_interval, v as f64])
+                    .map(|(i, &v)| [i as f64 * sample_interval, f64::from(v)])
                     .collect();
 
                 Plot::new("io_plot")
@@ -1442,13 +1262,13 @@ pub(super) fn render_performance_graph_tab(
                     .show_y(false)
                     .show(ui, |plot_ui| {
                         plot_ui.line(
-                            Line::new(read_points)
+                            Line::new("Read", read_points)
                                 .color(egui::Color32::from_rgb(100, 255, 100))
                                 .width(1.5)
                                 .name("Read"),
                         );
                         plot_ui.line(
-                            Line::new(write_points)
+                            Line::new("Write", write_points)
                                 .color(egui::Color32::from_rgb(255, 150, 100))
                                 .width(1.5)
                                 .name("Write"),
@@ -1490,7 +1310,7 @@ fn render_mini_bar(
         // Background
         ui.painter().rect_filled(
             rect,
-            egui::Rounding::same(2.0),
+            egui::CornerRadius::same(2),
             ui.visuals().extreme_bg_color,
         );
 
@@ -1502,7 +1322,7 @@ fn render_mini_bar(
             );
             ui.painter().rect_filled(
                 fill_rect,
-                egui::Rounding::same(2.0),
+                egui::CornerRadius::same(2),
                 egui::Color32::from_rgb(100, 200, 100),
             );
         }
@@ -1510,8 +1330,9 @@ fn render_mini_bar(
         // Border
         ui.painter().rect_stroke(
             rect,
-            egui::Rounding::same(2.0),
+            egui::CornerRadius::same(2),
             egui::Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color),
+            egui::StrokeKind::Inside,
         );
 
         ui.add_space(5.0);
@@ -1525,94 +1346,7 @@ fn render_mini_bar(
     });
 }
 
-#[cfg(feature = "dev-tools")]
-#[allow(dead_code)]
-#[derive(Clone, Copy)]
-enum MetricKind {
-    Normal,
-    Badge,
-}
-
-#[cfg(feature = "dev-tools")]
-#[allow(dead_code)]
-#[derive(Clone)]
-enum ValueCell {
-    Value(String),
-    ValueWithTooltip { text: String, tooltip: String },
-    NotAvailable(&'static str),
-}
-
 const NA_REASON_NOT_IMPLEMENTED: &str = "Not available (not implemented yet).";
-#[cfg(feature = "dev-tools")]
-#[allow(dead_code)]
-const NA_REASON_PRIVILEGES: &str =
-    "Not available (requires elevated privileges or additional API support).";
-#[cfg(feature = "dev-tools")]
-#[allow(dead_code)]
-const NA_REASON_SAMPLING: &str =
-    "Not available (requires additional sampling; not implemented in current backend).";
-#[cfg(feature = "dev-tools")]
-#[allow(dead_code)]
-const COMPACT_COUNT_THRESHOLD: u64 = 10_000_000_000;
-
-#[cfg(feature = "dev-tools")]
-#[allow(dead_code)]
-fn format_count(val: Option<u64>) -> ValueCell {
-    match val {
-        Some(v) => ValueCell::Value(format_count_with_commas(v)),
-        None => ValueCell::NotAvailable(NA_REASON_NOT_IMPLEMENTED),
-    }
-}
-
-#[cfg(feature = "dev-tools")]
-#[allow(dead_code)]
-fn format_compact_count(v: u64) -> (String, String) {
-    let full = format_count_with_commas(v);
-    if v < COMPACT_COUNT_THRESHOLD {
-        return (full.clone(), full);
-    }
-
-    let (val, suffix) = if v >= 1_000_000_000_000 {
-        (v as f64 / 1_000_000_000_000.0, "T")
-    } else {
-        (v as f64 / 1_000_000_000.0, "B")
-    };
-
-    (format!("{val:.1}{suffix}"), full)
-}
-
-#[cfg(feature = "dev-tools")]
-#[allow(dead_code)]
-fn compact_value_cell(v: u64) -> ValueCell {
-    let (display, full) = format_compact_count(v);
-    if display == full {
-        ValueCell::Value(full)
-    } else {
-        ValueCell::ValueWithTooltip {
-            text: display,
-            tooltip: full,
-        }
-    }
-}
-
-#[cfg(feature = "dev-tools")]
-#[allow(dead_code)]
-fn format_compact_optional(val: Option<u64>, reason: &'static str) -> ValueCell {
-    match val {
-        Some(v) => compact_value_cell(v),
-        None => ValueCell::NotAvailable(reason),
-    }
-}
-
-#[cfg(feature = "dev-tools")]
-fn format_optional<T>(
-    val: Option<T>,
-    f: impl FnOnce(T) -> String,
-    reason: &'static str,
-) -> ValueCell {
-    val.map(|v| ValueCell::Value(f(v)))
-        .unwrap_or(ValueCell::NotAvailable(reason))
-}
 
 fn format_count_with_commas(v: u64) -> String {
     let mut s = v.to_string();
@@ -1624,744 +1358,21 @@ fn format_count_with_commas(v: u64) -> String {
     s
 }
 
-#[cfg(feature = "dev-tools")]
-#[allow(dead_code)]
-fn perf_chip(
-    ui: &mut egui::Ui,
-    label: &str,
-    value: &str,
-    value_is_na: bool,
-    tooltip: Option<&str>,
-) {
-    let visuals = ui.visuals().clone();
-    let stroke = egui::Stroke::new(1.0, visuals.strong_text_color().linear_multiply(0.25));
-    let fill = visuals.panel_fill.gamma_multiply(0.05);
-
-    let frame = egui::Frame::none()
-        .stroke(stroke)
-        .fill(fill)
-        .rounding(egui::Rounding::same(10.0))
-        .inner_margin(egui::Margin::symmetric(8.0, 4.0));
-
-    frame.show(ui, |ui| {
-        ui.spacing_mut().item_spacing.x = 6.0;
-
-        let label_text = egui::RichText::new(label)
-            .small()
-            .color(visuals.weak_text_color());
-        let mut value_text = egui::RichText::new(value)
-            .monospace()
-            .small()
-            .color(visuals.strong_text_color())
-            .strong();
-        if value_is_na {
-            value_text = value_text.color(visuals.weak_text_color());
-        }
-
-        ui.label(label_text);
-        let value_resp = ui.label(value_text);
-        if let Some(tip) = tooltip {
-            value_resp.on_hover_text(tip);
-        }
-    });
-}
-
-#[cfg(test)]
-thread_local! {
-    static TEST_CARD_RECTS: std::cell::RefCell<Vec<(&'static str, egui::Rect)>> =
-        const { std::cell::RefCell::new(Vec::new()) };
-}
-
-#[cfg(test)]
-#[allow(dead_code)]
-fn log_card_rect(id: &'static str, rect: egui::Rect) {
-    TEST_CARD_RECTS.with(|data| data.borrow_mut().push((id, rect)));
-}
-
-#[cfg(test)]
-pub(super) fn take_card_rect(id: &str) -> Option<egui::Rect> {
-    TEST_CARD_RECTS.with(|data| {
-        let mut data = data.borrow_mut();
-        let pos = data.iter().position(|(label, _)| *label == id)?;
-        Some(data.remove(pos).1)
-    })
-}
-
-#[cfg(test)]
-pub(super) fn clear_card_rects() {
-    TEST_CARD_RECTS.with(|data| data.borrow_mut().clear());
-}
-
-#[cfg(feature = "dev-tools")]
-fn metric_value(ui: &mut egui::Ui, value: &ValueCell, kind: MetricKind) {
-    match kind {
-        MetricKind::Normal => {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let label = match value {
-                    ValueCell::Value(text) => ui.label(egui::RichText::new(text).monospace()),
-                    ValueCell::ValueWithTooltip { text, tooltip } => ui
-                        .label(egui::RichText::new(text).monospace())
-                        .on_hover_text(tooltip),
-                    ValueCell::NotAvailable(reason) => {
-                        let lbl = ui.label(
-                            egui::RichText::new("Not available")
-                                .monospace()
-                                .color(ui.visuals().weak_text_color()),
-                        );
-                        lbl.on_hover_text(*reason)
-                    }
-                };
-                let _ = label;
-            });
-        }
-        MetricKind::Badge => {
-            let frame = egui::Frame::none()
-                .fill(ui.visuals().widgets.noninteractive.bg_fill)
-                .rounding(egui::Rounding::same(4.0))
-                .inner_margin(egui::Margin::symmetric(6.0, 2.0));
-            frame.show(ui, |ui| {
-                let label = match value {
-                    ValueCell::Value(text) => ui.label(
-                        egui::RichText::new(text)
-                            .small()
-                            .monospace()
-                            .color(ui.visuals().strong_text_color()),
-                    ),
-                    ValueCell::ValueWithTooltip { text, tooltip } => ui
-                        .label(
-                            egui::RichText::new(text)
-                                .small()
-                                .monospace()
-                                .color(ui.visuals().strong_text_color()),
-                        )
-                        .on_hover_text(tooltip),
-                    ValueCell::NotAvailable(reason) => ui
-                        .label(
-                            egui::RichText::new("Not available")
-                                .small()
-                                .monospace()
-                                .color(ui.visuals().weak_text_color()),
-                        )
-                        .on_hover_text(*reason),
-                };
-                let _ = label;
-            });
-        }
-    }
-}
-
-#[cfg(feature = "dev-tools")]
-#[allow(dead_code)]
-fn na_value(ui: &mut egui::Ui, reason: &str) {
-    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        let label = ui.label(
-            egui::RichText::new("Not available")
-                .monospace()
-                .color(ui.visuals().weak_text_color()),
-        );
-        label.on_hover_text(reason);
-    });
-}
-
-#[cfg(feature = "dev-tools")]
-#[allow(dead_code)]
-fn format_rate_bytes_per_s(val: Option<f64>) -> String {
-    val.map(|v| {
-        if v >= 1_000_000_000.0 {
-            format!("{:.1} GB/s", v / 1_000_000_000.0)
-        } else if v >= 1_000_000.0 {
-            format!("{:.1} MB/s", v / 1_000_000.0)
-        } else if v >= 1_000.0 {
-            format!("{:.1} KB/s", v / 1_000.0)
-        } else {
-            format!("{:.1} B/s", v)
-        }
-    })
-    .unwrap_or("N/A".to_string())
-}
-
-#[cfg(feature = "dev-tools")]
-#[allow(dead_code)]
-fn format_rate(val: Option<f64>) -> String {
-    val.map(|v| {
-        if v >= 1_000_000.0 {
-            format!("{:.1}M/s", v / 1_000_000.0)
-        } else if v >= 1_000.0 {
-            format!("{:.1}K/s", v / 1_000.0)
-        } else {
-            format!("{:.1}/s", v)
-        }
-    })
-    .unwrap_or("N/A".to_string())
-}
-
-#[cfg(feature = "dev-tools")]
-#[allow(dead_code)]
-fn render_row(ui: &mut egui::Ui, label: &str, value: ValueCell, kind: MetricKind) {
-    ui.label(egui::RichText::new(label).monospace());
-    metric_value(ui, &value, kind);
-    ui.end_row();
-}
-
-#[cfg(feature = "dev-tools")]
-#[allow(dead_code)]
-fn render_cpu_card(ui: &mut egui::Ui, stats: &PerfStats, pid: u32) {
-    ui.push_id("perf_card_cpu", |ui| {
-        #[cfg_attr(not(test), allow(unused_variables))]
-        let response = egui::Frame::group(ui.style()).show(ui, |ui| {
-            ui.heading("CPU");
-
-            egui::Grid::new(("cpu_card_grid", pid))
-                .num_columns(2)
-                .spacing([10.0, 4.0])
-                .show(ui, |ui| {
-                    render_row(
-                        ui,
-                        "Priority:",
-                        format_optional(
-                            stats.priority_class.clone(),
-                            |v| v,
-                            NA_REASON_NOT_IMPLEMENTED,
-                        ),
-                        MetricKind::Badge,
-                    );
-
-                    render_row(
-                        ui,
-                        "Kernel Time:",
-                        format_optional(
-                            stats.kernel_time,
-                            |v| format_filetime(Some(v)),
-                            NA_REASON_NOT_IMPLEMENTED,
-                        ),
-                        MetricKind::Normal,
-                    );
-                    render_row(
-                        ui,
-                        "User Time:",
-                        format_optional(
-                            stats.user_time,
-                            |v| format_filetime(Some(v)),
-                            NA_REASON_NOT_IMPLEMENTED,
-                        ),
-                        MetricKind::Normal,
-                    );
-                    render_row(
-                        ui,
-                        "Total Time:",
-                        format_optional(
-                            stats.total_time,
-                            |v| format_filetime(Some(v)),
-                            NA_REASON_NOT_IMPLEMENTED,
-                        ),
-                        MetricKind::Normal,
-                    );
-
-                    render_row(
-                        ui,
-                        "Kernel Δ:",
-                        format_optional(
-                            stats.kernel_delta,
-                            |v| format_filetime_delta(Some(v)),
-                            NA_REASON_SAMPLING,
-                        ),
-                        MetricKind::Badge,
-                    );
-                    render_row(
-                        ui,
-                        "User Δ:",
-                        format_optional(
-                            stats.user_delta,
-                            |v| format_filetime_delta(Some(v)),
-                            NA_REASON_SAMPLING,
-                        ),
-                        MetricKind::Badge,
-                    );
-                    render_row(
-                        ui,
-                        "Total Δ:",
-                        format_optional(
-                            stats.total_delta,
-                            |v| format_filetime_delta(Some(v)),
-                            NA_REASON_SAMPLING,
-                        ),
-                        MetricKind::Badge,
-                    );
-
-                    render_row(
-                        ui,
-                        "Cycles:",
-                        format_compact_optional(stats.cycles, NA_REASON_NOT_IMPLEMENTED),
-                        MetricKind::Normal,
-                    );
-                    render_row(
-                        ui,
-                        "Cycles Δ:",
-                        format_compact_optional(
-                            stats.cycles_delta,
-                            NA_REASON_SAMPLING,
-                        ),
-                        MetricKind::Badge,
-                    );
-                });
-        });
-
-        #[cfg(test)]
-        log_card_rect("perf_card_cpu", response.response.rect);
-    });
-}
-
-#[cfg(feature = "dev-tools")]
-#[allow(dead_code)]
-fn render_memory_card(ui: &mut egui::Ui, stats: &PerfStats, pid: u32) {
-    ui.push_id("perf_card_memory", |ui| {
-        #[cfg_attr(not(test), allow(unused_variables))]
-        let response = egui::Frame::group(ui.style()).show(ui, |ui| {
-            ui.heading("Memory");
-
-            ui.label(egui::RichText::new("Virtual Memory").strong());
-            egui::Grid::new(("memory_card_grid_virtual", pid))
-                .num_columns(2)
-                .spacing([10.0, 4.0])
-                .show(ui, |ui| {
-                    render_row(
-                        ui,
-                        "Virtual Size:",
-                        format_optional(
-                            stats.virtual_size,
-                            |v| format_bytes_value(v as u64),
-                            NA_REASON_NOT_IMPLEMENTED,
-                        ),
-                        MetricKind::Normal,
-                    );
-                    render_row(
-                        ui,
-                        "Private Bytes:",
-                        format_optional(
-                            stats.private_bytes,
-                            |v| format_bytes_value(v as u64),
-                            NA_REASON_NOT_IMPLEMENTED,
-                        ),
-                        MetricKind::Normal,
-                    );
-                    render_row(
-                        ui,
-                        "Peak Private Bytes:",
-                        format_optional(
-                            stats.peak_private_bytes,
-                            |v| format_bytes_value(v as u64),
-                            NA_REASON_NOT_IMPLEMENTED,
-                        ),
-                        MetricKind::Normal,
-                    );
-                    render_row(
-                        ui,
-                        "Commit Charge:",
-                        format_optional(
-                            stats.commit_charge,
-                            |v| format_bytes_value(v as u64),
-                            NA_REASON_NOT_IMPLEMENTED,
-                        ),
-                        MetricKind::Normal,
-                    );
-                    render_row(
-                        ui,
-                        "Peak Commit Charge:",
-                        format_optional(
-                            stats.peak_commit_charge,
-                            |v| format_bytes_value(v as u64),
-                            NA_REASON_NOT_IMPLEMENTED,
-                        ),
-                        MetricKind::Normal,
-                    );
-                    render_row(
-                        ui,
-                        "Page Faults:",
-                        format_optional(
-                            stats.page_faults,
-                            |v| format_count_with_commas(v as u64),
-                            NA_REASON_NOT_IMPLEMENTED,
-                        ),
-                        MetricKind::Normal,
-                    );
-                    render_row(
-                        ui,
-                        "Page Fault Δ:",
-                        format_optional(
-                            stats.page_fault_delta,
-                            |v| format_count_with_commas(v as u64),
-                            NA_REASON_SAMPLING,
-                        ),
-                        MetricKind::Badge,
-                    );
-                });
-
-            ui.add_space(6.0);
-            ui.label(egui::RichText::new("Physical Memory").strong());
-            egui::Grid::new(("memory_card_grid_physical", pid))
-                .num_columns(2)
-                .spacing([10.0, 4.0])
-                .show(ui, |ui| {
-                    render_row(
-                        ui,
-                        "Working Set:",
-                        format_optional(
-                            stats.working_set,
-                            |v| format_bytes_value(v as u64),
-                            NA_REASON_NOT_IMPLEMENTED,
-                        ),
-                        MetricKind::Normal,
-                    );
-                    render_row(
-                        ui,
-                        "WS Private:",
-                        format_optional(
-                            stats.ws_private,
-                            |v| format_bytes_value(v as u64),
-                            NA_REASON_NOT_IMPLEMENTED,
-                        ),
-                        MetricKind::Normal,
-                    );
-                    render_row(
-                        ui,
-                        "WS Shareable:",
-                        format_optional(
-                            stats.ws_shareable,
-                            |v| format_bytes_value(v as u64),
-                            NA_REASON_NOT_IMPLEMENTED,
-                        ),
-                        MetricKind::Normal,
-                    );
-                    render_row(
-                        ui,
-                        "WS Shared:",
-                        format_optional(
-                            stats.ws_shared,
-                            |v| format_bytes_value(v as u64),
-                            NA_REASON_NOT_IMPLEMENTED,
-                        ),
-                        MetricKind::Normal,
-                    );
-                    render_row(
-                        ui,
-                        "Peak Working Set:",
-                        format_optional(
-                            stats.peak_working_set,
-                            |v| format_bytes_value(v as u64),
-                            NA_REASON_NOT_IMPLEMENTED,
-                        ),
-                        MetricKind::Normal,
-                    );
-                });
-        });
-
-        #[cfg(test)]
-        log_card_rect("perf_card_memory", response.response.rect);
-    });
-}
-
-#[cfg(feature = "dev-tools")]
-#[allow(dead_code)]
-fn render_io_card(ui: &mut egui::Ui, stats: &PerfStats, pid: u32) {
-    ui.push_id("perf_card_io", |ui| {
-        #[cfg_attr(not(test), allow(unused_variables))]
-        let response = egui::Frame::group(ui.style()).show(ui, |ui| {
-            ui.heading("I/O");
-
-            ui.vertical(|ui| {
-                egui::Grid::new(("io_card_grid_counts", pid))
-                    .num_columns(2)
-                    .spacing([10.0, 4.0])
-                    .show(ui, |ui| {
-                        render_row(
-                            ui,
-                            "Reads:",
-                            format_count(stats.io_reads),
-                            MetricKind::Normal,
-                        );
-                        render_row(
-                            ui,
-                            "Read Δ:",
-                            format_optional(
-                                stats.io_read_delta,
-                                format_count_with_commas,
-                                NA_REASON_SAMPLING,
-                            ),
-                            MetricKind::Badge,
-                        );
-                        render_row(
-                            ui,
-                            "Read Bytes Δ:",
-                            format_optional(
-                                stats.io_read_bytes_delta,
-                                format_bytes_value,
-                                NA_REASON_SAMPLING,
-                            ),
-                            MetricKind::Badge,
-                        );
-
-                        render_row(
-                            ui,
-                            "Writes:",
-                            format_count(stats.io_writes),
-                            MetricKind::Normal,
-                        );
-                        render_row(
-                            ui,
-                            "Write Δ:",
-                            format_optional(
-                                stats.io_write_delta,
-                                format_count_with_commas,
-                                NA_REASON_SAMPLING,
-                            ),
-                            MetricKind::Badge,
-                        );
-                        render_row(
-                            ui,
-                            "Write Bytes Δ:",
-                            format_optional(
-                                stats.io_write_bytes_delta,
-                                format_bytes_value,
-                                NA_REASON_SAMPLING,
-                            ),
-                            MetricKind::Badge,
-                        );
-
-                        render_row(
-                            ui,
-                            "Other:",
-                            format_count(stats.io_other),
-                            MetricKind::Normal,
-                        );
-                        render_row(
-                            ui,
-                            "Other Δ:",
-                            format_optional(
-                                stats.io_other_delta,
-                                format_count_with_commas,
-                                NA_REASON_SAMPLING,
-                            ),
-                            MetricKind::Badge,
-                        );
-                        render_row(
-                            ui,
-                            "Other Bytes Δ:",
-                            format_optional(
-                                stats.io_other_bytes_delta,
-                                format_bytes_value,
-                                NA_REASON_SAMPLING,
-                            ),
-                            MetricKind::Badge,
-                        );
-                    });
-
-                ui.add_space(6.0);
-
-                egui::Grid::new(("io_card_grid_rates", pid))
-                    .num_columns(2)
-                    .spacing([10.0, 4.0])
-                    .show(ui, |ui| {
-                        render_row(
-                            ui,
-                            "Read bytes/sec:",
-                            format_optional(
-                                stats.read_bytes_per_sec,
-                                |v| format_rate_bytes_per_s(Some(v)),
-                                NA_REASON_SAMPLING,
-                            ),
-                            MetricKind::Normal,
-                        );
-                        render_row(
-                            ui,
-                            "Write bytes/sec:",
-                            format_optional(
-                                stats.write_bytes_per_sec,
-                                |v| format_rate_bytes_per_s(Some(v)),
-                                NA_REASON_SAMPLING,
-                            ),
-                            MetricKind::Normal,
-                        );
-                        render_row(
-                            ui,
-                            "Total bytes/sec:",
-                            format_optional(
-                                stats.total_bytes_per_sec,
-                                |v| format_rate_bytes_per_s(Some(v)),
-                                NA_REASON_SAMPLING,
-                            ),
-                            MetricKind::Normal,
-                        );
-
-                        render_row(
-                            ui,
-                            "Read ops/sec:",
-                            format_optional(
-                                stats.read_ops_per_sec,
-                                |v| format_rate(Some(v)),
-                                NA_REASON_SAMPLING,
-                            ),
-                            MetricKind::Normal,
-                        );
-                        render_row(
-                            ui,
-                            "Write ops/sec:",
-                            format_optional(
-                                stats.write_ops_per_sec,
-                                |v| format_rate(Some(v)),
-                                NA_REASON_SAMPLING,
-                            ),
-                            MetricKind::Normal,
-                        );
-                        render_row(
-                            ui,
-                            "Total ops/sec:",
-                            format_optional(
-                                stats.total_ops_per_sec,
-                                |v| format_rate(Some(v)),
-                                NA_REASON_SAMPLING,
-                            ),
-                            MetricKind::Normal,
-                        );
-                    });
-
-                ui.add_space(6.0);
-
-                egui::Grid::new(("io_card_grid_adv", pid))
-                    .num_columns(2)
-                    .spacing([10.0, 4.0])
-                    .show(ui, |ui| {
-                        render_row(
-                            ui,
-                            "Avg read size:",
-                            format_optional(
-                                stats.avg_read_size,
-                                |v| format_bytes_value(v as u64),
-                                NA_REASON_SAMPLING,
-                            ),
-                            MetricKind::Normal,
-                        );
-                        render_row(
-                            ui,
-                            "Avg write size:",
-                            format_optional(
-                                stats.avg_write_size,
-                                |v| format_bytes_value(v as u64),
-                                NA_REASON_SAMPLING,
-                            ),
-                            MetricKind::Normal,
-                        );
-
-                        render_row(
-                            ui,
-                            "I/O Priority:",
-                            ValueCell::NotAvailable(NA_REASON_PRIVILEGES),
-                            MetricKind::Normal,
-                        );
-                    });
-            });
-        });
-
-        #[cfg(test)]
-        log_card_rect("perf_card_io", response.response.rect);
-    });
-}
-
-#[cfg(feature = "dev-tools")]
-#[allow(dead_code)]
-fn render_handles_card(ui: &mut egui::Ui, stats: &PerfStats, pid: u32) {
-    ui.push_id("perf_card_handles", |ui| {
-        #[cfg_attr(not(test), allow(unused_variables))]
-        let response = egui::Frame::group(ui.style()).show(ui, |ui| {
-            ui.heading("Handles");
-
-            egui::Grid::new(("handles_card_grid", pid))
-                .num_columns(2)
-                .spacing([10.0, 4.0])
-                .show(ui, |ui| {
-                    render_row(
-                        ui,
-                        "Handles:",
-                        format_count(stats.handles.map(|v| v as u64)),
-                        MetricKind::Normal,
-                    );
-                    render_row(
-                        ui,
-                        "Peak Handles:",
-                        format_count(stats.peak_handles.map(|v| v as u64)),
-                        MetricKind::Normal,
-                    );
-                    render_row(
-                        ui,
-                        "Handles Δ:",
-                        format_optional(
-                            stats.handles_delta,
-                            |v| format_count_with_commas(v as u64),
-                            NA_REASON_SAMPLING,
-                        ),
-                        MetricKind::Badge,
-                    );
-                    render_row(
-                        ui,
-                        "GDI Handles:",
-                        format_optional(
-                            stats.gdi_handles,
-                            |v| format_count_with_commas(v as u64),
-                            NA_REASON_PRIVILEGES,
-                        ),
-                        MetricKind::Normal,
-                    );
-                    render_row(
-                        ui,
-                        "USER Handles:",
-                        format_optional(
-                            stats.user_handles,
-                            |v| format_count_with_commas(v as u64),
-                            NA_REASON_PRIVILEGES,
-                        ),
-                        MetricKind::Normal,
-                    );
-                });
-        });
-
-        #[cfg(test)]
-        log_card_rect("perf_card_handles", response.response.rect);
-    });
-}
-
-#[cfg(feature = "dev-tools")]
-#[allow(dead_code)]
-fn format_filetime_delta(delta: Option<u64>) -> String {
-    delta
-        .map(|d| {
-            let ms = d as f64 / 10_000.0;
-            if ms < 1000.0 {
-                format!("{:.0} ms", ms)
-            } else {
-                format!("{:.1} s", ms / 1000.0)
-            }
-        })
-        .unwrap_or("Not available".to_string())
-}
-
 fn format_bytes(val: Option<u64>) -> String {
-    val.map(|v| {
-        if v >= 1_073_741_824 {
-            format!("{:.1} GiB", v as f64 / 1_073_741_824.0)
-        } else if v >= 1_048_576 {
-            format!("{:.1} MiB", v as f64 / 1_048_576.0)
-        } else if v >= 1_024 {
-            format!("{:.1} KiB", v as f64 / 1024.0)
-        } else {
-            format!("{} B", v)
-        }
-    })
-    .unwrap_or("Not available".to_string())
-}
-
-#[cfg(feature = "dev-tools")]
-#[allow(dead_code)]
-fn format_bytes_value(v: u64) -> String {
-    format_bytes(Some(v))
+    val.map_or_else(
+        || "Not available".to_string(),
+        |v| {
+            if v >= 1_073_741_824 {
+                format!("{:.1} GiB", v as f64 / 1_073_741_824.0)
+            } else if v >= 1_048_576 {
+                format!("{:.1} MiB", v as f64 / 1_048_576.0)
+            } else if v >= 1_024 {
+                format!("{:.1} KiB", v as f64 / 1024.0)
+            } else {
+                format!("{v} B")
+            }
+        },
+    )
 }
 
 /// Render Network tab with socket churn monitoring
@@ -2372,8 +1383,8 @@ fn render_network_tab_with_churn(
     current_snapshot: &ProcessSnapshot,
 ) {
     use super::history::{
-        NetChurnMonitor, CLOSE_WAIT_RISING_COUNT, CLOSE_WAIT_THRESHOLD, NET_POLL_INTERVAL_SECS,
-        NEW_CONN_PER_SEC_THRESHOLD, TIME_WAIT_THRESHOLD,
+        CLOSE_WAIT_RISING_COUNT, CLOSE_WAIT_THRESHOLD, NET_POLL_INTERVAL_SECS,
+        NEW_CONN_PER_SEC_THRESHOLD, NetChurnMonitor, TIME_WAIT_THRESHOLD,
     };
 
     ui.heading("Network Connections");
@@ -2394,9 +1405,8 @@ fn render_network_tab_with_churn(
             let child_count = perf_window
                 .net_churn_monitor
                 .as_ref()
-                .map(|m| m.child_pid_count)
-                .unwrap_or(0);
-            ui.label(egui::RichText::new(format!("(+ {} children)", child_count)).weak());
+                .map_or(0, |m| m.child_pid_count);
+            ui.label(egui::RichText::new(format!("(+ {child_count} children)")).weak());
         }
     });
 
@@ -2428,7 +1438,7 @@ fn render_network_tab_with_churn(
 
     // Show error if any
     if let Some(err) = &monitor.error {
-        ui.colored_label(egui::Color32::LIGHT_RED, format!("Error: {}", err));
+        ui.colored_label(egui::Color32::LIGHT_RED, format!("Error: {err}"));
         return;
     }
 
@@ -2660,7 +1670,7 @@ fn render_network_tab_with_churn(
                                     if let (Some(ip), Some(port)) =
                                         (c.remote_address, c.remote_port)
                                     {
-                                        ui.label(format!("{}:{}", ip, port));
+                                        ui.label(format!("{ip}:{port}"));
                                     } else {
                                         ui.label(
                                             egui::RichText::new("-").color(egui::Color32::GRAY),
@@ -2669,7 +1679,7 @@ fn render_network_tab_with_churn(
                                 });
                                 row.col(|ui| {
                                     if let Some(state) = c.state {
-                                        let text = format!("{:?}", state);
+                                        let text = format!("{state:?}");
                                         let color = match state {
                                             pmonnt_core::network::TcpState::TimeWait => {
                                                 egui::Color32::from_rgb(255, 140, 0)
@@ -2697,7 +1707,7 @@ fn render_network_tab_with_churn(
         Err(e) => {
             ui.colored_label(
                 egui::Color32::LIGHT_RED,
-                format!("Failed to enumerate connections: {}", e),
+                format!("Failed to enumerate connections: {e}"),
             );
         }
     }
@@ -2710,10 +1720,10 @@ fn collect_descendants(root_pid: u32, snapshot: &ProcessSnapshot) -> Vec<u32> {
     // Build parent -> children map
     let mut children_map: HashMap<u32, Vec<u32>> = HashMap::new();
     for proc in &snapshot.processes {
-        if let Some(ppid) = proc.ppid {
-            if ppid != 0 {
-                children_map.entry(ppid).or_default().push(proc.pid);
-            }
+        if let Some(ppid) = proc.ppid
+            && ppid != 0
+        {
+            children_map.entry(ppid).or_default().push(proc.pid);
         }
     }
 

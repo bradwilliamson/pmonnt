@@ -1,10 +1,10 @@
 //! SHA-256 hashing utility with caching
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs::{self, File};
-use std::io::{BufReader, Read};
+use std::io::Read;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
@@ -31,10 +31,10 @@ impl FileOps for StdFileOps {
 
     fn metadata(&self, path: &str) -> Result<FileMeta> {
         let metadata = fs::metadata(path)
-            .with_context(|| format!("Cannot read file metadata for '{}'", path))?;
+            .with_context(|| format!("Cannot read file metadata for '{path}'"))?;
         let modified = metadata
             .modified()
-            .map_err(|e| anyhow!("Cannot get file modification time: {}", e))?;
+            .map_err(|e| anyhow!("Cannot get file modification time: {e}"))?;
         Ok(FileMeta {
             modified,
             len: metadata.len(),
@@ -42,7 +42,7 @@ impl FileOps for StdFileOps {
     }
 
     fn open(&self, path: &str) -> Result<Box<dyn Read + Send>> {
-        let file = File::open(path).with_context(|| format!("Cannot open file '{}'", path))?;
+        let file = File::open(path).with_context(|| format!("Cannot open file '{path}'"))?;
         Ok(Box::new(file))
     }
 }
@@ -105,38 +105,28 @@ impl HashComputer {
 
         // Check cache first
         {
-            let cache = self.cache.lock().unwrap_or_else(|p| p.into_inner());
-            if let Some(entry) = cache.get(&cache_key) {
-                if entry.modified_time == modified_time && entry.file_size == file_size {
-                    return Ok(entry.sha256.clone());
-                }
+            let cache = self
+                .cache
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(entry) = cache.get(&cache_key)
+                && entry.modified_time == modified_time
+                && entry.file_size == file_size
+            {
+                return Ok(entry.sha256.clone());
             }
         }
 
         // Compute hash using streaming reads
         let file = self.ops.open(path)?;
-        let mut reader = BufReader::new(file);
-        let mut hasher = Sha256::new();
-        let mut buffer = [0u8; 8192]; // 8KB chunks
-
-        loop {
-            let bytes_read = reader
-                .read(&mut buffer)
-                .map_err(|e| anyhow!("Cannot read file: {}", e))?;
-
-            if bytes_read == 0 {
-                break;
-            }
-
-            hasher.update(&buffer[..bytes_read]);
-        }
-
-        let result = hasher.finalize();
-        let sha256 = format!("{:x}", result);
+        let sha256 = sha256_hex_from_reader(file)?;
 
         // Update cache
         {
-            let mut cache = self.cache.lock().unwrap_or_else(|p| p.into_inner());
+            let mut cache = self
+                .cache
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             cache.insert(
                 cache_key,
                 HashCacheEntry {
@@ -164,24 +154,36 @@ pub fn compute_sha256_simple<P: AsRef<Path>>(path: P) -> Result<String> {
     let file = File::open(path_ref)
         .with_context(|| format!("Cannot open file '{}'", path_ref.display()))?;
 
-    let mut reader = BufReader::new(file);
+    sha256_hex_from_reader(file)
+}
+
+/// Stream `reader` through SHA-256 and return the lowercase hex digest.
+pub fn sha256_hex_from_reader<R: Read>(mut reader: R) -> Result<String> {
     let mut hasher = Sha256::new();
     let mut buffer = [0u8; 8192]; // 8KB chunks
 
     loop {
-        let bytes_read = reader
-            .read(&mut buffer)
-            .map_err(|e| anyhow!("Cannot read file: {}", e))?;
-
-        if bytes_read == 0 {
-            break;
-        }
-
+        let bytes_read = match reader.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(anyhow!("Cannot read file: {e}")),
+        };
         hasher.update(&buffer[..bytes_read]);
     }
 
-    let result = hasher.finalize();
-    Ok(format!("{:x}", result))
+    Ok(to_lower_hex(&hasher.finalize()))
+}
+
+/// Encode bytes as lowercase hexadecimal.
+pub fn to_lower_hex(bytes: &[u8]) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for &b in bytes {
+        out.push(char::from(DIGITS[usize::from(b >> 4)]));
+        out.push(char::from(DIGITS[usize::from(b & 0x0f)]));
+    }
+    out
 }
 
 /// Returns true if `s` is exactly 64 ASCII hex characters.
@@ -191,7 +193,7 @@ pub fn is_valid_sha256(s: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_valid_sha256, FileMeta, FileOps, HashComputer};
+    use super::{FileMeta, FileOps, HashComputer, is_valid_sha256};
     use std::collections::HashMap;
     use std::io::{Cursor, Read};
     use std::sync::atomic::{AtomicUsize, Ordering};

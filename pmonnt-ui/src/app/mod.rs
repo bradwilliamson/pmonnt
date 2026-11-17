@@ -5,7 +5,6 @@ use pmonnt_core::{
     diff::{ExitedProcessBuffer, ProcessDiff},
     handles::HandleCache,
     module::ModuleCache,
-    process,
     reputation_service::ReputationService,
     snapshot::ProcessSnapshot,
     thread::{ThreadCache, ThreadInfo},
@@ -13,8 +12,8 @@ use pmonnt_core::{
     vt::VirusTotalProvider,
 };
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 use std::time::{Duration, Instant};
 
 use crate::theme::Theme;
@@ -39,27 +38,63 @@ pub(crate) enum KillDialogStep {
 #[derive(Debug, Clone)]
 pub(crate) struct KillDialogState {
     pub(crate) pid: u32,
+    /// Creation time of the process the dialog was opened for, so a recycled PID is never
+    /// killed in its place.
+    pub(crate) create_time: Option<u64>,
     pub(crate) kill_tree: bool,
-    pub(crate) group_pids: Option<Vec<u32>>,
-    pub(crate) group_descendant_count: Option<usize>,
     pub(crate) name: String,
     pub(crate) step: KillDialogStep,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct DumpJobResult {
-    #[allow(dead_code)]
     pub(crate) pid: u32,
-    #[allow(dead_code)]
     pub(crate) process_name: String,
-    #[allow(dead_code)]
     pub(crate) kind: pmonnt_core::win::dump::DumpKind,
     pub(crate) result: Result<std::path::PathBuf, String>,
+}
+
+/// Which process instance a background reply describes. Jobs are requested by PID, and
+/// Windows recycles PIDs, so a reply can arrive after its PID has passed to another process.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ReplyIdentity {
+    /// Creation time of the process the job read.
+    Known(u64),
+    /// Could not be determined (no query access); the reply is accepted as before.
+    Unknown,
+    /// The PID changed owner while the job ran, so the data may belong to either process.
+    Changed,
+}
+
+impl ReplyIdentity {
+    /// Run `job` for `pid`, noting the process instance before and after it.
+    pub(crate) fn around<T>(pid: u32, job: impl FnOnce() -> T) -> (T, Self) {
+        let instance = || pmonnt_core::win::process_control::query_process_create_time(pid).ok();
+        let before = instance();
+        let value = job();
+        let identity = match (before, instance()) {
+            (Some(a), Some(b)) if a != b => Self::Changed,
+            (Some(t), _) | (None, Some(t)) => Self::Known(t),
+            (None, None) => Self::Unknown,
+        };
+        (value, identity)
+    }
+
+    /// Whether a reply with this identity describes the process that `current` (the latest
+    /// snapshot's creation time for the PID) identifies.
+    pub(crate) fn matches(self, current: Option<u64>) -> bool {
+        match (self, current) {
+            (Self::Changed, _) => false,
+            (Self::Known(a), Some(b)) => a == b,
+            _ => true,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct SecurityJobResult {
     pub(crate) pid: u32,
+    pub(crate) identity: ReplyIdentity,
     pub(crate) result: Result<pmonnt_core::win::token_info::SecurityInfo, String>,
 }
 
@@ -88,25 +123,43 @@ pub(crate) struct ThreadActionJobResult {
     pub(crate) result: Result<(), String>,
 }
 
+/// SHA-256 of the selected process's image, as published by a background hash job.
+#[derive(Debug)]
+pub(crate) struct SelectionSha {
+    /// `selection_hash_generation` when the job was started.
+    pub(crate) generation: u64,
+    pub(crate) pid: u32,
+    pub(crate) sha: String,
+}
+
 pub(crate) struct PMonNTApp {
     _tokio_rt: tokio::runtime::Runtime,
     bg_worker: crate::background_worker::BackgroundWorker,
+    /// Bumped (on the UI thread) whenever the selection changes; hash jobs and their results
+    /// carry the value they started with, so stale results are recognised and dropped.
     selection_hash_generation: Arc<AtomicU64>,
+    /// PID the selection hash job was last started for.
+    selection_hash_pid: Option<u32>,
+    /// Hash job output waiting to be checked against the current selection.
+    selection_sha_pending: Arc<std::sync::Mutex<Option<SelectionSha>>>,
+    /// `(pid, sha256)` of the selected process once its hash is known.
+    selected_sha: Option<(u32, String)>,
     last_update: Instant,
     tick: u64,
-    current_snapshot: ProcessSnapshot,
-    previous_snapshot: Option<ProcessSnapshot>,
+    /// Shared so per-frame code can hold it across `&mut self` calls without cloning.
+    current_snapshot: Arc<ProcessSnapshot>,
+    previous_snapshot: Option<Arc<ProcessSnapshot>>,
     last_diff: Option<ProcessDiff>,
     exited_buffer: ExitedProcessBuffer,
     last_snapshot_update: Instant,
-    process_tree: HashMap<Option<u32>, Vec<process::Process>>,
     token_cache: TokenCache,
     thread_cache: ThreadCache,
     thread_prev: HashMap<u32, Vec<ThreadInfo>>,
     thread_fetch_in_flight: HashSet<u32>,
     thread_fetch_started: HashMap<u32, Instant>,
     thread_fetch_tx: crossbeam_channel::Sender<u32>,
-    thread_fetch_rx: crossbeam_channel::Receiver<(u32, Result<Vec<ThreadInfo>, String>)>,
+    thread_fetch_rx:
+        crossbeam_channel::Receiver<(u32, ReplyIdentity, Result<Vec<ThreadInfo>, String>)>,
 
     // Threads tab selection + actions
     selected_tid_by_pid: HashMap<u32, u32>,
@@ -123,7 +176,9 @@ pub(crate) struct PMonNTApp {
     selected_pid: Option<u32>,
     filter_text: String,
     last_filter_text_lower: String,
-    cached_visible_pids: Option<HashSet<u32>>,
+    /// Visible PIDs for the current filter, cached per (filter text, snapshot).
+    cached_visible_pids: Option<Arc<HashSet<u32>>>,
+    cached_visible_pids_snapshot: Option<Instant>,
     slash_focus_pending: bool,
     expanded_pids: HashSet<u32>,
     expanded_groups: HashSet<String>,
@@ -156,8 +211,8 @@ pub(crate) struct PMonNTApp {
     handle_cache: HandleCache,
     last_handle_update: Instant,
     handle_scan_in_progress: bool,
-    handle_update_rx: std::sync::mpsc::Receiver<(HandleCache, u64)>,
-    handle_update_tx: std::sync::mpsc::Sender<(HandleCache, u64)>,
+    handle_update_rx: std::sync::mpsc::Receiver<update::handles::HandleScanResult>,
+    handle_update_tx: std::sync::mpsc::Sender<update::handles::HandleScanResult>,
     last_handle_scan_duration_ms: u64,
     handle_scan_interval_secs: u64,
     is_elevated: bool,
@@ -214,9 +269,9 @@ pub(crate) struct PMonNTApp {
     last_service_action_message: Option<String>,
 
     kill_dialog: Option<KillDialogState>,
-    kill_action_in_flight: Option<(u32, bool, bool)>,
-    kill_action_result_tx: crossbeam_channel::Sender<(u32, bool, bool, Result<(), String>)>,
-    kill_action_result_rx: crossbeam_channel::Receiver<(u32, bool, bool, Result<(), String>)>,
+    kill_action_in_flight: Option<(u32, bool)>,
+    kill_action_result_tx: crossbeam_channel::Sender<(u32, bool, Result<(), String>)>,
+    kill_action_result_rx: crossbeam_channel::Receiver<(u32, bool, Result<(), String>)>,
 
     dump_action_in_flight: Option<(u32, pmonnt_core::win::dump::DumpKind)>,
     dump_action_result_tx: crossbeam_channel::Sender<DumpJobResult>,
@@ -254,6 +309,19 @@ pub(crate) struct PMonNTApp {
 }
 
 impl PMonNTApp {
+    /// Per-PID metric lookups for the process-list view model.
+    pub(crate) fn row_metrics(&self) -> pmonnt_core::view::RowMetrics<'_> {
+        pmonnt_core::view::RowMetrics {
+            handle_cache: &self.handle_cache,
+            global_thread_counts: &self.global_thread_counts,
+            cpu_memory_data: &self.cpu_memory_data,
+            io_rate_by_pid: &self.io_rate_by_pid,
+            gpu_data: &self.gpu_data,
+            signature_cache_by_path: &self.signature_cache_by_path,
+            pid_to_image_path: &self.pid_to_image_path,
+        }
+    }
+
     pub(crate) fn dump_confirm_dialog_state(&self) -> Option<DumpConfirmDialogState> {
         self.dump_confirm_dialog.clone()
     }
@@ -356,8 +424,7 @@ impl PMonNTApp {
         let name = self
             .current_snapshot
             .get_process(pid)
-            .map(|p| p.name.clone())
-            .unwrap_or_else(|| format!("PID {}", pid));
+            .map_or_else(|| format!("PID {pid}"), |p| p.name.clone());
 
         match pmonnt_core::services::get_services_for_process(pid) {
             Ok(mut services) => {
@@ -428,37 +495,6 @@ impl PMonNTApp {
         });
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn perform_process_action(&mut self, pid: u32, action: &str) {
-        let result = match action {
-            "Suspend" => pmonnt_core::win::process_control::suspend_process(pid),
-            "Resume" => pmonnt_core::win::process_control::resume_process(pid),
-            "Restart" => {
-                let cmd = self
-                    .pid_to_command_line
-                    .get(&pid)
-                    .map(|s| s.as_str())
-                    .unwrap_or("");
-                let cwd = self.pid_to_current_directory.get(&pid).map(|s| s.as_str());
-                if cmd.is_empty() {
-                    Err(
-                        pmonnt_core::win::process_control::ProcessControlError::SpawnError(
-                            "No command line available".to_string(),
-                        ),
-                    )
-                } else {
-                    pmonnt_core::win::process_control::restart_process(pid, cmd, cwd)
-                }
-            }
-            _ => Ok(()),
-        };
-
-        if let Err(e) = result {
-            eprintln!("Failed to {}: {}", action, e);
-            // TODO: Show in UI
-        }
-    }
-
     pub(crate) fn open_priority_dialog(&mut self, pid: u32) {
         // Don't stack multiple modal dialogs.
         if self.kill_dialog.is_some()
@@ -472,8 +508,7 @@ impl PMonNTApp {
         let name = self
             .current_snapshot
             .get_process(pid)
-            .map(|p| p.name.clone())
-            .unwrap_or_else(|| format!("PID {}", pid));
+            .map_or_else(|| format!("PID {pid}"), |p| p.name.clone());
 
         match pmonnt_core::win::get_priority_class(pid) {
             Ok(priority) => {
@@ -510,8 +545,7 @@ impl PMonNTApp {
         let name = self
             .current_snapshot
             .get_process(pid)
-            .map(|p| p.name.clone())
-            .unwrap_or_else(|| format!("PID {}", pid));
+            .map_or_else(|| format!("PID {pid}"), |p| p.name.clone());
 
         match pmonnt_core::win::get_affinity(pid) {
             Ok(info) => {
@@ -545,84 +579,15 @@ impl PMonNTApp {
             return;
         }
 
-        let name = self
-            .current_snapshot
-            .get_process(pid)
-            .map(|p| p.name.clone())
-            .unwrap_or_else(|| "<unknown>".to_string());
+        let process = self.current_snapshot.get_process(pid);
+        let name = process.map_or_else(|| "<unknown>".to_string(), |p| p.name.clone());
+        let create_time = process.and_then(|p| p.create_time);
 
         self.kill_dialog = Some(KillDialogState {
             pid,
+            create_time,
             kill_tree,
-            group_pids: None,
-            group_descendant_count: None,
             name,
-            step: KillDialogStep::Confirm,
-        });
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn open_group_kill_dialog(
-        &mut self,
-        representative_pid: u32,
-        group_name: String,
-        group_pids: Vec<u32>,
-        kill_tree: bool,
-    ) {
-        // Don't stack multiple kill dialogs.
-        if let Some(KillDialogStep::Running) = self.kill_dialog.as_ref().map(|s| &s.step) {
-            return;
-        }
-
-        // Pre-compute descendant count for the group-trees confirmation wording.
-        let descendant_count = if kill_tree {
-            let processes = &self.current_snapshot.processes;
-
-            let mut children: HashMap<u32, Vec<u32>> = HashMap::new();
-            for p in processes {
-                if let Some(ppid) = p.ppid {
-                    if ppid != 0 {
-                        children.entry(ppid).or_default().push(p.pid);
-                    }
-                }
-            }
-
-            fn visit(
-                pid: u32,
-                children: &HashMap<u32, Vec<u32>>,
-                visited: &mut HashSet<u32>,
-                depth: usize,
-            ) {
-                if depth > 512 {
-                    return;
-                }
-                if !visited.insert(pid) {
-                    return;
-                }
-                if let Some(kids) = children.get(&pid) {
-                    for &c in kids {
-                        visit(c, children, visited, depth + 1);
-                    }
-                }
-            }
-
-            let mut visited = HashSet::new();
-            for &root in &group_pids {
-                visit(root, &children, &mut visited, 0);
-            }
-
-            // visited includes the roots, so child count excludes them.
-            visited.len().saturating_sub(group_pids.len())
-        } else {
-            0
-        };
-
-        self.kill_dialog = Some(KillDialogState {
-            pid: representative_pid,
-            kill_tree,
-            group_pids: Some(group_pids),
-            group_descendant_count: kill_tree.then_some(descendant_count),
-            name: group_name,
             step: KillDialogStep::Confirm,
         });
     }
@@ -643,94 +608,90 @@ impl PMonNTApp {
             return;
         }
 
-        self.kill_dialog = Some(KillDialogState {
-            step: KillDialogStep::Running,
-            ..state.clone()
-        });
-
-        let processes = self.current_snapshot.processes.clone();
         let pid = state.pid;
         let kill_tree = state.kill_tree;
-        let is_group = state.group_pids.is_some();
-
-        // Compute child-first kill order.
-        let roots: Vec<u32> = state.group_pids.clone().unwrap_or_else(|| vec![pid]);
-        let kill_list = if kill_tree {
-            // Build parent -> children map
-            let mut children: HashMap<u32, Vec<u32>> = HashMap::new();
-            for p in &processes {
-                if let Some(ppid) = p.ppid {
-                    if ppid != 0 {
-                        children.entry(ppid).or_default().push(p.pid);
-                    }
-                }
+        let targets = match self.kill_targets(&state) {
+            Ok(targets) => targets,
+            Err(e) => {
+                self.kill_dialog = Some(KillDialogState {
+                    step: KillDialogStep::Done(Err(e)),
+                    ..state
+                });
+                return;
             }
-
-            fn visit(
-                pid: u32,
-                children: &HashMap<u32, Vec<u32>>,
-                visited: &mut HashSet<u32>,
-                out: &mut Vec<u32>,
-                depth: usize,
-            ) {
-                if depth > 512 {
-                    return;
-                }
-                if !visited.insert(pid) {
-                    return;
-                }
-                if let Some(kids) = children.get(&pid) {
-                    for &c in kids {
-                        visit(c, children, visited, out, depth + 1);
-                    }
-                }
-                out.push(pid);
-            }
-
-            let mut out = Vec::new();
-            let mut visited = HashSet::new();
-            for root in roots {
-                visit(root, &children, &mut visited, &mut out, 0);
-            }
-            out
-        } else {
-            roots
         };
 
-        self.kill_action_in_flight = Some((pid, kill_tree, is_group));
+        self.kill_dialog = Some(KillDialogState {
+            step: KillDialogStep::Running,
+            ..state
+        });
+        self.kill_action_in_flight = Some((pid, kill_tree));
         let tx = self.kill_action_result_tx.clone();
         self.bg_worker.spawn(move || {
-            for target_pid in &kill_list {
-                if let Err(e) = pmonnt_core::win::process_control::kill_process(*target_pid) {
-                    let _ = tx.send((
-                        pid,
-                        kill_tree,
-                        is_group,
-                        Err(format!("PID {target_pid}: {e}")),
-                    ));
+            for (target_pid, create_time) in targets {
+                if let Err(e) =
+                    pmonnt_core::win::process_control::kill_process(target_pid, create_time)
+                {
+                    let _ = tx.send((pid, kill_tree, Err(format!("PID {target_pid}: {e}"))));
                     return;
                 }
             }
-            let _ = tx.send((pid, kill_tree, is_group, Ok(())));
+            let _ = tx.send((pid, kill_tree, Ok(())));
         });
+    }
+
+    /// The `(pid, creation time)` pairs a confirmed kill terminates, children first.
+    ///
+    /// The dialog may have been open across several refreshes, so the process it was opened
+    /// for must still be in the latest snapshot with the same creation time; descendants
+    /// come from that snapshot, each with its own creation time for `kill_process` to check.
+    fn kill_targets(&self, state: &KillDialogState) -> Result<Vec<(u32, u64)>, String> {
+        let Some(expected) = state.create_time else {
+            return Err(format!(
+                "Could not confirm which process PID {} is (no creation time); nothing was terminated",
+                state.pid
+            ));
+        };
+        match self.current_snapshot.get_process(state.pid) {
+            Some(p) if p.create_time == Some(expected) => {}
+            Some(_) => {
+                return Err(format!(
+                    "{} (PID {}) has exited and its PID now belongs to another process; nothing was terminated",
+                    state.name, state.pid
+                ));
+            }
+            None => {
+                return Err(format!(
+                    "{} (PID {}) has already exited",
+                    state.name, state.pid
+                ));
+            }
+        }
+
+        if !state.kill_tree {
+            return Ok(vec![(state.pid, expected)]);
+        }
+        Ok(self
+            .current_snapshot
+            .descendants_child_first(state.pid)
+            .into_iter()
+            .filter_map(|p| p.create_time.map(|t| (p.pid, t)))
+            .collect())
     }
 
     pub(crate) fn on_kill_action_result(
         &mut self,
         pid: u32,
         kill_tree: bool,
-        is_group: bool,
         result: Result<(), String>,
     ) {
         self.kill_action_in_flight = None;
 
-        if let Some(state) = self.kill_dialog.as_mut() {
-            if state.pid == pid
-                && state.kill_tree == kill_tree
-                && state.group_pids.is_some() == is_group
-            {
-                state.step = KillDialogStep::Done(result);
-            }
+        if let Some(state) = self.kill_dialog.as_mut()
+            && state.pid == pid
+            && state.kill_tree == kill_tree
+        {
+            state.step = KillDialogStep::Done(result);
         }
     }
 
@@ -755,18 +716,18 @@ impl PMonNTApp {
     }
 
     pub(crate) fn move_process_column_up(&mut self, col: ProcessColumnId) {
-        if let Some(idx) = self.process_columns_order.iter().position(|c| *c == col) {
-            if idx > 0 {
-                self.process_columns_order.swap(idx - 1, idx);
-            }
+        if let Some(idx) = self.process_columns_order.iter().position(|c| *c == col)
+            && idx > 0
+        {
+            self.process_columns_order.swap(idx - 1, idx);
         }
     }
 
     pub(crate) fn move_process_column_down(&mut self, col: ProcessColumnId) {
-        if let Some(idx) = self.process_columns_order.iter().position(|c| *c == col) {
-            if idx + 1 < self.process_columns_order.len() {
-                self.process_columns_order.swap(idx, idx + 1);
-            }
+        if let Some(idx) = self.process_columns_order.iter().position(|c| *c == col)
+            && idx + 1 < self.process_columns_order.len()
+        {
+            self.process_columns_order.swap(idx, idx + 1);
         }
     }
 

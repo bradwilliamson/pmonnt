@@ -1,4 +1,5 @@
 use super::*;
+use crate::app::ReplyIdentity;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
@@ -17,9 +18,17 @@ fn drain_security_results(
     security_result_rx: &crossbeam_channel::Receiver<crate::app::SecurityJobResult>,
     security_in_flight: &mut HashSet<u32>,
     security_cache_by_pid: &mut HashMap<u32, crate::app::CachedSecurityInfo>,
+    is_current: impl Fn(u32, ReplyIdentity) -> bool,
 ) {
     while let Ok(job) = security_result_rx.try_recv() {
         security_in_flight.remove(&job.pid);
+        if !is_current(job.pid, job.identity) {
+            log::debug!(
+                "Dropping security info for a previous process with PID {}",
+                job.pid
+            );
+            continue;
+        }
 
         match &job.result {
             Ok(info) => {
@@ -45,19 +54,29 @@ fn drain_security_results(
     }
 }
 
+type ThreadFetchReply = (
+    u32,
+    ReplyIdentity,
+    Result<Vec<pmonnt_core::thread::ThreadInfo>, String>,
+);
+
 fn drain_thread_fetch_results(
-    thread_fetch_rx: &crossbeam_channel::Receiver<(
-        u32,
-        Result<Vec<pmonnt_core::thread::ThreadInfo>, String>,
-    )>,
+    thread_fetch_rx: &crossbeam_channel::Receiver<ThreadFetchReply>,
     thread_fetch_in_flight: &mut HashSet<u32>,
     thread_fetch_started: &mut HashMap<u32, Instant>,
     thread_cache: &mut pmonnt_core::thread::ThreadCache,
     thread_prev: &mut HashMap<u32, Vec<pmonnt_core::thread::ThreadInfo>>,
+    is_current: impl Fn(u32, ReplyIdentity) -> bool,
 ) {
-    while let Ok((pid, result)) = thread_fetch_rx.try_recv() {
+    while let Ok((pid, identity, result)) = thread_fetch_rx.try_recv() {
+        // The in-flight marker is cleared even for a stale reply: at worst the current
+        // process is fetched twice, while a kept marker could block its fetch for good.
         thread_fetch_in_flight.remove(&pid);
         thread_fetch_started.remove(&pid);
+        if !is_current(pid, identity) {
+            log::debug!("Dropping threads of a previous process with PID {pid}");
+            continue;
+        }
 
         if let Ok(threads) = result {
             if let Some(old) = thread_cache.peek(pid).cloned() {
@@ -70,18 +89,20 @@ fn drain_thread_fetch_results(
 
 impl PMonNTApp {
     pub(super) fn service_background_work(&mut self) {
-        // Promote any completed SHA-256 computations (selection-driven) into UI state.
-        // This keeps SHA available even if the reputation panels are not currently rendered.
-        if let Ok(mut guard) = self.mb_ui_state.current_process_sha_pending.lock() {
-            if let Some(sha) = guard.take() {
-                self.mb_ui_state.current_process_sha = Some(sha);
-            }
-        }
-        if let Ok(mut guard) = self.vt_ui_state.current_process_sha_pending.lock() {
-            if let Some(sha) = guard.take() {
-                self.vt_ui_state.current_process_sha = Some(sha);
-            }
-        }
+        // Selection-driven SHA-256 (used by "Copy SHA-256"), if it still matches the selection.
+        self.accept_selection_sha();
+
+        // Explicit reputation Check/Refresh requests whose hash is ready.
+        crate::ui_renderer::dispatch_pending_lookups(
+            &self.reputation_service,
+            &self.pid_to_image_path,
+            self.online_lookups_enabled,
+            (
+                &mut self.vt_ui_state,
+                &mut self.mb_ui_state,
+                &mut self.tf_ui_state,
+            ),
+        );
 
         drain_signature_results(
             &self.signature_result_rx,
@@ -101,15 +122,15 @@ impl PMonNTApp {
             });
 
             // If the modal is open for this PID, show result + refresh its list.
-            if let Some(dialog) = self.service_dialog.as_mut() {
-                if dialog.pid == pid {
-                    dialog.last_result =
-                        Some(self.last_service_action_message.clone().unwrap_or_default());
-                    dialog.last_result_time = Some(Instant::now());
-                    if let Ok(mut services) = pmonnt_core::services::get_services_for_process(pid) {
-                        services.sort_by(|a, b| a.name.cmp(&b.name));
-                        dialog.services = services;
-                    }
+            if let Some(dialog) = self.service_dialog.as_mut()
+                && dialog.pid == pid
+            {
+                dialog.last_result =
+                    Some(self.last_service_action_message.clone().unwrap_or_default());
+                dialog.last_result_time = Some(Instant::now());
+                if let Ok(mut services) = pmonnt_core::services::get_services_for_process(pid) {
+                    services.sort_by(|a, b| a.name.cmp(&b.name));
+                    dialog.services = services;
                 }
             }
 
@@ -119,8 +140,8 @@ impl PMonNTApp {
         }
 
         // Drain kill action results (non-blocking)
-        while let Ok((pid, kill_tree, is_group, result)) = self.kill_action_result_rx.try_recv() {
-            self.on_kill_action_result(pid, kill_tree, is_group, result);
+        while let Ok((pid, kill_tree, result)) = self.kill_action_result_rx.try_recv() {
+            self.on_kill_action_result(pid, kill_tree, result);
         }
 
         // Drain dump action results (non-blocking)
@@ -129,20 +150,36 @@ impl PMonNTApp {
 
             match job.result {
                 Ok(path) => {
-                    self.last_dump_path = Some(path.clone());
-                    self.set_status_line(format!("Dump saved: {}", path.display()));
+                    self.set_status_line(format!(
+                        "{:?} dump of {} ({}) saved: {}",
+                        job.kind,
+                        job.process_name,
+                        job.pid,
+                        path.display()
+                    ));
+                    self.last_dump_path = Some(path);
                 }
                 Err(e) => {
                     self.last_dump_path = None;
-                    self.set_status_line(format!("Dump failed: {e}"));
+                    self.set_status_line(format!(
+                        "{:?} dump of {} ({}) failed: {e}",
+                        job.kind, job.process_name, job.pid
+                    ));
                 }
             }
         }
 
+        // Replies are requested by PID; drop those that describe a process which has since
+        // given its PID to another (the refresh already cleared that PID's caches).
+        let snapshot = &self.current_snapshot;
+        let is_current = |pid: u32, identity: ReplyIdentity| {
+            identity.matches(snapshot.get_process(pid).and_then(|p| p.create_time))
+        };
         drain_security_results(
             &self.security_result_rx,
             &mut self.security_in_flight,
             &mut self.security_cache_by_pid,
+            is_current,
         );
 
         drain_thread_fetch_results(
@@ -151,6 +188,7 @@ impl PMonNTApp {
             &mut self.thread_fetch_started,
             &mut self.thread_cache,
             &mut self.thread_prev,
+            is_current,
         );
 
         // Drain thread action results (non-blocking)
@@ -214,31 +252,15 @@ impl PMonNTApp {
             }
         }
 
-        // Rebuild YARA engine if needed after rule refresh
+        // Recompile the YARA engine off the UI thread after the rules changed.
         if self
             .yara_state
             .needs_engine_rebuild
             .swap(false, std::sync::atomic::Ordering::AcqRel)
         {
-            let rm = self
-                .yara_state
-                .rule_manager
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
-            log::info!("Rebuilding YARA engine with {} rules", rm.rules().len());
-            match pmonnt_core::yara::engine::YaraEngine::from_rule_manager(&rm) {
-                Ok(engine) => {
-                    log::info!("YARA engine rebuilt successfully");
-                    self.yara_state.yara_engine = Some(std::sync::Arc::new(engine));
-                    self.yara_state.error = None;
-                }
-                Err(e) => {
-                    log::error!("YARA engine rebuild failed: {}", e);
-                    self.yara_state.yara_engine = None;
-                    self.yara_state.error = Some(format!("Engine compile failed: {}", e));
-                }
-            }
+            self.yara_state.start_engine_build();
         }
+        self.yara_state.poll_engine_build();
     }
 
     pub(crate) fn request_signature_check_for_path(&mut self, path: &str) {
@@ -323,18 +345,38 @@ mod tests {
         sec_tx
             .send(crate::app::SecurityJobResult {
                 pid,
+                identity: ReplyIdentity::Unknown,
                 result: Err("unit test".to_string()),
             })
             .unwrap();
-        drain_security_results(&sec_rx, &mut security_in_flight, &mut security_cache_by_pid);
+        drain_security_results(
+            &sec_rx,
+            &mut security_in_flight,
+            &mut security_cache_by_pid,
+            |_, _| true,
+        );
         assert!(!security_in_flight.contains(&pid));
         assert!(security_cache_by_pid.get(&pid).unwrap().result.is_err());
 
+        // A reply for a previous owner of the PID is dropped.
+        security_cache_by_pid.clear();
+        sec_tx
+            .send(crate::app::SecurityJobResult {
+                pid,
+                identity: ReplyIdentity::Known(1),
+                result: Err("stale".to_string()),
+            })
+            .unwrap();
+        drain_security_results(
+            &sec_rx,
+            &mut security_in_flight,
+            &mut security_cache_by_pid,
+            |_, identity| identity.matches(Some(2)),
+        );
+        assert!(security_cache_by_pid.is_empty());
+
         // Thread fetch
-        let (thr_tx, thr_rx) = crossbeam_channel::unbounded::<(
-            u32,
-            Result<Vec<pmonnt_core::thread::ThreadInfo>, String>,
-        )>();
+        let (thr_tx, thr_rx) = crossbeam_channel::unbounded::<ThreadFetchReply>();
         let mut thread_fetch_in_flight: HashSet<u32> = HashSet::new();
         let mut thread_fetch_started: HashMap<u32, Instant> = HashMap::new();
         let mut thread_cache = pmonnt_core::thread::ThreadCache::new(4);
@@ -343,13 +385,16 @@ mod tests {
         let tpid = 31337u32;
         thread_fetch_in_flight.insert(tpid);
         thread_fetch_started.insert(tpid, Instant::now());
-        thr_tx.send((tpid, Err("unit test".to_string()))).unwrap();
+        thr_tx
+            .send((tpid, ReplyIdentity::Unknown, Err("unit test".to_string())))
+            .unwrap();
         drain_thread_fetch_results(
             &thr_rx,
             &mut thread_fetch_in_flight,
             &mut thread_fetch_started,
             &mut thread_cache,
             &mut thread_prev,
+            |_, _| true,
         );
         assert!(!thread_fetch_in_flight.contains(&tpid));
         assert!(!thread_fetch_started.contains_key(&tpid));
@@ -377,6 +422,44 @@ mod tests {
     }
 
     #[test]
+    fn explicit_lookups_progress_off_screen_and_respect_online_toggle() {
+        let mut app = crate::app::PMonNTApp::try_new().expect("test app init");
+        // A real file so the re-hash succeeds; two fake PIDs that use it.
+        let file = std::env::temp_dir().join(format!("pmonnt_dispatch_{}", std::process::id()));
+        std::fs::write(&file, b"dispatch test image").unwrap();
+        let path = file.to_string_lossy().to_string();
+        let (checked, shown) = (900_001u32, 900_002u32);
+        app.pid_to_image_path.insert(checked, path.clone());
+        app.pid_to_image_path.insert(shown, path.clone());
+
+        // Check was clicked for `checked`, then the section moved on to `shown`.
+        app.reputation_service.rehash_image(&path);
+        app.vt_ui_state.pending_checks.insert(checked, false);
+        app.vt_ui_state.last_seen_pid = Some(shown);
+        for _ in 0..200 {
+            app.service_background_work();
+            if app.vt_ui_state.pending_checks.is_empty() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(
+            app.vt_ui_state.pending_checks.is_empty(),
+            "lookup started without its section being rendered"
+        );
+        // The other process's display state was left alone.
+        assert_eq!(app.vt_ui_state.current_process_sha, None);
+        assert_eq!(app.vt_ui_state.querying_vt_pid, None);
+
+        // With online lookups off, a pending request is dropped rather than sent later.
+        app.online_lookups_enabled = false;
+        app.mb_ui_state.pending_checks.insert(checked, true);
+        app.service_background_work();
+        assert!(app.mb_ui_state.pending_checks.is_empty());
+        let _ = std::fs::remove_file(&file);
+    }
+
+    #[test]
     fn service_background_work_error_then_success_updates_caches() {
         let mut app = crate::app::PMonNTApp::try_new().expect("test app init");
 
@@ -394,12 +477,13 @@ mod tests {
             .unwrap();
         app.service_background_work();
         assert!(!app.signature_in_flight.contains(&path));
-        assert!(app
-            .signature_cache_by_path
-            .get(&path)
-            .and_then(|s| s.error.clone())
-            .unwrap_or_default()
-            .contains("unit test error"));
+        assert!(
+            app.signature_cache_by_path
+                .get(&path)
+                .and_then(|s| s.error.clone())
+                .unwrap_or_default()
+                .contains("unit test error")
+        );
 
         app.signature_in_flight.insert(path.clone());
         let sig_ok = pmonnt_core::SignatureInfo {
@@ -423,6 +507,7 @@ mod tests {
         app.security_result_tx
             .send(crate::app::SecurityJobResult {
                 pid,
+                identity: ReplyIdentity::Unknown,
                 result: Err("unit test error".to_string()),
             })
             .unwrap();
@@ -434,6 +519,7 @@ mod tests {
         app.security_result_tx
             .send(crate::app::SecurityJobResult {
                 pid,
+                identity: ReplyIdentity::Unknown,
                 result: Ok(test_security_info()),
             })
             .unwrap();

@@ -9,7 +9,7 @@
 //! - Supports querying WoW64 (32-bit) processes from a 64-bit process by using
 //!   `ProcessWow64Information` to obtain the 32-bit PEB address.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::mem;
@@ -18,8 +18,8 @@ use windows::Win32::Foundation::HANDLE;
 use windows::Win32::System::Diagnostics::Debug::ReadProcessMemory;
 use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ};
 
-use crate::win::ntdll::NtQueryInformationProcess;
 use crate::win::HandleGuard;
+use crate::win::ntdll::NtQueryInformationProcess;
 
 #[derive(Debug, Clone, Default)]
 pub struct ProcessDetails {
@@ -152,9 +152,9 @@ fn query_process_basic_information(handle: HANDLE) -> Result<PROCESS_BASIC_INFOR
         NtQueryInformationProcess(
             handle,
             PROCESS_BASIC_INFORMATION_CLASS,
-            &mut pbi as *mut _ as *mut c_void,
+            (&raw mut pbi).cast::<c_void>(),
             mem::size_of::<PROCESS_BASIC_INFORMATION>() as u32,
-            &mut ret_len,
+            &raw mut ret_len,
         )
     };
     if !nt_success(status) {
@@ -175,9 +175,9 @@ fn query_wow64_peb_address(handle: HANDLE) -> Result<Option<u32>> {
         NtQueryInformationProcess(
             handle,
             PROCESS_WOW64_INFORMATION_CLASS,
-            &mut peb32 as *mut _ as *mut c_void,
+            (&raw mut peb32).cast::<c_void>(),
             mem::size_of::<usize>() as u32,
-            &mut ret_len,
+            &raw mut ret_len,
         )
     };
     if !nt_success(status) {
@@ -207,9 +207,9 @@ fn read_process_memory_exact(
         let ok = ReadProcessMemory(
             process_handle,
             address as *const _,
-            buffer.as_mut_ptr() as *mut _,
+            buffer.as_mut_ptr().cast(),
             size,
-            Some(&mut bytes_read),
+            Some(&raw mut bytes_read),
         );
         if ok.is_err() {
             return Err(anyhow!("ReadProcessMemory failed at 0x{address:x}"));
@@ -226,7 +226,7 @@ fn read_process_memory_exact(
 fn read_process_memory<T: Copy>(process_handle: HANDLE, address: usize) -> Result<T> {
     let bytes = read_process_memory_exact(process_handle, address, mem::size_of::<T>())?;
     // SAFETY: `bytes` is exactly size_of::<T>() and `T: Copy`.
-    Ok(unsafe { std::ptr::read_unaligned(bytes.as_ptr() as *const T) })
+    Ok(unsafe { std::ptr::read_unaligned(bytes.as_ptr().cast::<T>()) })
 }
 
 fn decode_utf16_bytes(bytes: &[u8]) -> Result<String> {
@@ -237,7 +237,7 @@ fn decode_utf16_bytes(bytes: &[u8]) -> Result<String> {
         return Err(anyhow!("UTF-16 buffer length is not even"));
     }
     let mut u16s = Vec::with_capacity(bytes.len() / 2);
-    for chunk in bytes.chunks_exact(2) {
+    for chunk in bytes.as_chunks::<2>().0 {
         u16s.push(u16::from_le_bytes([chunk[0], chunk[1]]));
     }
     Ok(String::from_utf16_lossy(&u16s))
@@ -335,9 +335,9 @@ fn read_environment_block_u16(
             let ok = ReadProcessMemory(
                 handle,
                 (env_ptr + offset) as *const _,
-                buffer.as_mut_ptr() as *mut _,
+                buffer.as_mut_ptr().cast(),
                 to_read,
-                Some(&mut bytes_read),
+                Some(&raw mut bytes_read),
             );
             if ok.is_err() {
                 return Err(anyhow!(
@@ -366,7 +366,7 @@ fn read_environment_block_u16(
                     bytes.truncate(i + 4);
                     // Convert to u16s.
                     let mut u16s = Vec::with_capacity(bytes.len() / 2);
-                    for pair in bytes.chunks_exact(2) {
+                    for pair in bytes.as_chunks::<2>().0 {
                         u16s.push(u16::from_le_bytes([pair[0], pair[1]]));
                     }
                     return Ok(u16s);
@@ -383,7 +383,7 @@ fn read_environment_block_u16(
 
     // Convert what we got.
     let mut u16s = Vec::with_capacity(bytes.len() / 2);
-    for pair in bytes.chunks_exact(2) {
+    for pair in bytes.as_chunks::<2>().0 {
         u16s.push(u16::from_le_bytes([pair[0], pair[1]]));
     }
     Ok(u16s)
@@ -502,8 +502,11 @@ mod tests {
         block.push(0);
 
         let env = parse_environment_block_utf16(&block);
-        assert_eq!(env.get("FOO").map(|s| s.as_str()), Some("bar"));
-        assert_eq!(env.get("PATH").map(|s| s.as_str()), Some("C\\Windows"));
+        assert_eq!(env.get("FOO").map(std::string::String::as_str), Some("bar"));
+        assert_eq!(
+            env.get("PATH").map(std::string::String::as_str),
+            Some("C\\Windows")
+        );
     }
 
     #[test]
@@ -514,32 +517,46 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "spawns a 32-bit process; run with --ignored"]
     fn get_process_details_wow64_child_process_smoke() {
-        // Best-effort WoW64 smoke test: spawn 32-bit cmd.exe if present and query its details.
-        // Ignored by default because it depends on the OS image and can be flaky in CI.
-        use std::os::windows::process::CommandExt;
-
-        let syswow64_cmd = std::path::Path::new(r"C:\Windows\SysWOW64\cmd.exe");
-        if !syswow64_cmd.exists() {
+        // Reads the 32-bit PEB of a WoW64 child. Ignored by default because it depends on the
+        // OS image having SysWOW64.
+        //
+        // The child must stay alive without a console: `cmd /c timeout` (used previously)
+        // exits at once with "Input redirection is not supported" when stdin is not a
+        // console, so the read failed on an exited process.
+        let syswow64_ping = std::path::Path::new(r"C:\Windows\SysWOW64\PING.EXE");
+        if !syswow64_ping.exists() {
             return;
         }
 
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        let mut child = std::process::Command::new(syswow64_cmd)
-            .args(["/c", "timeout", "/t", "3", "/nobreak"])
-            .creation_flags(CREATE_NO_WINDOW)
+        let mut child = std::process::Command::new(syswow64_ping)
+            .args(["-n", "30", "127.0.0.1"])
+            .stdout(std::process::Stdio::null())
             .spawn()
-            .expect("spawn wow64 cmd");
-
+            .expect("spawn wow64 ping");
         let pid = child.id();
 
-        // Give the process a brief moment to initialize PEB/process parameters.
-        std::thread::sleep(std::time::Duration::from_millis(100));
-
-        let details = get_process_details(pid, false).expect("should query wow64 process details");
-        assert!(details.command_line.is_some() || details.image_path.is_some());
-
+        // The loader fills in the process parameters shortly after start; retry briefly.
+        let mut details = None;
+        for _ in 0..40 {
+            if let Ok(d) = get_process_details(pid, false)
+                && d.command_line.is_some()
+            {
+                details = Some(d);
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        let _ = child.kill();
         let _ = child.wait();
+
+        let details = details.expect("should query wow64 process details");
+        let command_line = details.command_line.unwrap_or_default();
+        assert!(
+            command_line.to_ascii_lowercase().contains("ping"),
+            "unexpected command line {command_line:?}"
+        );
+        assert!(command_line.contains("127.0.0.1"));
     }
 }

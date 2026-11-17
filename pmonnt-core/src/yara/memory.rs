@@ -5,19 +5,20 @@
 
 use std::vec::Vec;
 use thiserror::Error;
-use windows::core::{Error as WinError, HRESULT};
 use windows::Win32::Foundation::{
-    CloseHandle, BOOL, ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, HANDLE,
+    CloseHandle, ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, HANDLE,
 };
 use windows::Win32::System::Diagnostics::Debug::ReadProcessMemory;
 use windows::Win32::System::Memory::{
-    VirtualQueryEx, MEMORY_BASIC_INFORMATION, MEM_COMMIT, PAGE_EXECUTE_READ,
-    PAGE_EXECUTE_READWRITE, PAGE_EXECUTE_WRITECOPY, PAGE_GUARD, PAGE_NOACCESS, PAGE_NOCACHE,
-    PAGE_READONLY, PAGE_READWRITE, PAGE_WRITECOMBINE, PAGE_WRITECOPY,
+    MEM_COMMIT, MEMORY_BASIC_INFORMATION, PAGE_EXECUTE_READ, PAGE_EXECUTE_READWRITE,
+    PAGE_EXECUTE_WRITECOPY, PAGE_GUARD, PAGE_NOACCESS, PAGE_NOCACHE, PAGE_READONLY, PAGE_READWRITE,
+    PAGE_WRITECOMBINE, PAGE_WRITECOPY, VirtualQueryEx,
 };
 use windows::Win32::System::Threading::{
     IsWow64Process, OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ,
 };
+use windows::core::BOOL;
+use windows::core::{Error as WinError, HRESULT};
 
 /// Represents a readable memory region
 #[derive(Debug, Clone)]
@@ -85,7 +86,7 @@ pub fn get_process_bitness(process_handle: HANDLE) -> Result<ProcessBitness, Mem
     // handle owned by the caller; we only pass a valid pointer to `wow64`, and no pointers escape.
     unsafe {
         let mut wow64 = BOOL(0);
-        if let Err(_e) = IsWow64Process(process_handle, &mut wow64) {
+        if let Err(_e) = IsWow64Process(process_handle, &raw mut wow64) {
             return Ok(ProcessBitness::Unknown);
         }
 
@@ -167,9 +168,7 @@ pub fn enumerate_memory_regions(pid: u32) -> Result<Vec<MemoryRegion>, MemoryErr
             queries += 1;
             if queries > MAX_QUERIES {
                 log::warn!(
-                    "VirtualQueryEx exceeded {} iterations for pid {}; stopping enumeration",
-                    MAX_QUERIES,
-                    pid
+                    "VirtualQueryEx exceeded {MAX_QUERIES} iterations for pid {pid}; stopping enumeration"
                 );
                 break;
             }
@@ -178,7 +177,7 @@ pub fn enumerate_memory_regions(pid: u32) -> Result<Vec<MemoryRegion>, MemoryErr
             let res = VirtualQueryEx(
                 handle,
                 Some(address as *const _),
-                &mut mbi,
+                &raw mut mbi,
                 std::mem::size_of::<MEMORY_BASIC_INFORMATION>(),
             );
             if res == 0 {
@@ -193,9 +192,7 @@ pub fn enumerate_memory_regions(pid: u32) -> Result<Vec<MemoryRegion>, MemoryErr
 
             if region_size == 0 {
                 log::debug!(
-                    "VirtualQueryEx returned zero region size at 0x{:x} (pid {}); stopping",
-                    base,
-                    pid
+                    "VirtualQueryEx returned zero region size at 0x{base:x} (pid {pid}); stopping"
                 );
                 break;
             }
@@ -277,9 +274,9 @@ pub fn read_process_memory_chunk(
         match ReadProcessMemory(
             process_handle,
             address as *const _,
-            buffer.as_mut_ptr() as *mut _,
+            buffer.as_mut_ptr().cast(),
             size,
-            Some(&mut bytes_read),
+            Some(&raw mut bytes_read),
         ) {
             Ok(()) => {
                 buffer.truncate(bytes_read);
@@ -289,10 +286,7 @@ pub fn read_process_memory_chunk(
                     let ratio = bytes_read as f64 / size as f64;
                     if ratio < 0.5 {
                         log::debug!(
-                            "Partial ReadProcessMemory at 0x{:x}: {}/{} bytes",
-                            address,
-                            bytes_read,
-                            size
+                            "Partial ReadProcessMemory at 0x{address:x}: {bytes_read}/{size} bytes"
                         );
                     }
                 }

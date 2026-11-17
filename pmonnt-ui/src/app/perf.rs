@@ -1,7 +1,7 @@
 use eframe::egui;
 use std::time::Instant;
 
-use super::{perf_window, PMonNTApp};
+use super::{PMonNTApp, perf_window};
 
 impl PMonNTApp {
     pub(crate) fn tick_perf_windows(&mut self, ctx: &egui::Context) {

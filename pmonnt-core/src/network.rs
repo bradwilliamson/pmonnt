@@ -1,6 +1,6 @@
-use std::collections::HashMap;
+use crate::aligned_buf::AlignedBuf;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use std::sync::{LazyLock, RwLock};
+use std::sync::{Arc, LazyLock, RwLock};
 use std::time::{Duration, Instant};
 
 use thiserror::Error;
@@ -49,82 +49,58 @@ const CACHE_TTL: Duration = Duration::from_secs(1);
 #[derive(Debug, Clone)]
 struct CacheEntry {
     fetched_at: Instant,
-    all: Vec<NetworkConnection>,
-    by_pid: HashMap<u32, Vec<NetworkConnection>>,
+    /// Shared so cache hits copy only the connections a caller asks for.
+    all: Arc<Vec<NetworkConnection>>,
 }
 
 static CACHE: LazyLock<RwLock<Option<CacheEntry>>> = LazyLock::new(|| RwLock::new(None));
 
 pub fn get_connections_for_process(pid: u32) -> Result<Vec<NetworkConnection>, NetworkError> {
-    let all = get_all_connections()?;
-    Ok(all.into_iter().filter(|c| c.pid == pid).collect())
+    Ok(cached_all()?
+        .iter()
+        .filter(|c| c.pid == pid)
+        .cloned()
+        .collect())
 }
 
 pub fn get_all_connections() -> Result<Vec<NetworkConnection>, NetworkError> {
-    if let Some(hit) = cache_get_all() {
-        return Ok(hit);
-    }
-
-    let all = refresh_all()?;
-    Ok(all)
+    Ok(cached_all()?.as_ref().clone())
 }
 
 pub fn get_tcp_connections() -> Result<Vec<NetworkConnection>, NetworkError> {
-    let all = get_all_connections()?;
-    Ok(all
-        .into_iter()
+    Ok(cached_all()?
+        .iter()
         .filter(|c| c.protocol == Protocol::Tcp)
+        .cloned()
         .collect())
 }
 
 pub fn get_udp_connections() -> Result<Vec<NetworkConnection>, NetworkError> {
-    let all = get_all_connections()?;
-    Ok(all
-        .into_iter()
+    Ok(cached_all()?
+        .iter()
         .filter(|c| c.protocol == Protocol::Udp)
+        .cloned()
         .collect())
 }
 
-fn cache_get_all() -> Option<Vec<NetworkConnection>> {
-    let guard = CACHE.read().ok()?.as_ref().cloned();
-    let entry = guard?;
-    if entry.fetched_at.elapsed() <= CACHE_TTL {
-        Some(entry.all)
-    } else {
-        None
+/// The connection table, from the cache if it is younger than `CACHE_TTL`.
+fn cached_all() -> Result<Arc<Vec<NetworkConnection>>, NetworkError> {
+    if let Ok(guard) = CACHE.read()
+        && let Some(entry) = guard.as_ref()
+        && entry.fetched_at.elapsed() <= CACHE_TTL
+    {
+        return Ok(Arc::clone(&entry.all));
     }
-}
 
-#[allow(dead_code)]
-fn cache_get_pid(pid: u32) -> Option<Vec<NetworkConnection>> {
-    let guard = CACHE.read().ok()?.as_ref().cloned();
-    let entry = guard?;
-    if entry.fetched_at.elapsed() > CACHE_TTL {
-        return None;
-    }
-    entry.by_pid.get(&pid).cloned()
-}
-
-fn refresh_all() -> Result<Vec<NetworkConnection>, NetworkError> {
-    let mut all = Vec::new();
-    all.extend(query_tcp()?);
+    let mut all = query_tcp()?;
     all.extend(query_udp()?);
-
-    let mut by_pid: HashMap<u32, Vec<NetworkConnection>> = HashMap::new();
-    for conn in &all {
-        by_pid.entry(conn.pid).or_default().push(conn.clone());
-    }
-
-    let entry = CacheEntry {
-        fetched_at: Instant::now(),
-        all: all.clone(),
-        by_pid,
-    };
-
+    let all = Arc::new(all);
     if let Ok(mut guard) = CACHE.write() {
-        *guard = Some(entry);
+        *guard = Some(CacheEntry {
+            fetched_at: Instant::now(),
+            all: Arc::clone(&all),
+        });
     }
-
     Ok(all)
 }
 
@@ -184,9 +160,9 @@ fn query_tcp_af_v4() -> Result<Vec<NetworkConnection>, NetworkError> {
         let mut size: u32 = 0;
         let mut ret = GetExtendedTcpTable(
             std::ptr::null_mut(),
-            &mut size,
+            &raw mut size,
             0,
-            AF_INET as u32,
+            u32::from(AF_INET),
             TCP_TABLE_OWNER_PID_ALL,
             0,
         );
@@ -200,12 +176,12 @@ fn query_tcp_af_v4() -> Result<Vec<NetworkConnection>, NetworkError> {
 
         // Allocate aligned buffer: GetExtendedTcpTable guarantees proper alignment
         // for the returned structures when using the OS-provided size
-        let mut buf = vec![0u8; size as usize];
+        let mut buf = AlignedBuf::new(size as usize);
         ret = GetExtendedTcpTable(
             buf.as_mut_ptr().cast(),
-            &mut size,
+            &raw mut size,
             0,
-            AF_INET as u32,
+            u32::from(AF_INET),
             TCP_TABLE_OWNER_PID_ALL,
             0,
         );
@@ -217,12 +193,12 @@ fn query_tcp_af_v4() -> Result<Vec<NetworkConnection>, NetworkError> {
         }
 
         // SAFETY: Buffer was populated by GetExtendedTcpTable which guarantees:
-        // - Proper alignment for MIB_TCPTABLE_OWNER_PID structure
+        // - AlignedBuf is 8-byte aligned, enough for MIB_TCPTABLE_OWNER_PID structure
         // - Buffer size is at least sizeof(MIB_TCPTABLE_OWNER_PID)
         // - dwNumEntries indicates valid row count for the flexible array member
-        let table = buf.as_ptr().cast::<MIB_TCPTABLE_OWNER_PID>();
+        let table = buf.ptr_at::<MIB_TCPTABLE_OWNER_PID>(0);
         let count = (*table).dwNumEntries as usize;
-        
+
         // SAFETY: Windows guarantees the table array contains `count` valid entries
         // The buffer size was determined by Windows to accommodate the header + all rows
         let first: *const MIB_TCPROW_OWNER_PID = (*table).table.as_ptr();
@@ -267,9 +243,9 @@ fn query_tcp_af_v6() -> Result<Vec<NetworkConnection>, NetworkError> {
         let mut size: u32 = 0;
         let mut ret = GetExtendedTcpTable(
             std::ptr::null_mut(),
-            &mut size,
+            &raw mut size,
             0,
-            AF_INET6 as u32,
+            u32::from(AF_INET6),
             TCP_TABLE_OWNER_PID_ALL,
             0,
         );
@@ -282,12 +258,12 @@ fn query_tcp_af_v6() -> Result<Vec<NetworkConnection>, NetworkError> {
         }
 
         // Allocate aligned buffer: GetExtendedTcpTable guarantees proper alignment
-        let mut buf = vec![0u8; size as usize];
+        let mut buf = AlignedBuf::new(size as usize);
         ret = GetExtendedTcpTable(
             buf.as_mut_ptr().cast(),
-            &mut size,
+            &raw mut size,
             0,
-            AF_INET6 as u32,
+            u32::from(AF_INET6),
             TCP_TABLE_OWNER_PID_ALL,
             0,
         );
@@ -299,12 +275,12 @@ fn query_tcp_af_v6() -> Result<Vec<NetworkConnection>, NetworkError> {
         }
 
         // SAFETY: Buffer was populated by GetExtendedTcpTable which guarantees:
-        // - Proper alignment for MIB_TCP6TABLE_OWNER_PID structure
+        // - AlignedBuf is 8-byte aligned, enough for MIB_TCP6TABLE_OWNER_PID structure
         // - Buffer size accommodates header + dwNumEntries rows
         // - dwNumEntries indicates valid row count
-        let table = buf.as_ptr().cast::<MIB_TCP6TABLE_OWNER_PID>();
+        let table = buf.ptr_at::<MIB_TCP6TABLE_OWNER_PID>(0);
         let count = (*table).dwNumEntries as usize;
-        
+
         // SAFETY: Windows guarantees the table array contains `count` valid IPv6 TCP entries
         let first: *const MIB_TCP6ROW_OWNER_PID = (*table).table.as_ptr();
         let rows = std::slice::from_raw_parts(first, count);
@@ -347,9 +323,9 @@ fn query_udp_af_v4() -> Result<Vec<NetworkConnection>, NetworkError> {
         let mut size: u32 = 0;
         let mut ret = GetExtendedUdpTable(
             std::ptr::null_mut(),
-            &mut size,
+            &raw mut size,
             0,
-            AF_INET as u32,
+            u32::from(AF_INET),
             UDP_TABLE_OWNER_PID,
             0,
         );
@@ -362,12 +338,12 @@ fn query_udp_af_v4() -> Result<Vec<NetworkConnection>, NetworkError> {
         }
 
         // Allocate aligned buffer based on OS-provided size
-        let mut buf = vec![0u8; size as usize];
+        let mut buf = AlignedBuf::new(size as usize);
         ret = GetExtendedUdpTable(
             buf.as_mut_ptr().cast(),
-            &mut size,
+            &raw mut size,
             0,
-            AF_INET as u32,
+            u32::from(AF_INET),
             UDP_TABLE_OWNER_PID,
             0,
         );
@@ -379,12 +355,12 @@ fn query_udp_af_v4() -> Result<Vec<NetworkConnection>, NetworkError> {
         }
 
         // SAFETY: GetExtendedUdpTable guarantees:
-        // - Proper alignment for MIB_UDPTABLE_OWNER_PID
+        // - AlignedBuf is 8-byte aligned, enough for MIB_UDPTABLE_OWNER_PID
         // - Buffer contains valid header + dwNumEntries rows
         // - dwNumEntries is the actual count of rows written
-        let table = buf.as_ptr().cast::<MIB_UDPTABLE_OWNER_PID>();
+        let table = buf.ptr_at::<MIB_UDPTABLE_OWNER_PID>(0);
         let count = (*table).dwNumEntries as usize;
-        
+
         // SAFETY: Windows guarantees `count` valid UDP entries in the table array
         let first: *const MIB_UDPROW_OWNER_PID = (*table).table.as_ptr();
         let rows = std::slice::from_raw_parts(first, count);
@@ -425,9 +401,9 @@ fn query_udp_af_v6() -> Result<Vec<NetworkConnection>, NetworkError> {
         let mut size: u32 = 0;
         let mut ret = GetExtendedUdpTable(
             std::ptr::null_mut(),
-            &mut size,
+            &raw mut size,
             0,
-            AF_INET6 as u32,
+            u32::from(AF_INET6),
             UDP_TABLE_OWNER_PID,
             0,
         );
@@ -440,12 +416,12 @@ fn query_udp_af_v6() -> Result<Vec<NetworkConnection>, NetworkError> {
         }
 
         // Allocate aligned buffer based on OS-provided size
-        let mut buf = vec![0u8; size as usize];
+        let mut buf = AlignedBuf::new(size as usize);
         ret = GetExtendedUdpTable(
             buf.as_mut_ptr().cast(),
-            &mut size,
+            &raw mut size,
             0,
-            AF_INET6 as u32,
+            u32::from(AF_INET6),
             UDP_TABLE_OWNER_PID,
             0,
         );
@@ -457,12 +433,12 @@ fn query_udp_af_v6() -> Result<Vec<NetworkConnection>, NetworkError> {
         }
 
         // SAFETY: GetExtendedUdpTable guarantees:
-        // - Proper alignment for MIB_UDP6TABLE_OWNER_PID
+        // - AlignedBuf is 8-byte aligned, enough for MIB_UDP6TABLE_OWNER_PID
         // - Buffer contains valid header + dwNumEntries rows
         // - dwNumEntries is the actual count of IPv6 UDP rows written
-        let table = buf.as_ptr().cast::<MIB_UDP6TABLE_OWNER_PID>();
+        let table = buf.ptr_at::<MIB_UDP6TABLE_OWNER_PID>(0);
         let count = (*table).dwNumEntries as usize;
-        
+
         // SAFETY: Windows guarantees `count` valid IPv6 UDP entries in the table array
         let first: *const MIB_UDP6ROW_OWNER_PID = (*table).table.as_ptr();
         let rows = std::slice::from_raw_parts(first, count);
@@ -505,7 +481,7 @@ mod tests {
         let be: u32 = 0x5000; // 0x50 in high byte when truncated to u16 then from_be.
         assert_eq!(port_from_be_u32(be), 80);
 
-        let be2: u32 = u16::to_be(443) as u32;
+        let be2: u32 = u32::from(u16::to_be(443));
         assert_eq!(port_from_be_u32(be2), 443);
     }
 

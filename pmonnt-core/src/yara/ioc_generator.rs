@@ -33,7 +33,7 @@ impl IocToYaraGenerator {
                     "ip:port" => {
                         // Extract just the IP
                         if let Some(ip) = ioc.ioc_value.split(':').next() {
-                            strings.push(format!("$ip{} = \"{}\"", idx, ip));
+                            strings.push(format!("$ip{idx} = \"{ip}\""));
                         }
                     }
                     "domain" => {
@@ -41,10 +41,10 @@ impl IocToYaraGenerator {
                     }
                     "url" => {
                         // Extract domain from URL
-                        if let Ok(url) = url::Url::parse(&ioc.ioc_value) {
-                            if let Some(host) = url.host_str() {
-                                strings.push(format!("$url{} = \"{}\" nocase", idx, host));
-                            }
+                        if let Ok(url) = url::Url::parse(&ioc.ioc_value)
+                            && let Some(host) = url.host_str()
+                        {
+                            strings.push(format!("$url{idx} = \"{host}\" nocase"));
                         }
                     }
                     _ => {} // Skip hashes - not useful for memory scanning
@@ -71,16 +71,16 @@ impl IocToYaraGenerator {
                     timestamp = chrono::Utc::now().format("%Y-%m-%d"),
                     strings = strings
                         .iter()
-                        .map(|s| format!("        {}", s))
+                        .map(|s| format!("        {s}"))
                         .collect::<Vec<_>>()
                         .join("\n")
                 );
 
                 rules.push(YaraRule {
-                    name: format!("TF_{}.yar", rule_name),
+                    name: format!("TF_{rule_name}.yar"),
                     source: RuleSource::ThreatFoxGenerated,
                     content: rule_content,
-                    description: Some(format!("Auto-generated from ThreatFox IOCs for {}", family)),
+                    description: Some(format!("Auto-generated from ThreatFox IOCs for {family}")),
                     severity: Severity::High,
                     tags: vec![family.clone()],
                 });
@@ -129,7 +129,7 @@ pub fn sanitize_rule_name(name: &str) -> String {
 
     // If starts with digit, prefix with underscore
     if result.chars().next().unwrap().is_ascii_digit() {
-        format!("_{}", result)
+        format!("_{result}")
     } else {
         result
     }

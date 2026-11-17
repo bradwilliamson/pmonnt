@@ -1,48 +1,116 @@
 //! Process snapshot functionality
 
 use crate::process::Process;
-use anyhow;
 use std::collections::HashMap;
+use std::hash::{BuildHasherDefault, Hasher};
+use std::sync::{Arc, OnceLock};
 use std::time::Instant;
+
+/// Fast hasher for PID-keyed maps (one multiply per key, FxHash-style). PIDs are local,
+/// not attacker-chosen, so SipHash's flooding resistance buys nothing here, while the
+/// view model hashes PIDs thousands of times per frame.
+#[derive(Default, Clone, Copy)]
+pub struct PidHasher(u64);
+
+impl Hasher for PidHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.write_u64(u64::from(b));
+        }
+    }
+    fn write_u32(&mut self, n: u32) {
+        self.write_u64(u64::from(n));
+    }
+    fn write_u64(&mut self, n: u64) {
+        self.0 = (self.0.rotate_left(5) ^ n).wrapping_mul(0x517c_c1b7_2722_0a95);
+    }
+    fn finish(&self) -> u64 {
+        self.0
+    }
+}
+
+/// `HashMap` keyed by PID with [`PidHasher`].
+pub type PidMap<V> = HashMap<u32, V, BuildHasherDefault<PidHasher>>;
 
 /// A snapshot of processes at a specific point in time
 #[derive(Debug, Clone)]
 pub struct ProcessSnapshot {
     /// When the snapshot was taken
     pub taken_at: Instant,
-    /// All processes in the snapshot
+    /// All processes in the snapshot, in enumeration order. Treat as read-only: the lookup
+    /// index below is built from it.
     pub processes: Vec<Process>,
-    /// Quick lookup map: PID -> Process
-    pub process_map: HashMap<u32, Process>,
+    /// PID -> index into `processes`.
+    index: PidMap<usize>,
+    /// Parent/child relationships and name groups for the process list, built on first use.
+    view_index: OnceLock<ViewIndex>,
+}
+
+/// Process relationships derived once per snapshot for the tree and grouped views.
+#[derive(Debug, Clone)]
+pub struct ViewIndex {
+    /// Parent PID -> child PIDs (enumeration order). PPID 0 is never a parent.
+    pub children: PidMap<Vec<u32>>,
+    /// PIDs whose parent is missing, 0 or absent (excluding PID 0), in enumeration order.
+    pub roots: Vec<u32>,
+    /// Lowercased process names, parallel to `ProcessSnapshot::processes`.
+    pub lower_names: Vec<String>,
+    /// Tree-view labels ("name (pid)"), parallel to `processes`; shared with every frame's rows.
+    pub labels: Vec<Arc<str>>,
+    /// Processes grouped by exact executable name (PID 0 and blank names excluded).
+    pub groups: Vec<NameGroup>,
+}
+
+/// All processes sharing one executable name.
+#[derive(Debug, Clone)]
+pub struct NameGroup {
+    pub name: String,
+    pub lower_name: String,
+    /// Member PIDs in enumeration order.
+    pub pids: Vec<u32>,
 }
 
 impl ProcessSnapshot {
     /// Create a new snapshot from the current process enumeration
+    #[cfg(windows)]
     pub fn new() -> anyhow::Result<Self> {
         let processes = crate::process::enumerate_processes()?;
-        let taken_at = Instant::now();
-        let process_map = processes.iter().map(|p| (p.pid, p.clone())).collect();
+        Ok(Self::from_processes(processes, Instant::now()))
+    }
 
-        Ok(Self {
+    /// Build a snapshot from an already-enumerated process list.
+    pub fn from_processes(processes: Vec<Process>, taken_at: Instant) -> Self {
+        let index = processes
+            .iter()
+            .enumerate()
+            .map(|(i, p)| (p.pid, i))
+            .collect();
+        Self {
             taken_at,
             processes,
-            process_map,
-        })
+            index,
+            view_index: OnceLock::new(),
+        }
     }
 
     /// Get a process by PID
     pub fn get_process(&self, pid: u32) -> Option<&Process> {
-        self.process_map.get(&pid)
+        self.index.get(&pid).map(|&i| &self.processes[i])
+    }
+
+    /// Position of `pid` in `processes`.
+    pub fn index_of(&self, pid: u32) -> Option<usize> {
+        self.index.get(&pid).copied()
     }
 
     /// Check if a PID exists in this snapshot
     pub fn has_pid(&self, pid: u32) -> bool {
-        self.process_map.contains_key(&pid)
+        self.index.contains_key(&pid)
     }
 
     /// Get all PIDs in this snapshot
     pub fn pids(&self) -> impl Iterator<Item = u32> + '_ {
-        self.process_map.keys().copied()
+        self.index.keys().copied()
     }
 
     /// Get the number of processes
@@ -54,15 +122,124 @@ impl ProcessSnapshot {
     pub fn is_empty(&self) -> bool {
         self.processes.is_empty()
     }
+
+    /// Tree/group structure for the process list, computed once and then shared by every
+    /// frame until the next snapshot.
+    pub fn view_index(&self) -> &ViewIndex {
+        self.view_index
+            .get_or_init(|| ViewIndex::build(&self.processes, &self.index))
+    }
+
+    /// Lowercased name of `pid`, or "" if unknown.
+    pub fn lower_name(&self, pid: u32) -> &str {
+        self.index
+            .get(&pid)
+            .map_or("", |&i| self.view_index().lower_names[i].as_str())
+    }
+
+    /// `root` followed by its descendants, children before their parents (the order a
+    /// "kill tree" terminates them in). Empty if `root` is not in the snapshot.
+    ///
+    /// Windows keeps reporting a parent PID after the parent exits, and once that PID is
+    /// recycled an unrelated process appears to be the parent of the old one's children. A
+    /// process therefore only counts as a child if both creation times are known and it was
+    /// created no earlier than its parent.
+    pub fn descendants_child_first(&self, root: u32) -> Vec<&Process> {
+        let Some(root_process) = self.get_process(root) else {
+            return Vec::new();
+        };
+        let children = &self.view_index().children;
+        let is_child_of =
+            |child: &Process, parent: &Process| match (child.create_time, parent.create_time) {
+                (Some(c), Some(p)) => c >= p,
+                _ => false,
+            };
+
+        // Iterative post-order walk; `visited` guards against PPID cycles.
+        let mut out = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        visited.insert(root);
+        let mut stack = vec![(root_process, false)];
+        while let Some((process, expanded)) = stack.pop() {
+            if expanded {
+                out.push(process);
+                continue;
+            }
+            stack.push((process, true));
+            for &kid in children.get(&process.pid).into_iter().flatten().rev() {
+                if let Some(child) = self.get_process(kid)
+                    && is_child_of(child, process)
+                    && visited.insert(kid)
+                {
+                    stack.push((child, false));
+                }
+            }
+        }
+        out
+    }
+}
+
+/// Lowercase like `str::to_lowercase`, skipping the Unicode tables for plain ASCII.
+pub(crate) fn lowercase(s: &str) -> String {
+    if s.is_ascii() {
+        s.to_ascii_lowercase()
+    } else {
+        s.to_lowercase()
+    }
+}
+
+impl ViewIndex {
+    fn build(processes: &[Process], index: &PidMap<usize>) -> Self {
+        let mut children: PidMap<Vec<u32>> = PidMap::default();
+        let mut roots = Vec::new();
+        let mut group_of: HashMap<&str, usize> = HashMap::new();
+        let mut groups: Vec<NameGroup> = Vec::new();
+        let lower_names = processes.iter().map(|p| lowercase(&p.name)).collect();
+        let labels = processes
+            .iter()
+            .map(|p| Arc::from(format!("{} ({})", p.name, p.pid)))
+            .collect();
+
+        for p in processes {
+            if let Some(parent) = p.ppid
+                && parent != 0
+            {
+                children.entry(parent).or_default().push(p.pid);
+            }
+            if p.pid != 0
+                && match p.ppid {
+                    None | Some(0) => true,
+                    Some(parent) => !index.contains_key(&parent),
+                }
+            {
+                roots.push(p.pid);
+            }
+            if p.pid != 0 && !p.name.trim().is_empty() {
+                let g = *group_of.entry(p.name.as_str()).or_insert_with(|| {
+                    groups.push(NameGroup {
+                        name: p.name.clone(),
+                        lower_name: lowercase(&p.name),
+                        pids: Vec::new(),
+                    });
+                    groups.len() - 1
+                });
+                groups[g].pids.push(p.pid);
+            }
+        }
+
+        Self {
+            children,
+            roots,
+            lower_names,
+            labels,
+            groups,
+        }
+    }
 }
 
 impl Default for ProcessSnapshot {
     fn default() -> Self {
-        Self {
-            taken_at: Instant::now(),
-            processes: Vec::new(),
-            process_map: HashMap::new(),
-        }
+        Self::from_processes(Vec::new(), Instant::now())
     }
 }
 
@@ -70,14 +247,110 @@ impl Default for ProcessSnapshot {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_snapshot_creation() {
-        let snapshot = ProcessSnapshot::new().unwrap();
-        assert!(!snapshot.is_empty());
-        assert_eq!(snapshot.processes.len(), snapshot.process_map.len());
+    fn proc(pid: u32, ppid: u32, name: &str) -> Process {
+        Process {
+            pid,
+            name: name.to_string(),
+            ppid: Some(ppid),
+            cpu_percent: None,
+            memory_bytes: None,
+            gpu_percent: None,
+            gpu_memory_bytes: None,
+            path: None,
+            signature: None,
+            create_time: None,
+        }
+    }
+
+    fn timed(pid: u32, ppid: u32, create_time: Option<u64>) -> Process {
+        Process {
+            create_time,
+            ..proc(pid, ppid, "p.exe")
+        }
+    }
+
+    fn pids(procs: &[&Process]) -> Vec<u32> {
+        procs.iter().map(|p| p.pid).collect()
     }
 
     #[test]
+    fn descendants_are_listed_children_first() {
+        let snapshot = ProcessSnapshot::from_processes(
+            vec![
+                timed(10, 1, Some(100)),
+                timed(20, 10, Some(110)),
+                timed(30, 20, Some(120)),
+                timed(40, 10, Some(130)),
+                timed(50, 1, Some(140)), // unrelated
+            ],
+            Instant::now(),
+        );
+        let order = pids(&snapshot.descendants_child_first(10));
+        assert_eq!(order.last(), Some(&10));
+        let pos = |pid| order.iter().position(|&p| p == pid).unwrap();
+        assert!(pos(30) < pos(20));
+        assert!(pos(20) < pos(10) && pos(40) < pos(10));
+        assert_eq!(order.len(), 4);
+        assert!(snapshot.descendants_child_first(999).is_empty());
+    }
+
+    #[test]
+    fn descendants_skip_children_of_a_recycled_parent_pid() {
+        // PID 10 was reused at t=500. PID 20 was started by the earlier PID 10 (t=110) and is
+        // not a child of the current one; PID 30 was started by the current one.
+        let snapshot = ProcessSnapshot::from_processes(
+            vec![
+                timed(10, 1, Some(500)),
+                timed(20, 10, Some(110)),
+                timed(30, 10, Some(510)),
+                timed(40, 10, None),
+            ],
+            Instant::now(),
+        );
+        assert_eq!(pids(&snapshot.descendants_child_first(10)), vec![30, 10]);
+    }
+
+    #[test]
+    fn descendants_survive_ppid_cycles() {
+        let snapshot = ProcessSnapshot::from_processes(
+            vec![timed(10, 20, Some(100)), timed(20, 10, Some(100))],
+            Instant::now(),
+        );
+        assert_eq!(pids(&snapshot.descendants_child_first(10)), vec![20, 10]);
+    }
+
+    #[test]
+    fn from_processes_indexes_every_pid() {
+        let snapshot = ProcessSnapshot::from_processes(
+            vec![
+                proc(4, 0, "System"),
+                proc(100, 4, "smss.exe"),
+                proc(200, 100, "csrss.exe"),
+            ],
+            Instant::now(),
+        );
+        assert_eq!(snapshot.len(), 3);
+        assert_eq!(
+            snapshot.get_process(100).map(|p| p.name.as_str()),
+            Some("smss.exe")
+        );
+        assert!(snapshot.has_pid(200));
+        assert!(!snapshot.has_pid(300));
+        let mut pids: Vec<u32> = snapshot.pids().collect();
+        pids.sort_unstable();
+        assert_eq!(pids, vec![4, 100, 200]);
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_snapshot_creation() {
+        let snapshot = ProcessSnapshot::new().unwrap();
+        assert!(!snapshot.is_empty());
+        assert_eq!(snapshot.processes.len(), snapshot.pids().count());
+    }
+
+    #[test]
+    #[cfg(windows)]
     fn test_snapshot_lookup() {
         let snapshot = ProcessSnapshot::new().unwrap();
 
@@ -94,6 +367,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
     fn test_snapshot_pids() {
         let snapshot = ProcessSnapshot::new().unwrap();
         let pids: Vec<u32> = snapshot.pids().collect();

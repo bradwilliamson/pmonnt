@@ -12,7 +12,9 @@ pub struct ProcessDiff {
     pub new_pids: HashSet<u32>,
     /// PIDs that existed in the old snapshot but not in the new one
     pub exited_pids: HashSet<u32>,
-    /// PIDs where the process name or PPID changed
+    /// PIDs present in both snapshots that now belong to a different process: the name,
+    /// PPID or creation time changed, so Windows recycled the PID in between. Per-process
+    /// state cached for these PIDs describes the old process.
     pub changed_pids: HashSet<u32>,
     /// When the diff was computed (from new snapshot's timestamp)
     pub computed_at: Instant,
@@ -21,28 +23,28 @@ pub struct ProcessDiff {
 impl ProcessDiff {
     /// Compute the difference between two snapshots
     pub fn new(old_snapshot: &ProcessSnapshot, new_snapshot: &ProcessSnapshot) -> Self {
-        let old_pids: HashSet<u32> = old_snapshot.pids().collect();
-        let new_pids: HashSet<u32> = new_snapshot.pids().collect();
-
-        let new_pids_set = &new_pids - &old_pids;
-        let exited_pids_set = &old_pids - &new_pids;
-
+        // One pass over each snapshot using their PID indexes; no temporary PID sets.
+        let mut new_pids = HashSet::new();
         let mut changed_pids = HashSet::new();
-
-        // Check for changes in existing processes
-        for &pid in &old_pids {
-            if let (Some(old_proc), Some(new_proc)) =
-                (old_snapshot.get_process(pid), new_snapshot.get_process(pid))
-            {
-                if old_proc.name != new_proc.name || old_proc.ppid != new_proc.ppid {
+        for pid in new_snapshot.pids() {
+            match (old_snapshot.get_process(pid), new_snapshot.get_process(pid)) {
+                (None, _) => {
+                    new_pids.insert(pid);
+                }
+                (Some(old_proc), Some(new_proc)) if is_different_process(old_proc, new_proc) => {
                     changed_pids.insert(pid);
                 }
+                _ => {}
             }
         }
+        let exited_pids = old_snapshot
+            .pids()
+            .filter(|&pid| !new_snapshot.has_pid(pid))
+            .collect();
 
         Self {
-            new_pids: new_pids_set,
-            exited_pids: exited_pids_set,
+            new_pids,
+            exited_pids,
             changed_pids,
             computed_at: new_snapshot.taken_at,
         }
@@ -57,6 +59,13 @@ impl ProcessDiff {
     pub fn change_count(&self) -> usize {
         self.new_pids.len() + self.exited_pids.len() + self.changed_pids.len()
     }
+}
+
+/// Whether two entries with the same PID describe different process instances.
+fn is_different_process(old: &Process, new: &Process) -> bool {
+    old.name != new.name
+        || old.ppid != new.ppid
+        || matches!((old.create_time, new.create_time), (Some(a), Some(b)) if a != b)
 }
 
 /// Represents an exited process with its exit time
@@ -110,11 +119,18 @@ impl ExitedProcessBuffer {
 
     /// Add multiple exited processes from a diff
     pub fn add_from_diff(&mut self, diff: &ProcessDiff, old_snapshot: &ProcessSnapshot) {
-        for &pid in &diff.exited_pids {
-            if let Some(process) = old_snapshot.get_process(pid) {
-                self.add_exited(process.clone(), diff.computed_at);
-            }
+        if diff.exited_pids.is_empty() {
+            return;
         }
+        // Push the whole batch, then prune once (pruning per entry is quadratic when many
+        // processes exit at once, e.g. closing a browser).
+        self.processes
+            .extend(diff.exited_pids.iter().filter_map(|&pid| {
+                old_snapshot
+                    .get_process(pid)
+                    .map(|p| ExitedProcess::new(p.clone(), diff.computed_at))
+            }));
+        self.cleanup();
     }
 
     /// Get all recent exited processes
@@ -169,17 +185,12 @@ mod tests {
             gpu_memory_bytes: None,
             path: None,
             signature: None,
+            create_time: None,
         }
     }
 
     fn create_test_snapshot(processes: Vec<Process>) -> ProcessSnapshot {
-        let taken_at = Instant::now();
-        let process_map = processes.iter().map(|p| (p.pid, p.clone())).collect();
-        ProcessSnapshot {
-            taken_at,
-            processes,
-            process_map,
-        }
+        ProcessSnapshot::from_processes(processes, Instant::now())
     }
 
     #[test]
@@ -251,6 +262,23 @@ mod tests {
     }
 
     #[test]
+    fn recycled_pid_with_same_name_counts_as_changed() {
+        let with_time = |pid, t| Process {
+            create_time: t,
+            ..create_test_process(pid, "svchost.exe", Some(1))
+        };
+        let old_snapshot =
+            create_test_snapshot(vec![with_time(10, Some(100)), with_time(20, Some(200))]);
+        let new_snapshot = create_test_snapshot(vec![
+            with_time(10, Some(900)), // exited, PID reused by another svchost.exe
+            with_time(20, None),      // creation time unknown this time: not evidence of reuse
+        ]);
+        let diff = ProcessDiff::new(&old_snapshot, &new_snapshot);
+        assert_eq!(diff.changed_pids, HashSet::from([10]));
+        assert!(diff.new_pids.is_empty() && diff.exited_pids.is_empty());
+    }
+
+    #[test]
     fn test_diff_no_changes() {
         let processes = vec![
             create_test_process(1, "init", None),
@@ -275,7 +303,7 @@ mod tests {
         let process = create_test_process(123, "test", Some(1));
         let exited_at = Instant::now();
 
-        buffer.add_exited(process.clone(), exited_at);
+        buffer.add_exited(process, exited_at);
 
         // Should be recent
         let recent = buffer.recent_exited(Instant::now());

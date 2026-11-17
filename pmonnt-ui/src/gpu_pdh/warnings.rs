@@ -7,8 +7,7 @@ static LAST_WARN_TIME: AtomicU64 = AtomicU64::new(0);
 pub fn should_warn() -> bool {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0);
+        .map_or(0, |d| d.as_millis() as u64);
     let last = LAST_WARN_TIME.load(Ordering::Relaxed);
     if now.saturating_sub(last) >= 30_000 {
         LAST_WARN_TIME.store(now, Ordering::Relaxed);
@@ -34,8 +33,7 @@ mod tests {
         // Set last warn time to now
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0);
+            .map_or(0, |d| d.as_millis() as u64);
         LAST_WARN_TIME.store(now, Ordering::Relaxed);
 
         // Immediate second call should be suppressed

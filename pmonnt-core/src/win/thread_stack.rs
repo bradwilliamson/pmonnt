@@ -1,25 +1,26 @@
 use std::ffi::c_void;
+use std::fmt::Write as _;
 use std::mem;
 use std::sync::{Mutex, OnceLock};
 
 use thiserror::Error;
-use windows::core::PCSTR;
 use windows::Win32::Foundation::{
-    GetLastError, ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, HANDLE, WIN32_ERROR,
+    ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, GetLastError, HANDLE, WIN32_ERROR,
 };
 use windows::Win32::System::Diagnostics::Debug::{
-    GetThreadContext, StackWalk64, SymCleanup, SymFromAddr, SymFunctionTableAccess64,
-    SymGetModuleBase64, SymInitialize, SymSetOptions, ADDRESS64, CONTEXT_FLAGS, STACKFRAME64,
-    SYMBOL_INFO, SYMOPT_DEFERRED_LOADS, SYMOPT_UNDNAME,
+    ADDRESS64, CONTEXT_FLAGS, GetThreadContext, STACKFRAME64, SYMBOL_INFO, SYMOPT_DEFERRED_LOADS,
+    SYMOPT_UNDNAME, StackWalk64, SymCleanup, SymFromAddr, SymFunctionTableAccess64,
+    SymGetModuleBase64, SymInitialize, SymSetOptions,
 };
 use windows::Win32::System::Threading::{
-    OpenProcess, OpenThread, ResumeThread, SuspendThread, PROCESS_QUERY_INFORMATION,
-    PROCESS_VM_READ, THREAD_ACCESS_RIGHTS, THREAD_GET_CONTEXT, THREAD_QUERY_INFORMATION,
+    OpenProcess, OpenThread, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ, ResumeThread,
+    SuspendThread, THREAD_ACCESS_RIGHTS, THREAD_GET_CONTEXT, THREAD_QUERY_INFORMATION,
     THREAD_SUSPEND_RESUME,
 };
+use windows::core::PCSTR;
 
-use crate::win::ntdll::NtQueryInformationProcess;
 use crate::win::HandleGuard;
+use crate::win::ntdll::NtQueryInformationProcess;
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ThreadStackError {
@@ -63,6 +64,10 @@ fn hint_for_win32(code: u32) -> String {
 fn map_last_error(context: &'static str, pid: u32, tid: u32) -> ThreadStackError {
     // SAFETY: GetLastError retrieves the thread-local error code, which is always safe
     let code = unsafe { GetLastError() }.0;
+    map_win32_code(context, code, pid, tid)
+}
+
+fn map_win32_code(context: &'static str, code: u32, pid: u32, tid: u32) -> ThreadStackError {
     match WIN32_ERROR(code) {
         ERROR_ACCESS_DENIED => ThreadStackError::AccessDenied,
         ERROR_INVALID_PARAMETER => {
@@ -93,7 +98,7 @@ fn is_wow64_process(process: HANDLE) -> Result<bool, ThreadStackError> {
         NtQueryInformationProcess(
             process,
             PROCESS_WOW64_INFORMATION_CLASS,
-            &mut peb32 as *mut usize as *mut c_void,
+            (&raw mut peb32).cast::<c_void>(),
             mem::size_of::<usize>() as u32,
             std::ptr::null_mut(),
         )
@@ -142,6 +147,14 @@ pub fn thread_stack_trace(
         return Ok(String::new());
     }
 
+    // Never suspend one of our own threads: it may hold the heap or another lock this walk
+    // needs (deadlock), and suspending the calling thread itself never returns.
+    if pid == std::process::id() {
+        return Err(ThreadStackError::Unsupported {
+            reason: "stack capture of PMonNT's own threads is not supported".to_string(),
+        });
+    }
+
     // Best-effort: if we're elevated, this often improves access to service / higher-IL targets.
     // If it fails, we continue (we still want a clear error message below).
     let _ = crate::win::enable_debug_privilege();
@@ -154,12 +167,11 @@ pub fn thread_stack_trace(
     let process_guard = HandleGuard::new(process);
 
     // Prevent confusing failures: we don't currently implement Wow64GetThreadContext.
-    if cfg!(target_arch = "x86_64")
-        && is_wow64_process(process_guard.raw())? {
-            return Err(ThreadStackError::Unsupported {
-                reason: "WoW64 (32-bit) targets are not supported yet for Stack".to_string(),
-            });
-        }
+    if cfg!(target_arch = "x86_64") && is_wow64_process(process_guard.raw())? {
+        return Err(ThreadStackError::Unsupported {
+            reason: "WoW64 (32-bit) targets are not supported yet for Stack".to_string(),
+        });
+    }
 
     // Try multiple access right combinations for protected processes.
     // Some targets (e.g., Chrome sandbox) deny THREAD_GET_CONTEXT but allow limited query.
@@ -175,9 +187,9 @@ pub fn thread_stack_trace(
     ];
 
     let mut thread_guard = None;
-    let mut _last_open_error = None;
+    let mut last_open_error = None;
 
-    for desired in access_attempts.iter() {
+    for desired in &access_attempts {
         // SAFETY: OpenThread is called with valid TID and access rights; error handling checks result
         let thread = unsafe { OpenThread(*desired, false, tid) };
         if let Ok(handle) = thread {
@@ -185,12 +197,16 @@ pub fn thread_stack_trace(
             break;
         } else {
             // SAFETY: GetLastError retrieves the thread-local error code, which is always safe
-            _last_open_error = Some(unsafe { GetLastError() }.0);
+            last_open_error = Some(unsafe { GetLastError() }.0);
         }
     }
 
     let Some(thread_guard) = thread_guard else {
-        return Err(map_last_error("OpenThread", pid, tid));
+        // Report the error from the last OpenThread attempt, not whatever GetLastError holds now.
+        return Err(match last_open_error {
+            Some(code) => map_win32_code("OpenThread", code, pid, tid),
+            None => map_last_error("OpenThread", pid, tid),
+        });
     };
 
     // Best-effort suspend. Some protected processes may deny this, but we can try
@@ -226,7 +242,7 @@ pub fn thread_stack_trace(
         context = unsafe { mem::zeroed() };
         context.ContextFlags = CONTEXT_FLAGS(flags);
         // SAFETY: GetThreadContext is called with a valid thread handle and properly initialized context structure
-        if unsafe { GetThreadContext(thread_guard.raw(), &mut context) }.is_ok() {
+        if unsafe { GetThreadContext(thread_guard.raw(), &raw mut context) }.is_ok() {
             got_context = true;
             break;
         }
@@ -257,11 +273,14 @@ pub fn thread_stack_trace(
         use windows::Win32::System::Diagnostics::Debug::AddrModeFlat;
 
         unsafe extern "system" fn function_table_access(process: HANDLE, addr: u64) -> *mut c_void {
-            SymFunctionTableAccess64(process, addr)
+            // SAFETY: called by StackWalk64 with the process handle we passed to it, after
+            // SymInitialize succeeded for that handle.
+            unsafe { SymFunctionTableAccess64(process, addr) }
         }
 
         unsafe extern "system" fn get_module_base(process: HANDLE, addr: u64) -> u64 {
-            SymGetModuleBase64(process, addr)
+            // SAFETY: as above, only invoked by StackWalk64 with an initialized handle.
+            unsafe { SymGetModuleBase64(process, addr) }
         }
 
         frame.AddrPC = ADDRESS64 {
@@ -290,8 +309,8 @@ pub fn thread_stack_trace(
                     machine,
                     process_guard.raw(),
                     thread_guard.raw(),
-                    &mut frame,
-                    &mut context as *mut _ as *mut c_void,
+                    &raw mut frame,
+                    (&raw mut context).cast::<c_void>(),
                     None,
                     Some(function_table_access),
                     Some(get_module_base),
@@ -310,7 +329,7 @@ pub fn thread_stack_trace(
 
             // SAFETY: format_frame is called with a valid process handle and instruction pointer from stack walk
             let line = unsafe { format_frame(process_guard.raw(), ip) };
-            out.push_str(&format!("#{idx:02} {line}\n"));
+            let _ = writeln!(out, "#{idx:02} {line}");
         }
     }
 
@@ -340,39 +359,50 @@ pub fn thread_stack_trace(
     })
 }
 
+/// Resolve `addr` to `symbol + 0xoffset (0xaddr)` using dbghelp.
+///
+/// # Safety
+/// `process` must be a handle for which `SymInitialize` has succeeded.
 unsafe fn format_frame(process: HANDLE, addr: u64) -> String {
-    let mut disp: u64 = 0;
     const MAX_NAME: usize = 256;
-    let mut buf = vec![0u8; mem::size_of::<SYMBOL_INFO>() + MAX_NAME];
-    let sym = buf.as_mut_ptr() as *mut SYMBOL_INFO;
-    (*sym).SizeOfStruct = mem::size_of::<SYMBOL_INFO>() as u32;
-    (*sym).MaxNameLen = MAX_NAME as u32;
+    // SYMBOL_INFO contains u64 fields, so back it with u64 storage to keep it aligned.
+    let words = (mem::size_of::<SYMBOL_INFO>() + MAX_NAME).div_ceil(mem::size_of::<u64>());
+    let mut buf = vec![0u64; words];
+    let sym = buf.as_mut_ptr().cast::<SYMBOL_INFO>();
+    let mut disp: u64 = 0;
 
-    if SymFromAddr(process, addr, Some(&mut disp), sym).is_err() {
-        return format!("0x{addr:x}");
-    }
-
-    // SYMBOL_INFO::Name is a C char buffer. windows-rs exposes it as a [u8; 1] tail.
-    let name_ptr = (*sym).Name.as_ptr();
-    let name = cstr_to_string(name_ptr);
+    // SAFETY: `buf` is zeroed, 8-byte aligned and large enough for SYMBOL_INFO plus MAX_NAME
+    // name bytes; SymFromAddr writes at most MaxNameLen bytes into the trailing Name field.
+    let name = unsafe {
+        (*sym).SizeOfStruct = mem::size_of::<SYMBOL_INFO>() as u32;
+        (*sym).MaxNameLen = MAX_NAME as u32;
+        if SymFromAddr(process, addr, Some(&raw mut disp), sym).is_err() {
+            return format!("0x{addr:x}");
+        }
+        // SYMBOL_INFO::Name is a C char buffer. windows-rs exposes it as a [u8; 1] tail.
+        cstr_to_string((*sym).Name.as_ptr(), MAX_NAME)
+    };
     if disp > 0 {
-        format!("{} + 0x{disp:x} (0x{addr:x})", name)
+        format!("{name} + 0x{disp:x} (0x{addr:x})")
     } else {
-        format!("{} (0x{addr:x})", name)
+        format!("{name} (0x{addr:x})")
     }
 }
 
-unsafe fn cstr_to_string(ptr: *const i8) -> String {
+/// Read a NUL-terminated C string of at most `max` bytes.
+///
+/// # Safety
+/// `ptr` must be null or valid for reads of `max` bytes (or up to the first NUL).
+unsafe fn cstr_to_string(ptr: *const i8, max: usize) -> String {
     if ptr.is_null() {
         return "<unknown>".to_string();
     }
     let mut len = 0usize;
-    while *ptr.add(len) != 0 {
+    // SAFETY: the caller guarantees `ptr` is readable up to `max` bytes or the first NUL.
+    while len < max && unsafe { *ptr.add(len) } != 0 {
         len += 1;
-        if len > 4096 {
-            break;
-        }
     }
-    let slice = std::slice::from_raw_parts(ptr as *const u8, len);
-    String::from_utf8_lossy(slice).to_string()
+    // SAFETY: the `len` bytes before this point were just read successfully.
+    let slice = unsafe { std::slice::from_raw_parts(ptr.cast::<u8>(), len) };
+    String::from_utf8_lossy(slice).into_owned()
 }

@@ -114,11 +114,7 @@ pub(crate) fn sort_connections(conns: &mut [NetworkConnection], sort: NetworkSor
             NetworkSortKey::Pid => (a.pid, stable_key(a)).cmp(&(b.pid, stable_key(b))),
         };
 
-        if sort.ascending {
-            ord
-        } else {
-            ord.reverse()
-        }
+        if sort.ascending { ord } else { ord.reverse() }
     });
 }
 

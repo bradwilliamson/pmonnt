@@ -1,25 +1,25 @@
 //! Windows process metrics (memory, CPU times)
 //! Provides memory and CPU time retrieval via Windows API
 
+use crate::aligned_buf::AlignedBuf;
 use crate::win::HandleGuard;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 use std::mem;
-use std::time::Instant;
 use windows::Win32::Foundation::{FILETIME, HANDLE};
 use windows::Win32::Foundation::{NTSTATUS, STATUS_INFO_LENGTH_MISMATCH, STATUS_SUCCESS};
 use windows::Win32::System::ProcessStatus::{
     GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS, PROCESS_MEMORY_COUNTERS_EX,
 };
 use windows::Win32::System::Threading::{
-    GetPriorityClass, GetProcessIoCounters, GetProcessTimes, OpenProcess, IO_COUNTERS,
+    GetPriorityClass, GetProcessIoCounters, GetProcessTimes, IO_COUNTERS, OpenProcess,
     PROCESS_QUERY_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION,
 };
 
 // GetGuiResources is in User32, but might need different import path
 // For now, we'll call it via dynamic linking
 #[link(name = "User32")]
-extern "system" {
+unsafe extern "system" {
     fn GetGuiResources(hProcess: HANDLE, uiFlags: u32) -> u32;
 }
 
@@ -28,6 +28,8 @@ const GR_USEROBJECTS: u32 = 1;
 
 const SYSTEM_PROCESS_INFORMATION_CLASS: u32 = 5;
 
+/// `SYSTEM_PROCESS_INFORMATION` as returned by `NtQuerySystemInformation(SystemProcessInformation)`
+/// (documented in winternl.h; the full layout is the one used by Process Hacker/phnt).
 #[repr(C)]
 struct SystemProcessInformation {
     next_entry_offset: u32,
@@ -51,10 +53,216 @@ struct SystemProcessInformation {
     page_fault_count: u32,
     peak_working_set_size: usize,
     working_set_size: usize,
+    quota_peak_paged_pool_usage: usize,
+    quota_paged_pool_usage: usize,
+    quota_peak_non_paged_pool_usage: usize,
+    quota_non_paged_pool_usage: usize,
+    pagefile_usage: usize,
+    peak_pagefile_usage: usize,
+    private_page_count: usize,
+    read_operation_count: i64,
+    write_operation_count: i64,
+    other_operation_count: i64,
+    read_transfer_count: i64,
+    write_transfer_count: i64,
+    other_transfer_count: i64,
+}
+
+/// Per-process values from one `SystemProcessInformation` snapshot.
+///
+/// One `NtQuerySystemInformation` call returns these for every process on the system,
+/// including ones PMonNT cannot open, so it is both cheaper and more complete than
+/// opening each process.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SystemProcessEntry {
+    pub pid: u32,
+    pub parent_pid: u32,
+    pub thread_count: u32,
+    pub handle_count: u32,
+    pub session_id: u32,
+    pub cycle_time: u64,
+    /// Creation time as a FILETIME (100 ns ticks since 1601); 0 for the idle process.
+    pub create_time: u64,
+    /// Kernel-mode CPU time in 100 ns units.
+    pub kernel_time_100ns: u64,
+    /// User-mode CPU time in 100 ns units.
+    pub user_time_100ns: u64,
+    pub working_set_bytes: u64,
+    pub private_bytes: u64,
+    /// Reserved + committed virtual address space.
+    pub virtual_size_bytes: u64,
+    pub io: IoCounters,
+}
+
+impl SystemProcessEntry {
+    fn from_raw(spi: &SystemProcessInformation) -> Self {
+        let nonneg = |v: i64| u64::try_from(v).unwrap_or(0);
+        Self {
+            pid: handle_to_pid(spi.unique_process_id),
+            parent_pid: handle_to_pid(spi.inherited_from_unique_process_id),
+            thread_count: spi.number_of_threads,
+            handle_count: spi.handle_count,
+            session_id: spi.session_id,
+            cycle_time: spi.cycle_time,
+            create_time: nonneg(spi.create_time),
+            kernel_time_100ns: nonneg(spi.kernel_time),
+            user_time_100ns: nonneg(spi.user_time),
+            working_set_bytes: spi.working_set_size as u64,
+            private_bytes: spi.private_page_count as u64,
+            virtual_size_bytes: spi.virtual_size as u64,
+            io: IoCounters {
+                read_bytes: nonneg(spi.read_transfer_count),
+                write_bytes: nonneg(spi.write_transfer_count),
+                other_bytes: nonneg(spi.other_transfer_count),
+                read_ops: nonneg(spi.read_operation_count),
+                write_ops: nonneg(spi.write_operation_count),
+                other_ops: nonneg(spi.other_operation_count),
+            },
+        }
+    }
+}
+
+/// Process IDs travel through the NT API as HANDLE-sized values; they always fit in a u32.
+fn handle_to_pid(h: windows::Win32::Foundation::HANDLE) -> u32 {
+    u32::try_from(h.0 as usize).unwrap_or(u32::MAX)
+}
+
+/// Upper bound for the SystemProcessInformation buffer. A system with ~100k threads needs
+/// about 10 MB, so this leaves plenty of room while still bounding a runaway loop.
+const MAX_SPI_BUFFER_BYTES: usize = 64 * 1024 * 1024;
+
+/// Fetch the raw `SystemProcessInformation` table, growing the buffer until it fits.
+fn query_spi_buffer() -> Result<AlignedBuf> {
+    let mut buffer = AlignedBuf::new(1024 * 1024);
+    loop {
+        let mut return_length: u32 = 0;
+        // SAFETY: NtQuerySystemInformation writes at most `buffer.len()` bytes into `buffer`,
+        // which is a valid, writable, 8-byte-aligned allocation of that size.
+        let status = unsafe {
+            NtQuerySystemInformation(
+                SYSTEM_PROCESS_INFORMATION_CLASS,
+                buffer.as_mut_ptr().cast::<std::ffi::c_void>(),
+                buffer.len_u32(),
+                &raw mut return_length,
+            )
+        };
+
+        if status == STATUS_SUCCESS {
+            return Ok(buffer);
+        }
+        if status != STATUS_INFO_LENGTH_MISMATCH {
+            return Err(anyhow!(
+                "NtQuerySystemInformation(SystemProcessInformation) failed: 0x{:X}",
+                status.0
+            ));
+        }
+
+        // The table can grow between calls, so ask for headroom beyond what was reported.
+        let wanted = (return_length as usize)
+            .saturating_add(64 * 1024)
+            .max(buffer.len().saturating_mul(2));
+        if wanted > MAX_SPI_BUFFER_BYTES {
+            return Err(anyhow!(
+                "SystemProcessInformation buffer too large ({wanted} bytes)"
+            ));
+        }
+        buffer = AlignedBuf::new(wanted);
+    }
+}
+
+/// Walk the entries of a `SystemProcessInformation` buffer.
+fn for_each_spi_entry(buffer: &AlignedBuf, mut f: impl FnMut(&SystemProcessInformation) -> bool) {
+    let mut offset: usize = 0;
+    while buffer.fits::<SystemProcessInformation>(offset) {
+        // SAFETY: `fits` checked that a whole entry lies inside the buffer. The buffer start is
+        // 8-byte aligned and the kernel aligns every NextEntryOffset to 8 bytes.
+        let spi = unsafe { &*buffer.ptr_at::<SystemProcessInformation>(offset) };
+        if !f(spi) || spi.next_entry_offset == 0 {
+            break;
+        }
+        offset = offset.saturating_add(spi.next_entry_offset as usize);
+    }
+}
+
+/// Query every process's counters with a single system call.
+pub fn query_system_processes() -> Result<Vec<SystemProcessEntry>> {
+    let buffer = query_spi_buffer()?;
+    let mut entries = Vec::with_capacity(512);
+    for_each_spi_entry(&buffer, |spi| {
+        entries.push(SystemProcessEntry::from_raw(spi));
+        true
+    });
+    Ok(entries)
+}
+
+/// Every process with its image name, from a single `SystemProcessInformation` query.
+///
+/// PID, parent, creation time and name all come from the same kernel snapshot, so they
+/// always describe the same process instance (two separate queries can see different
+/// processes under a recycled PID).
+pub fn query_processes_with_names() -> Result<Vec<(SystemProcessEntry, String)>> {
+    let buffer = query_spi_buffer()?;
+    let mut entries = Vec::with_capacity(512);
+    for_each_spi_entry(&buffer, |spi| {
+        entries.push((
+            SystemProcessEntry::from_raw(spi),
+            spi_image_name(&buffer, &spi.image_name),
+        ));
+        true
+    });
+    Ok(entries)
+}
+
+/// Decode an entry's image name. The kernel points `Buffer` into the same output buffer; the
+/// name is read from the buffer's bytes, and a pointer or length outside it yields "".
+fn spi_image_name(
+    buffer: &AlignedBuf,
+    name: &windows::Win32::Foundation::UNICODE_STRING,
+) -> String {
+    let len_bytes = usize::from(name.Length);
+    let Some(offset) = (name.Buffer.0 as usize).checked_sub(buffer.as_ptr() as usize) else {
+        return String::new();
+    };
+    let Some(bytes) = offset
+        .checked_add(len_bytes)
+        .and_then(|end| buffer.as_bytes().get(offset..end))
+    else {
+        return String::new();
+    };
+    // An odd trailing byte (malformed length) is ignored.
+    let units = bytes
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|&pair| u16::from_le_bytes(pair));
+    char::decode_utf16(units)
+        .map(|c| c.unwrap_or(char::REPLACEMENT_CHARACTER))
+        .collect()
+}
+
+/// Counters for one process from a fresh `SystemProcessInformation` query.
+///
+/// Callers that need several values for the same PID should call this once rather than
+/// using the single-value helpers below, which each re-query the whole table.
+pub fn system_process_entry(pid: u32) -> Option<SystemProcessEntry> {
+    if pid == 0 {
+        return None;
+    }
+    let buffer = query_spi_buffer().ok()?;
+    let mut found = None;
+    for_each_spi_entry(&buffer, |spi| {
+        if handle_to_pid(spi.unique_process_id) == pid {
+            found = Some(SystemProcessEntry::from_raw(spi));
+            false
+        } else {
+            true
+        }
+    });
+    found
 }
 
 #[link(name = "ntdll")]
-extern "system" {
+unsafe extern "system" {
     fn NtQuerySystemInformation(
         system_information_class: u32,
         system_information: *mut std::ffi::c_void,
@@ -63,70 +271,7 @@ extern "system" {
     ) -> NTSTATUS;
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct IoCounters {
-    pub read_bytes: u64,
-    pub write_bytes: u64,
-    pub other_bytes: u64,
-    pub read_ops: u64,
-    pub write_ops: u64,
-    pub other_ops: u64,
-}
-
-// Back-compat for existing UI code.
-pub type ProcessIoCounters = IoCounters;
-
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
-pub struct IoRate {
-    pub read_bytes_per_sec: f64,
-    pub write_bytes_per_sec: f64,
-}
-
-#[derive(Debug, Default)]
-pub struct IoRateCalculator {
-    prev_counters: HashMap<u32, (Instant, IoCounters)>,
-}
-
-impl IoRateCalculator {
-    pub fn calculate_rate(&mut self, pid: u32, current: IoCounters) -> IoRate {
-        let now = Instant::now();
-        let rate = if let Some((prev_time, prev_counters)) = self.prev_counters.get(&pid) {
-            let elapsed = now.duration_since(*prev_time).as_secs_f64();
-            compute_io_rate(prev_counters, &current, elapsed)
-        } else {
-            IoRate::default()
-        };
-
-        self.prev_counters.insert(pid, (now, current));
-        rate
-    }
-
-    pub fn remove_pid(&mut self, pid: u32) {
-        self.prev_counters.remove(&pid);
-    }
-
-    pub fn retain_pids<I>(&mut self, live_pids: I)
-    where
-        I: IntoIterator<Item = u32>,
-    {
-        let live: std::collections::HashSet<u32> = live_pids.into_iter().collect();
-        self.prev_counters.retain(|pid, _| live.contains(pid));
-    }
-}
-
-fn compute_io_rate(prev: &IoCounters, current: &IoCounters, elapsed_secs: f64) -> IoRate {
-    if elapsed_secs.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) {
-        return IoRate::default();
-    }
-
-    let read_delta = current.read_bytes.saturating_sub(prev.read_bytes);
-    let write_delta = current.write_bytes.saturating_sub(prev.write_bytes);
-
-    IoRate {
-        read_bytes_per_sec: read_delta as f64 / elapsed_secs,
-        write_bytes_per_sec: write_delta as f64 / elapsed_secs,
-    }
-}
+pub use crate::metrics::{IoCounters, IoRate, IoRateCalculator, ProcessIoCounters};
 
 /// Get cumulative I/O counters for a process by PID.
 ///
@@ -141,7 +286,7 @@ pub fn get_io_counters(pid: u32) -> Result<IoCounters> {
     let mut counters = IO_COUNTERS::default();
     // SAFETY: GetProcessIoCounters requires a valid process HANDLE and a valid mutable pointer
     // to an IO_COUNTERS struct.
-    unsafe { GetProcessIoCounters(handle, &mut counters)? };
+    unsafe { GetProcessIoCounters(handle, &raw mut counters)? };
 
     Ok(IoCounters {
         read_bytes: counters.ReadTransferCount,
@@ -223,62 +368,10 @@ pub fn get_process_io_counters_by_pid(pid: u32) -> Option<ProcessIoCounters> {
 /// This is how Task Manager gets per-process working set with good coverage,
 /// and avoids per-PID OpenProcess calls.
 pub fn get_working_set_bytes_map() -> Result<HashMap<u32, u64>> {
-    let mut buffer_size: u32 = 1024 * 1024; // 1MB initial
-    let mut return_length: u32 = 0;
-
-    let buffer: Vec<u8> = loop {
-        let mut buffer = vec![0u8; buffer_size as usize];
-        // SAFETY: NtQuerySystemInformation writes up to `buffer_size` bytes into `buffer`.
-        // `buffer` is a valid, writable allocation of that size and `return_length` is valid.
-        let status = unsafe {
-            NtQuerySystemInformation(
-                SYSTEM_PROCESS_INFORMATION_CLASS,
-                buffer.as_mut_ptr() as *mut std::ffi::c_void,
-                buffer_size,
-                &mut return_length,
-            )
-        };
-
-        if status == STATUS_SUCCESS {
-            break buffer;
-        }
-        if status == STATUS_INFO_LENGTH_MISMATCH {
-            buffer_size = return_length.max(buffer_size.saturating_mul(2));
-            if buffer_size > 64 * 1024 * 1024 {
-                return Err(anyhow!(
-                    "SystemProcessInformation buffer too large ({} bytes)",
-                    buffer_size
-                ));
-            }
-            continue;
-        }
-
-        return Err(anyhow!(
-            "NtQuerySystemInformation(SystemProcessInformation) failed: 0x{:X}",
-            status.0
-        ));
-    };
-
-    let mut map = HashMap::new();
-    let mut offset: usize = 0;
-    while offset + mem::size_of::<SystemProcessInformation>() <= buffer.len() {
-        // SAFETY: SystemProcessInformation alignment and reading:
-        // - NtQuerySystemInformation returns properly aligned structures in the buffer
-        // - We validate that at least sizeof(SystemProcessInformation) remains in buffer
-        // - NextEntryOffset is verified to be within bounds before advancing offset
-        // - The buffer was allocated with sufficient size as determined by the OS
-        let spi = unsafe { &*(buffer.as_ptr().add(offset) as *const SystemProcessInformation) };
-
-        let pid = spi.unique_process_id.0 as usize as u32;
-        map.insert(pid, spi.working_set_size as u64);
-
-        if spi.next_entry_offset == 0 {
-            break;
-        }
-        offset = offset.saturating_add(spi.next_entry_offset as usize);
-    }
-
-    Ok(map)
+    Ok(query_system_processes()?
+        .into_iter()
+        .map(|e| (e.pid, e.working_set_bytes))
+        .collect())
 }
 
 /// Get kernel + user time for a process by PID (in 100-nanosecond units)
@@ -289,9 +382,8 @@ pub fn get_process_times_by_pid(pid: u32) -> Option<(u64, u64)> {
     }
 
     // SAFETY: OpenProcess requires a valid PID. On success it returns an owned process HANDLE.
-    let handle = match unsafe { OpenProcess(PROCESS_QUERY_INFORMATION, false, pid) } {
-        Ok(h) => h,
-        Err(_) => return None,
+    let Ok(handle) = (unsafe { OpenProcess(PROCESS_QUERY_INFORMATION, false, pid) }) else {
+        return None;
     };
 
     let guard = HandleGuard::new(handle);
@@ -312,7 +404,7 @@ fn get_process_memory(handle: HANDLE) -> Option<u64> {
     let success = unsafe {
         GetProcessMemoryInfo(
             handle,
-            &mut pmc,
+            &raw mut pmc,
             mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32,
         )
     };
@@ -334,7 +426,7 @@ fn get_process_private_bytes(handle: HANDLE) -> Option<u64> {
         GetProcessMemoryInfo(
             handle,
             // SAFETY: PROCESS_MEMORY_COUNTERS_EX begins with PROCESS_MEMORY_COUNTERS.
-            &mut pmc as *mut PROCESS_MEMORY_COUNTERS_EX as *mut PROCESS_MEMORY_COUNTERS,
+            (&raw mut pmc).cast::<PROCESS_MEMORY_COUNTERS>(),
             mem::size_of::<PROCESS_MEMORY_COUNTERS_EX>() as u32,
         )
     };
@@ -348,8 +440,8 @@ fn get_process_private_bytes(handle: HANDLE) -> Option<u64> {
 
 /// Convert FILETIME to u64 (100-nanosecond units since epoch)
 fn filetime_to_u64(ft: FILETIME) -> u64 {
-    let low = ft.dwLowDateTime as u64;
-    let high = (ft.dwHighDateTime as u64) << 32;
+    let low = u64::from(ft.dwLowDateTime);
+    let high = u64::from(ft.dwHighDateTime) << 32;
     low | high
 }
 
@@ -377,10 +469,10 @@ fn get_process_times(handle: HANDLE) -> Option<(u64, u64)> {
     let success = unsafe {
         GetProcessTimes(
             handle,
-            &mut creation_time,
-            &mut exit_time,
-            &mut kernel_time,
-            &mut user_time,
+            &raw mut creation_time,
+            &raw mut exit_time,
+            &raw mut kernel_time,
+            &raw mut user_time,
         )
     };
 
@@ -399,73 +491,19 @@ pub fn get_process_priority_class_by_pid(pid: u32) -> Option<u32> {
     }
 
     // SAFETY: OpenProcess requires a valid PID. On success it returns an owned process HANDLE.
-    let handle = match unsafe { OpenProcess(PROCESS_QUERY_INFORMATION, false, pid) } {
-        Ok(h) => h,
-        Err(_) => return None,
+    let Ok(handle) = (unsafe { OpenProcess(PROCESS_QUERY_INFORMATION, false, pid) }) else {
+        return None;
     };
 
     let guard = HandleGuard::new(handle);
     // SAFETY: GetPriorityClass requires a valid process HANDLE.
     let result = unsafe { GetPriorityClass(guard.raw()) };
     drop(guard);
-    if result == 0 {
-        None
-    } else {
-        Some(result)
-    }
+    if result == 0 { None } else { Some(result) }
 }
 
 pub fn get_process_cycle_time_by_pid(pid: u32) -> Option<u64> {
-    if pid == 0 {
-        return None;
-    }
-
-    // Use NtQuerySystemInformation to get cycle time from SystemProcessInformation
-    let buffer_size: u32 = 1024 * 1024; // 1MB initial
-    let mut return_length: u32 = 0;
-
-    let buffer: Vec<u8> = loop {
-        let mut buffer = vec![0u8; buffer_size as usize];
-        // SAFETY: NtQuerySystemInformation writes up to `buffer_size` bytes into `buffer`.
-        // `buffer` is a valid, writable allocation of that size and `return_length` is valid.
-        let status = unsafe {
-            NtQuerySystemInformation(
-                SYSTEM_PROCESS_INFORMATION_CLASS,
-                buffer.as_mut_ptr() as *mut std::ffi::c_void,
-                buffer_size,
-                &mut return_length,
-            )
-        };
-
-        if status == STATUS_SUCCESS {
-            break buffer;
-        }
-        if status == STATUS_INFO_LENGTH_MISMATCH {
-            let new_size = return_length.max(buffer_size.saturating_mul(2));
-            if new_size > 64 * 1024 * 1024 {
-                return None;
-            }
-            // buffer_size = new_size; but we need to loop
-            continue;
-        }
-        return None;
-    };
-
-    let mut offset: usize = 0;
-    while offset + mem::size_of::<SystemProcessInformation>() <= buffer.len() {
-        // SAFETY: We bounds-check the minimum header size and step by NextEntryOffset.
-        let spi = unsafe { &*(buffer.as_ptr().add(offset) as *const SystemProcessInformation) };
-        let current_pid = spi.unique_process_id.0 as usize as u32;
-        if current_pid == pid {
-            return Some(spi.cycle_time);
-        }
-        if spi.next_entry_offset == 0 {
-            break;
-        }
-        offset = offset.saturating_add(spi.next_entry_offset as usize);
-    }
-
-    None
+    system_process_entry(pid).map(|e| e.cycle_time)
 }
 
 pub fn get_process_memory_info_by_pid(pid: u32) -> Option<PROCESS_MEMORY_COUNTERS_EX> {
@@ -474,9 +512,8 @@ pub fn get_process_memory_info_by_pid(pid: u32) -> Option<PROCESS_MEMORY_COUNTER
     }
 
     // SAFETY: OpenProcess requires a valid PID. On success it returns an owned process HANDLE.
-    let handle = match unsafe { OpenProcess(PROCESS_QUERY_INFORMATION, false, pid) } {
-        Ok(h) => h,
-        Err(_) => return None,
+    let Ok(handle) = (unsafe { OpenProcess(PROCESS_QUERY_INFORMATION, false, pid) }) else {
+        return None;
     };
 
     let guard = HandleGuard::new(handle);
@@ -488,68 +525,17 @@ pub fn get_process_memory_info_by_pid(pid: u32) -> Option<PROCESS_MEMORY_COUNTER
     let success = unsafe {
         GetProcessMemoryInfo(
             guard.raw(),
-            &mut pmc as *mut PROCESS_MEMORY_COUNTERS_EX as *mut PROCESS_MEMORY_COUNTERS,
+            (&raw mut pmc).cast::<PROCESS_MEMORY_COUNTERS>(),
             mem::size_of::<PROCESS_MEMORY_COUNTERS_EX>() as u32,
         )
     };
 
     drop(guard);
-    if success.is_ok() {
-        Some(pmc)
-    } else {
-        None
-    }
+    if success.is_ok() { Some(pmc) } else { None }
 }
 
 pub fn get_process_handle_count_by_pid(pid: u32) -> Option<u32> {
-    if pid == 0 {
-        return None;
-    }
-
-    let buffer_size: u32 = 1024 * 1024; // 1MB initial
-    let mut return_length: u32 = 0;
-
-    let buffer: Vec<u8> = loop {
-        let mut buffer = vec![0u8; buffer_size as usize];
-        // SAFETY: NtQuerySystemInformation writes up to `buffer_size` bytes into `buffer`.
-        // `buffer` is a valid, writable allocation of that size and `return_length` is valid.
-        let status = unsafe {
-            NtQuerySystemInformation(
-                SYSTEM_PROCESS_INFORMATION_CLASS,
-                buffer.as_mut_ptr() as *mut std::ffi::c_void,
-                buffer_size,
-                &mut return_length,
-            )
-        };
-
-        if status == STATUS_SUCCESS {
-            break buffer;
-        }
-        if status == STATUS_INFO_LENGTH_MISMATCH {
-            let new_size = return_length.max(buffer_size.saturating_mul(2));
-            if new_size > 64 * 1024 * 1024 {
-                return None;
-            }
-            continue;
-        }
-        return None;
-    };
-
-    let mut offset: usize = 0;
-    while offset + mem::size_of::<SystemProcessInformation>() <= buffer.len() {
-        // SAFETY: We bounds-check the minimum header size and step by NextEntryOffset.
-        let spi = unsafe { &*(buffer.as_ptr().add(offset) as *const SystemProcessInformation) };
-        let current_pid = spi.unique_process_id.0 as usize as u32;
-        if current_pid == pid {
-            return Some(spi.handle_count);
-        }
-        if spi.next_entry_offset == 0 {
-            break;
-        }
-        offset = offset.saturating_add(spi.next_entry_offset as usize);
-    }
-
-    None
+    system_process_entry(pid).map(|e| e.handle_count)
 }
 
 pub fn get_process_gdi_handles_by_pid(pid: u32) -> Option<u32> {
@@ -558,9 +544,8 @@ pub fn get_process_gdi_handles_by_pid(pid: u32) -> Option<u32> {
     }
 
     // SAFETY: OpenProcess requires a valid PID. On success it returns an owned process HANDLE.
-    let handle = match unsafe { OpenProcess(PROCESS_QUERY_INFORMATION, false, pid) } {
-        Ok(h) => h,
-        Err(_) => return None,
+    let Ok(handle) = (unsafe { OpenProcess(PROCESS_QUERY_INFORMATION, false, pid) }) else {
+        return None;
     };
 
     let guard = HandleGuard::new(handle);
@@ -568,11 +553,7 @@ pub fn get_process_gdi_handles_by_pid(pid: u32) -> Option<u32> {
     let count = unsafe { GetGuiResources(guard.raw(), GR_GDIOBJECTS) };
     drop(guard);
 
-    if count > 0 {
-        Some(count)
-    } else {
-        None
-    }
+    if count > 0 { Some(count) } else { None }
 }
 
 pub fn get_process_user_handles_by_pid(pid: u32) -> Option<u32> {
@@ -581,9 +562,8 @@ pub fn get_process_user_handles_by_pid(pid: u32) -> Option<u32> {
     }
 
     // SAFETY: OpenProcess requires a valid PID. On success it returns an owned process HANDLE.
-    let handle = match unsafe { OpenProcess(PROCESS_QUERY_INFORMATION, false, pid) } {
-        Ok(h) => h,
-        Err(_) => return None,
+    let Ok(handle) = (unsafe { OpenProcess(PROCESS_QUERY_INFORMATION, false, pid) }) else {
+        return None;
     };
 
     let guard = HandleGuard::new(handle);
@@ -591,11 +571,7 @@ pub fn get_process_user_handles_by_pid(pid: u32) -> Option<u32> {
     let count = unsafe { GetGuiResources(guard.raw(), GR_USEROBJECTS) };
     drop(guard);
 
-    if count > 0 {
-        Some(count)
-    } else {
-        None
-    }
+    if count > 0 { Some(count) } else { None }
 }
 
 #[cfg(test)]
@@ -603,50 +579,38 @@ mod tests {
     use super::*;
 
     #[test]
-    fn compute_io_rate_uses_saturating_sub() {
-        let prev = IoCounters {
-            read_bytes: 100,
-            write_bytes: 100,
-            other_bytes: 0,
-            read_ops: 0,
-            write_ops: 0,
-            other_ops: 0,
-        };
-        let current = IoCounters {
-            read_bytes: 50,
-            write_bytes: 90,
-            other_bytes: 0,
-            read_ops: 0,
-            write_ops: 0,
-            other_ops: 0,
-        };
-
-        let rate = compute_io_rate(&prev, &current, 1.0);
-        assert_eq!(rate.read_bytes_per_sec, 0.0);
-        assert_eq!(rate.write_bytes_per_sec, 0.0);
+    #[cfg(target_pointer_width = "64")]
+    fn system_process_information_matches_documented_x64_layout() {
+        assert_eq!(
+            mem::offset_of!(SystemProcessInformation, unique_process_id),
+            80
+        );
+        assert_eq!(mem::offset_of!(SystemProcessInformation, handle_count), 96);
+        assert_eq!(
+            mem::offset_of!(SystemProcessInformation, working_set_size),
+            144
+        );
+        assert_eq!(
+            mem::offset_of!(SystemProcessInformation, private_page_count),
+            200
+        );
+        assert_eq!(
+            mem::offset_of!(SystemProcessInformation, read_transfer_count),
+            232
+        );
+        assert_eq!(mem::size_of::<SystemProcessInformation>(), 256);
     }
 
     #[test]
-    fn compute_io_rate_scales_by_elapsed() {
-        let prev = IoCounters {
-            read_bytes: 0,
-            write_bytes: 0,
-            other_bytes: 0,
-            read_ops: 0,
-            write_ops: 0,
-            other_ops: 0,
-        };
-        let current = IoCounters {
-            read_bytes: 1000,
-            write_bytes: 500,
-            other_bytes: 0,
-            read_ops: 0,
-            write_ops: 0,
-            other_ops: 0,
-        };
-
-        let rate = compute_io_rate(&prev, &current, 2.0);
-        assert_eq!(rate.read_bytes_per_sec, 500.0);
-        assert_eq!(rate.write_bytes_per_sec, 250.0);
+    fn query_system_processes_finds_this_process() {
+        let me = std::process::id();
+        let entries = query_system_processes().expect("SystemProcessInformation query");
+        let entry = entries
+            .iter()
+            .find(|e| e.pid == me)
+            .expect("own pid listed");
+        assert!(entry.thread_count >= 1);
+        assert!(entry.working_set_bytes > 0);
+        assert_eq!(system_process_entry(me).map(|e| e.pid), Some(me));
     }
 }

@@ -1,5 +1,6 @@
 //! Process enumeration functionality
 
+#[cfg(windows)]
 use anyhow::Result;
 
 use crate::SignatureInfo;
@@ -27,19 +28,28 @@ pub struct Process {
 
     /// Digital signature information
     pub signature: Option<SignatureInfo>,
+
+    /// Creation time as a Windows FILETIME (100 ns ticks since 1601), when known.
+    ///
+    /// Windows recycles PIDs, so `(pid, create_time)` is what identifies one process
+    /// instance: actions confirmed against a snapshot use it to make sure they still act on
+    /// the process the user saw.
+    pub create_time: Option<u64>,
 }
 
 /// Get a list of all running processes
+#[cfg(windows)]
 pub fn enumerate_processes() -> Result<Vec<Process>> {
     crate::win::process_enum::enumerate_processes()
 }
 
 /// Get the total count of running processes
+#[cfg(windows)]
 pub fn get_process_count() -> Result<usize> {
     Ok(enumerate_processes()?.len())
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 mod tests {
     use super::*;
 

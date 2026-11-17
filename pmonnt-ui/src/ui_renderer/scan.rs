@@ -1,4 +1,4 @@
-﻿use crate::ui_state::YaraScanState;
+use crate::ui_state::YaraScanState;
 use eframe::egui;
 use std::sync::Arc;
 
@@ -39,7 +39,7 @@ pub fn render_scan_panel(
 
     ui.horizontal(|ui| {
         ui.label("Min severity:");
-        egui::ComboBox::from_id_source("yara_min_severity")
+        egui::ComboBox::from_id_salt("yara_min_severity")
             .selected_text(format!("{:?}", yara_state.min_severity))
             .show_ui(ui, |ui| {
                 ui.selectable_value(
@@ -66,7 +66,7 @@ pub fn render_scan_panel(
     });
 
     if let Some(error) = &yara_state.error {
-        ui.colored_label(egui::Color32::RED, format!("Error: {}", error));
+        ui.colored_label(egui::Color32::RED, format!("Error: {error}"));
     }
 
     if yara_state.scanning {
@@ -95,6 +95,9 @@ pub fn render_scan_panel(
             yara_state.error = Some("No YARA rules loaded. Refresh rules first.".to_string());
         } else if let Some(engine) = &yara_state.yara_engine {
             yara_state.start_scan(pid, Arc::clone(engine));
+        } else if yara_state.engine_building() {
+            yara_state.error =
+                Some("YARA rules are still compiling; try again shortly.".to_string());
         } else {
             yara_state.error = Some("No YARA engine available".to_string());
         }
@@ -204,28 +207,26 @@ pub fn render_scan_panel(
                 yara_state.refresh_threatfox_rules(tf_key);
             }
 
-            if ui.button("Local file").clicked() {
-                if let Some(path) = rfd::FileDialog::new()
+            if ui.button("Local file").clicked()
+                && let Some(path) = rfd::FileDialog::new()
                     .add_filter("YARA rules", &["yar", "yara"])
                     .add_filter("All files", &["*"])
                     .pick_file()
-                {
-                    yara_state.load_local_file(path);
-                }
+            {
+                yara_state.load_local_file(path);
             }
         });
 
         let (yaraify_count, threatfox_count, local_count) = yara_state.rule_source_counts();
         ui.label(format!(
-            "Sources: {} YARAify | {} ThreatFox | {} Local",
-            yaraify_count, threatfox_count, local_count
+            "Sources: {yaraify_count} YARAify | {threatfox_count} ThreatFox | {local_count} Local"
         ));
 
         ui.collapsing("Rule sources", |ui| {
             let rm = yara_state
                 .rule_manager
                 .lock()
-                .unwrap_or_else(|e| e.into_inner());
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             for rule in rm.rules() {
                 ui.horizontal(|ui| {
                     let icon = match &rule.source {

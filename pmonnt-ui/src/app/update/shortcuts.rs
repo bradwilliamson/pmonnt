@@ -9,7 +9,7 @@ impl PMonNTApp {
         input: &egui::InputState,
     ) {
         // Handle global keyboard shortcuts for filter (one-shot pattern to prevent infinite loop)
-        let filter_id = egui::Id::new("process_filter_input");
+        let filter_id = egui::Id::unique("process_filter_input");
         let filter_has_focus = ctx.memory(|m| m.has_focus(filter_id));
 
         // Detect "/" key press event-based (not frame-based) - only when NOT already focused

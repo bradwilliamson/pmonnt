@@ -89,7 +89,15 @@ impl YaraEngine {
     }
 
     pub fn from_rule_manager(manager: &RuleManager) -> Result<Self, EngineError> {
-        let (engine, skipped) = Self::compile_rules_with_fallback(manager.rules())?;
+        Self::from_rules(manager.rules())
+    }
+
+    /// Compile an engine from a snapshot of rules, skipping ones that fail to compile.
+    ///
+    /// Compiling a large rule set takes a while, so callers holding the rule manager behind a
+    /// lock should copy the rules out and compile without holding it.
+    pub fn from_rules(rules: &[crate::yara::rules::YaraRule]) -> Result<Self, EngineError> {
+        let (engine, skipped) = Self::compile_rules_with_fallback(rules)?;
         if !skipped.is_empty() {
             log::info!(
                 "Compiled {} rules successfully, skipped {} with unsupported modules",
@@ -211,7 +219,7 @@ impl YaraEngine {
 }
 
 /// Helper for cleaner severity parsing logic.
-fn parse_severity(val: &yara_x::MetaValue) -> Severity {
+fn parse_severity(val: &yara_x::MetaValue<'_>) -> Severity {
     match val {
         yara_x::MetaValue::String(s) => match s.to_ascii_lowercase().as_str() {
             "low" | "info" | "informational" => Severity::Low,

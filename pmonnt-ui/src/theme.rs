@@ -82,12 +82,12 @@ pub(crate) fn apply_theme(ctx: &egui::Context, theme: Theme) {
             visuals.window_shadow = egui::epaint::Shadow::NONE;
 
             // Reduce rounding to keep the terminal vibe.
-            visuals.window_rounding = egui::Rounding::same(0.0);
-            visuals.widgets.noninteractive.rounding = egui::Rounding::same(0.0);
-            visuals.widgets.inactive.rounding = egui::Rounding::same(0.0);
-            visuals.widgets.hovered.rounding = egui::Rounding::same(0.0);
-            visuals.widgets.active.rounding = egui::Rounding::same(0.0);
-            visuals.widgets.open.rounding = egui::Rounding::same(0.0);
+            visuals.window_corner_radius = egui::CornerRadius::same(0);
+            visuals.widgets.noninteractive.corner_radius = egui::CornerRadius::same(0);
+            visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(0);
+            visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(0);
+            visuals.widgets.active.corner_radius = egui::CornerRadius::same(0);
+            visuals.widgets.open.corner_radius = egui::CornerRadius::same(0);
         }
         Theme::HighContrast => {
             visuals.panel_fill = egui::Color32::BLACK;
@@ -126,7 +126,7 @@ pub(crate) fn apply_theme(ctx: &egui::Context, theme: Theme) {
 
     ctx.set_visuals(visuals);
 
-    let mut style = (*ctx.style()).clone();
+    let mut style = (*ctx.global_style()).clone();
     match theme {
         Theme::HighContrast => {
             style.spacing.item_spacing = egui::vec2(10.0, 8.0);
@@ -174,23 +174,19 @@ pub(crate) fn apply_theme(ctx: &egui::Context, theme: Theme) {
             let heading_sz = style
                 .text_styles
                 .get(&TextStyle::Heading)
-                .map(|f| f.size)
-                .unwrap_or(20.0);
+                .map_or(20.0, |f| f.size);
             let body_sz = style
                 .text_styles
                 .get(&TextStyle::Body)
-                .map(|f| f.size)
-                .unwrap_or(14.0);
+                .map_or(14.0, |f| f.size);
             let button_sz = style
                 .text_styles
                 .get(&TextStyle::Button)
-                .map(|f| f.size)
-                .unwrap_or(body_sz);
+                .map_or(body_sz, |f| f.size);
             let small_sz = style
                 .text_styles
                 .get(&TextStyle::Small)
-                .map(|f| f.size)
-                .unwrap_or((body_sz - 1.0).max(10.0));
+                .map_or_else(|| (body_sz - 1.0).max(10.0), |f| f.size);
 
             style.text_styles.insert(
                 TextStyle::Heading,
@@ -213,5 +209,5 @@ pub(crate) fn apply_theme(ctx: &egui::Context, theme: Theme) {
             // Keep existing style.
         }
     }
-    ctx.set_style(style);
+    ctx.set_global_style(style);
 }

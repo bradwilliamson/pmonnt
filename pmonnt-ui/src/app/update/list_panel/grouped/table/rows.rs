@@ -132,11 +132,11 @@ fn render_count_badge(ui: &mut egui::Ui, total: usize, match_count: usize) {
     } else {
         total.to_string()
     };
-    let frame = egui::Frame::none()
+    let frame = egui::Frame::NONE
         .fill(ui.visuals().faint_bg_color)
         .stroke(ui.visuals().widgets.noninteractive.bg_stroke)
-        .rounding(egui::Rounding::same(6.0))
-        .inner_margin(egui::Margin::symmetric(6.0, 2.0));
+        .corner_radius(egui::CornerRadius::same(6))
+        .inner_margin(egui::Margin::symmetric(6, 2));
     frame.show(ui, |ui| {
         ui.label(egui::RichText::new(text).small());
     });
@@ -190,7 +190,7 @@ fn leader_for_group(app: &PMonNTApp, group: &GroupedRow) -> Option<(u32, String,
 
     for &pid in &group.member_pids {
         let value = match sort_metric {
-            GroupSort::CPU => app.cpu_memory_data.get(&pid).map(|(v, _)| *v as f64),
+            GroupSort::CPU => app.cpu_memory_data.get(&pid).map(|(v, _)| f64::from(*v)),
             GroupSort::Memory => app
                 .cpu_memory_data
                 .get(&pid)
@@ -199,20 +199,16 @@ fn leader_for_group(app: &PMonNTApp, group: &GroupedRow) -> Option<(u32, String,
                 .io_rate_by_pid
                 .get(&pid)
                 .map(|r| r.read_bytes_per_sec + r.write_bytes_per_sec),
-            GroupSort::GPU => app.gpu_data.get(&pid).map(|(pct, _, _, _)| *pct as f64),
+            GroupSort::GPU => app.gpu_data.get(&pid).map(|(pct, _, _, _)| f64::from(*pct)),
             GroupSort::GPUMemory => app.gpu_data.get(&pid).map(|(_, _, _, total)| *total as f64),
-            GroupSort::Handles => app.handle_cache.get(pid).map(|h| h.total as f64),
+            GroupSort::Handles => app.handle_cache.get(pid).map(|h| f64::from(h.total)),
             GroupSort::Threads => app.global_thread_counts.get(&pid).map(|c| *c as f64),
-            GroupSort::PID => Some(pid as f64),
+            GroupSort::PID => Some(f64::from(pid)),
             GroupSort::Name | GroupSort::VerifiedSigner => None,
         }?;
 
         let display = format_leader_value(sort_metric, pid, app)?;
-        if best
-            .as_ref()
-            .map(|(best_v, _, _)| value > *best_v)
-            .unwrap_or(true)
-        {
+        if best.as_ref().is_none_or(|(best_v, _, _)| value > *best_v) {
             best = Some((value, pid, display));
         }
     }
@@ -256,8 +252,7 @@ pub(super) fn render_rows(
                 group.is_selected
                     || app
                         .selected_pid
-                        .map(|p| group.member_pids.contains(&p))
-                        .unwrap_or(false)
+                        .is_some_and(|p| group.member_pids.contains(&p))
             }
             DisplayRow::Child { pid, .. } => app.selected_pid == Some(*pid),
         };
@@ -278,11 +273,11 @@ pub(super) fn render_rows(
                                     let glyph = if is_expanded { "v" } else { ">" };
 
                                     ui.push_id(format!("group_header:{group_key}"), |ui| {
-                                        let inner = egui::Frame::none()
+                                        let inner = egui::Frame::NONE
                                             .fill(ui.visuals().faint_bg_color)
                                             .stroke(ui.visuals().widgets.noninteractive.bg_stroke)
-                                            .rounding(egui::Rounding::same(6.0))
-                                            .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                                            .corner_radius(egui::CornerRadius::same(6))
+                                            .inner_margin(egui::Margin::symmetric(6, 2))
                                             .show(ui, |ui| {
                                                 ui.horizontal(|ui| {
                                                     let chevron = ui
@@ -594,8 +589,7 @@ pub(super) fn render_rows(
                                         Some(pid) => app
                                             .gpu_data
                                             .get(&pid)
-                                            .map(|(pct, _, _, _)| *pct)
-                                            .unwrap_or(0.0),
+                                            .map_or(0.0, |(pct, _, _, _)| *pct),
                                     };
 
                                     if value > 0.0 {
@@ -622,8 +616,7 @@ pub(super) fn render_rows(
                                         Some(pid) => app
                                             .gpu_data
                                             .get(&pid)
-                                            .map(|(_, ded, _, _)| *ded)
-                                            .unwrap_or(0),
+                                            .map_or(0, |(_, ded, _, _)| *ded),
                                     };
                                     if bytes > 0 {
                                         ui.label(
@@ -649,8 +642,7 @@ pub(super) fn render_rows(
                                         Some(pid) => app
                                             .gpu_data
                                             .get(&pid)
-                                            .map(|(_, _, shr, _)| *shr)
-                                            .unwrap_or(0),
+                                            .map_or(0, |(_, _, shr, _)| *shr),
                                     };
                                     if bytes > 0 {
                                         ui.label(
@@ -676,8 +668,7 @@ pub(super) fn render_rows(
                                         Some(pid) => app
                                             .gpu_data
                                             .get(&pid)
-                                            .map(|(_, _, _, total)| *total)
-                                            .unwrap_or(0),
+                                            .map_or(0, |(_, _, _, total)| *total),
                                     };
                                     if bytes > 0 {
                                         ui.label(
@@ -711,7 +702,7 @@ pub(super) fn render_rows(
                                                     app.right_tab = RightTab::Handles;
                                                 }
                                             } else {
-                                                let text = format!("{} (partial)", formatted);
+                                                let text = format!("{formatted} (partial)");
                                                 let response = ui.selectable_label(
                                                     false,
                                                     egui::RichText::new(text)
@@ -884,7 +875,7 @@ pub(super) fn render_rows(
                 .clicked()
             {
                 app.request_mini_dump(menu_pid, menu_name.clone());
-                ui.close_menu();
+                ui.close();
             }
 
             if ui
@@ -892,21 +883,21 @@ pub(super) fn render_rows(
                 .clicked()
             {
                 app.request_full_dump_with_confirm(menu_pid, menu_name.clone());
-                ui.close_menu();
+                ui.close();
             }
 
             // Optional post-create actions
             if let Some(path) = app.last_dump_path() {
                 ui.separator();
                 if ui.button("Copy dump path").clicked() {
-                    ui.output_mut(|o| o.copied_text = path.to_string_lossy().to_string());
-                    ui.close_menu();
+                    ui.copy_text(path.to_string_lossy().to_string());
+                    ui.close();
                 }
                 if ui.button("Open dump folder").clicked() {
                     if let Some(parent) = path.parent() {
                         let _ = std::process::Command::new("explorer").arg(parent).spawn();
                     }
-                    ui.close_menu();
+                    ui.close();
                 }
             }
 
@@ -915,9 +906,9 @@ pub(super) fn render_rows(
             // Existing workflow actions
             if ui.button("Copy path").clicked() {
                 if let Some(path) = app.pid_to_image_path.get(&menu_pid) {
-                    ui.output_mut(|o| o.copied_text = path.clone());
+                    ui.copy_text(path.clone());
                 }
-                ui.close_menu();
+                ui.close();
             }
             if ui.button("Open containing folder").clicked() {
                 if let Some(path) = app.pid_to_image_path.get(&menu_pid) {
@@ -926,12 +917,12 @@ pub(super) fn render_rows(
                         .arg(path)
                         .spawn();
                 }
-                ui.close_menu();
+                ui.close();
             }
             if ui.button("Copy SHA-256 (computes if needed)").clicked() {
                 if app.selected_pid == Some(menu_pid) {
-                    if let Some(sha) = &app.mb_ui_state.current_process_sha {
-                        ui.output_mut(|o| o.copied_text = sha.clone());
+                    if let Some(sha) = app.selected_sha_for(menu_pid) {
+                        ui.copy_text(sha.to_string());
                     } else {
                         app.pending_copy_sha_pid = Some(menu_pid);
                     }
@@ -939,33 +930,33 @@ pub(super) fn render_rows(
                     app.selected_pid = Some(menu_pid);
                     app.pending_copy_sha_pid = Some(menu_pid);
                 }
-                ui.close_menu();
+                ui.close();
             }
 
             ui.separator();
             if ui.button("Kill Process (Del)").clicked() {
                 app.open_kill_dialog(menu_pid, false);
-                ui.close_menu();
+                ui.close();
             }
             if ui.button("Kill Process Tree (Shift+Del)").clicked() {
                 app.open_kill_dialog(menu_pid, true);
-                ui.close_menu();
+                ui.close();
             }
 
             ui.separator();
             if ui.button("Set Priority...").clicked() {
                 app.open_priority_dialog(menu_pid);
-                ui.close_menu();
+                ui.close();
             }
             if ui.button("Set Affinity...").clicked() {
                 app.open_affinity_dialog(menu_pid);
-                ui.close_menu();
+                ui.close();
             }
 
             ui.separator();
             if ui.button("Services...").clicked() {
                 app.open_service_dialog(menu_pid);
-                ui.close_menu();
+                ui.close();
             }
         });
 
@@ -980,8 +971,7 @@ pub(super) fn render_rows(
                     !(*is_expanded
                         && app
                             .selected_pid
-                            .map(|p| group.member_pids.contains(&p))
-                            .unwrap_or(false))
+                            .is_some_and(|p| group.member_pids.contains(&p)))
                 } else {
                     false
                 }
@@ -1036,12 +1026,6 @@ mod tests {
             gpu_total_bytes: 0,
             member_pids,
             image_path: None,
-            command_line: None,
-            company_name: None,
-            file_description: None,
-            integrity_level: None,
-            user: None,
-            session_id: None,
         }
     }
 
@@ -1090,30 +1074,36 @@ mod tests {
         hidden.remove(&ProcessColumnId::Leader);
         app.process_columns_hidden = hidden;
 
-        app.current_snapshot.processes = vec![
-            process::Process {
-                pid: 1,
-                name: "test.exe".to_string(),
-                ppid: None,
-                cpu_percent: None,
-                memory_bytes: None,
-                gpu_percent: None,
-                gpu_memory_bytes: None,
-                path: None,
-                signature: None,
-            },
-            process::Process {
-                pid: 2,
-                name: "test.exe".to_string(),
-                ppid: None,
-                cpu_percent: None,
-                memory_bytes: None,
-                gpu_percent: None,
-                gpu_memory_bytes: None,
-                path: None,
-                signature: None,
-            },
-        ];
+        app.current_snapshot =
+            std::sync::Arc::new(pmonnt_core::snapshot::ProcessSnapshot::from_processes(
+                vec![
+                    process::Process {
+                        pid: 1,
+                        name: "test.exe".to_string(),
+                        ppid: None,
+                        cpu_percent: None,
+                        memory_bytes: None,
+                        gpu_percent: None,
+                        gpu_memory_bytes: None,
+                        path: None,
+                        signature: None,
+                        create_time: None,
+                    },
+                    process::Process {
+                        pid: 2,
+                        name: "test.exe".to_string(),
+                        ppid: None,
+                        cpu_percent: None,
+                        memory_bytes: None,
+                        gpu_percent: None,
+                        gpu_memory_bytes: None,
+                        path: None,
+                        signature: None,
+                        create_time: None,
+                    },
+                ],
+                std::time::Instant::now(),
+            ));
         app.cpu_memory_data.insert(1, (0.0, Some(1_000_000)));
         app.cpu_memory_data.insert(2, (0.0, Some(2_000_000)));
 
@@ -1126,8 +1116,9 @@ mod tests {
             ..Default::default()
         };
 
-        let _output = ctx.run(input, |ctx| {
-            CentralPanel::default().show(ctx, |ui| {
+        let _output = crate::util::run_headless(&ctx, input, |root_ui| {
+            let ctx = &root_ui.ctx().clone();
+            CentralPanel::default().show(root_ui, |ui| {
                 let policy = process_table_policy(ui.available_width());
                 super::super::render_grouped_table(
                     &mut app, ctx, ui, 20.0, policy, &rows, &mut false,
@@ -1163,17 +1154,22 @@ mod tests {
         hidden.remove(&ProcessColumnId::Leader);
         app.process_columns_hidden = hidden;
 
-        app.current_snapshot.processes = vec![process::Process {
-            pid: 1,
-            name: "nodata.exe".to_string(),
-            ppid: None,
-            cpu_percent: None,
-            memory_bytes: None,
-            gpu_percent: None,
-            gpu_memory_bytes: None,
-            path: None,
-            signature: None,
-        }];
+        app.current_snapshot =
+            std::sync::Arc::new(pmonnt_core::snapshot::ProcessSnapshot::from_processes(
+                vec![process::Process {
+                    pid: 1,
+                    name: "nodata.exe".to_string(),
+                    ppid: None,
+                    cpu_percent: None,
+                    memory_bytes: None,
+                    gpu_percent: None,
+                    gpu_memory_bytes: None,
+                    path: None,
+                    signature: None,
+                    create_time: None,
+                }],
+                std::time::Instant::now(),
+            ));
 
         let rows = vec![group("nodata.exe", vec![1], true)];
 
@@ -1184,8 +1180,9 @@ mod tests {
             ..Default::default()
         };
 
-        let output = ctx.run(input, |ctx| {
-            CentralPanel::default().show(ctx, |ui| {
+        let output = crate::util::run_headless(&ctx, input, |root_ui| {
+            let ctx = &root_ui.ctx().clone();
+            CentralPanel::default().show(root_ui, |ui| {
                 let policy = process_table_policy(ui.available_width());
                 super::super::render_grouped_table(
                     &mut app, ctx, ui, 20.0, policy, &rows, &mut false,
@@ -1274,8 +1271,9 @@ mod tests {
             ..Default::default()
         };
 
-        let _ = ctx.run(input, |ctx| {
-            CentralPanel::default().show(ctx, |ui| {
+        let _ = crate::util::run_headless(&ctx, input, |root_ui| {
+            let ctx = &root_ui.ctx().clone();
+            CentralPanel::default().show(root_ui, |ui| {
                 let policy = process_table_policy(ui.available_width());
                 super::super::render_grouped_table(
                     &mut app, ctx, ui, 20.0, policy, &rows, &mut false,
@@ -1311,17 +1309,22 @@ mod tests {
         app.process_columns_order = ProcessColumnId::default_order();
         app.selected_pid = Some(1); // Select the group
 
-        app.current_snapshot.processes = vec![process::Process {
-            pid: 1,
-            name: "test.exe".to_string(),
-            ppid: None,
-            cpu_percent: None,
-            memory_bytes: None,
-            gpu_percent: None,
-            gpu_memory_bytes: None,
-            path: None,
-            signature: None,
-        }];
+        app.current_snapshot =
+            std::sync::Arc::new(pmonnt_core::snapshot::ProcessSnapshot::from_processes(
+                vec![process::Process {
+                    pid: 1,
+                    name: "test.exe".to_string(),
+                    ppid: None,
+                    cpu_percent: None,
+                    memory_bytes: None,
+                    gpu_percent: None,
+                    gpu_memory_bytes: None,
+                    path: None,
+                    signature: None,
+                    create_time: None,
+                }],
+                std::time::Instant::now(),
+            ));
 
         let rows = vec![group("test.exe", vec![1], true)];
 
@@ -1332,8 +1335,9 @@ mod tests {
             ..Default::default()
         };
 
-        let _ = ctx.run(input, |ctx| {
-            CentralPanel::default().show(ctx, |ui| {
+        let _ = crate::util::run_headless(&ctx, input, |root_ui| {
+            let ctx = &root_ui.ctx().clone();
+            CentralPanel::default().show(root_ui, |ui| {
                 let policy = process_table_policy(ui.available_width());
                 super::super::render_grouped_table(
                     &mut app, ctx, ui, 20.0, policy, &rows, &mut false,
@@ -1379,17 +1383,22 @@ mod tests {
         app.process_columns_order = ProcessColumnId::default_order();
         app.selected_pid = Some(42); // Select by PID
 
-        app.current_snapshot.processes = vec![process::Process {
-            pid: 42,
-            name: "secure.exe".to_string(),
-            ppid: None,
-            cpu_percent: None,
-            memory_bytes: None,
-            gpu_percent: None,
-            gpu_memory_bytes: None,
-            path: None,
-            signature: None,
-        }];
+        app.current_snapshot =
+            std::sync::Arc::new(pmonnt_core::snapshot::ProcessSnapshot::from_processes(
+                vec![process::Process {
+                    pid: 42,
+                    name: "secure.exe".to_string(),
+                    ppid: None,
+                    cpu_percent: None,
+                    memory_bytes: None,
+                    gpu_percent: None,
+                    gpu_memory_bytes: None,
+                    path: None,
+                    signature: None,
+                    create_time: None,
+                }],
+                std::time::Instant::now(),
+            ));
 
         let rows = vec![group("secure.exe", vec![42], true)];
 
@@ -1400,8 +1409,9 @@ mod tests {
             ..Default::default()
         };
 
-        let _ = ctx.run(input, |ctx| {
-            CentralPanel::default().show(ctx, |ui| {
+        let _ = crate::util::run_headless(&ctx, input, |root_ui| {
+            let ctx = &root_ui.ctx().clone();
+            CentralPanel::default().show(root_ui, |ui| {
                 let policy = process_table_policy(ui.available_width());
                 super::super::render_grouped_table(
                     &mut app, ctx, ui, 20.0, policy, &rows, &mut false,
@@ -1443,17 +1453,22 @@ mod tests {
         app.process_columns_hidden = ProcessColumnId::default_hidden().into_iter().collect();
 
         let test_pid: u32 = 12345;
-        app.current_snapshot.processes = vec![process::Process {
-            pid: test_pid,
-            name: "doubleclick_test.exe".to_string(),
-            ppid: None,
-            cpu_percent: None,
-            memory_bytes: None,
-            gpu_percent: None,
-            gpu_memory_bytes: None,
-            path: None,
-            signature: None,
-        }];
+        app.current_snapshot =
+            std::sync::Arc::new(pmonnt_core::snapshot::ProcessSnapshot::from_processes(
+                vec![process::Process {
+                    pid: test_pid,
+                    name: "doubleclick_test.exe".to_string(),
+                    ppid: None,
+                    cpu_percent: None,
+                    memory_bytes: None,
+                    gpu_percent: None,
+                    gpu_memory_bytes: None,
+                    path: None,
+                    signature: None,
+                    create_time: None,
+                }],
+                std::time::Instant::now(),
+            ));
 
         let rows = vec![group("doubleclick_test.exe", vec![test_pid], false)];
 
@@ -1487,8 +1502,9 @@ mod tests {
             ..Default::default()
         };
 
-        let _ = ctx.run(input, |ctx| {
-            CentralPanel::default().show(ctx, |ui| {
+        let _ = crate::util::run_headless(&ctx, input, |root_ui| {
+            let ctx = &root_ui.ctx().clone();
+            CentralPanel::default().show(root_ui, |ui| {
                 let policy = process_table_policy(ui.available_width());
                 super::super::render_grouped_table(
                     &mut app, ctx, ui, 20.0, policy, &rows, &mut false,
