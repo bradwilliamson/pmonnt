@@ -2,7 +2,8 @@ use eframe::egui;
 
 use crate::app::PMonNTApp;
 use crate::process_table::ProcessTablePolicy;
-use pmonnt_core::view::build_grouped_rows;
+use pmonnt_core::snapshot::ProcessSnapshot;
+use pmonnt_core::view::{GroupedOptions, build_grouped_rows};
 
 mod keyboard;
 mod selection;
@@ -17,17 +18,20 @@ impl PMonNTApp {
         input: &egui::InputState,
         row_height: f32,
         policy: ProcessTablePolicy,
+        snapshot: &ProcessSnapshot,
         selection_changed: &mut bool,
     ) {
         // Build grouped rows (flat, Task Manager style)
         let filter_lower = self.filter_text.to_lowercase();
         let grouped_rows = build_grouped_rows(
-            &self.current_snapshot.processes,
-            self.selected_pid,
-            &filter_lower,
-            self.group_sort,
-            self.sort_desc,
-            self.group_sort_by_leader,
+            snapshot,
+            &GroupedOptions {
+                selected_pid: self.selected_pid,
+                filter_text_lower: &filter_lower,
+                sort: self.group_sort,
+                sort_desc: self.sort_desc,
+                sort_by_leader: self.group_sort_by_leader,
+            },
             &self.pid_to_image_path,
             &self.row_metrics(),
         );

@@ -73,9 +73,9 @@ pub(super) fn render_rows(
 
                             // Render label with optional bold for processes with children
                             let label_text = if item.has_children {
-                                egui::RichText::new(&item.label).strong()
+                                egui::RichText::new(&*item.label).strong()
                             } else {
-                                egui::RichText::new(&item.label)
+                                egui::RichText::new(&*item.label)
                             };
 
                             let response = if item.is_selected {
@@ -88,7 +88,7 @@ pub(super) fn render_rows(
                             label_response = Some(response);
                         });
 
-                        let response = label_response.unwrap_or_else(|| ui.label(&item.label));
+                        let response = label_response.unwrap_or_else(|| ui.label(&*item.label));
 
                         if is_selected_row && is_3270 {
                             let sel_fg = ui.style().visuals.panel_fill;
@@ -400,14 +400,14 @@ pub(super) fn render_rows(
                 .add_enabled(!dump_busy, egui::Button::new("Create minidump…"))
                 .clicked()
             {
-                app.request_mini_dump(item.pid, item.label.clone());
+                app.request_mini_dump(item.pid, item.label.to_string());
                 ui.close();
             }
             if ui
                 .add_enabled(!dump_busy, egui::Button::new("Create full dump…"))
                 .clicked()
             {
-                app.request_full_dump_with_confirm(item.pid, item.label.clone());
+                app.request_full_dump_with_confirm(item.pid, item.label.to_string());
                 ui.close();
             }
 
@@ -528,7 +528,7 @@ mod tests {
         ProcRow {
             pid,
             depth,
-            label: name.to_string(),
+            label: name.into(),
             has_children,
             is_expanded: false,
             is_selected,
@@ -569,7 +569,7 @@ mod tests {
         // Verify row structure is set up for 3270 readability:
         assert_eq!(rows_flat[0].pid, 200);
         assert!(rows_flat[0].is_selected);
-        assert_eq!(rows_flat[0].label, "svchost.exe");
+        assert_eq!(&*rows_flat[0].label, "svchost.exe");
 
         // In actual rendering context, apply_selected_text_color closure would
         // set override_text_color = Some(sel_fg) for each column, making text

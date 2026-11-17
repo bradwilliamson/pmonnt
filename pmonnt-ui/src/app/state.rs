@@ -10,7 +10,6 @@ use pmonnt_core::{
     hashing::HashComputer,
     local_cache::LocalCacheProvider,
     module::ModuleCache,
-    process,
     reputation_service::ReputationService,
     snapshot::ProcessSnapshot,
     thread::{ThreadCache, ThreadInfo},
@@ -282,14 +281,7 @@ pub(super) fn try_build_app() -> anyhow::Result<PMonNTApp> {
     let bg_worker = crate::background_worker::BackgroundWorker::new("pmonnt-ui-bg");
     let selection_hash_generation = Arc::new(std::sync::atomic::AtomicU64::new(0));
 
-    let current_snapshot = ProcessSnapshot::new().unwrap_or_default();
-    let mut process_tree: HashMap<Option<u32>, Vec<process::Process>> = HashMap::new();
-    for process in &current_snapshot.processes {
-        process_tree
-            .entry(process.ppid)
-            .or_default()
-            .push(process.clone());
-    }
+    let current_snapshot = Arc::new(ProcessSnapshot::new().unwrap_or_default());
 
     // Initialize reputation providers
     let cache_path = std::env::current_dir()
@@ -419,7 +411,6 @@ pub(super) fn try_build_app() -> anyhow::Result<PMonNTApp> {
         last_diff: None,
         exited_buffer: ExitedProcessBuffer::default(),
         last_snapshot_update: Instant::now(),
-        process_tree,
         token_cache: TokenCache::default(),
         thread_cache: ThreadCache::new(4),
         thread_prev: HashMap::new(),
@@ -443,6 +434,7 @@ pub(super) fn try_build_app() -> anyhow::Result<PMonNTApp> {
         filter_text: String::new(),
         last_filter_text_lower: String::new(),
         cached_visible_pids: None,
+        cached_visible_pids_snapshot: None,
         slash_focus_pending: false,
         expanded_pids: HashSet::new(),
         expanded_groups: HashSet::new(),

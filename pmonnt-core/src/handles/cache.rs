@@ -106,6 +106,14 @@ impl HandleCache {
         })
     }
 
+    /// All summaries if the cache is still fresh.
+    ///
+    /// Reads the clock once, so callers doing many lookups (sorting a process list) should
+    /// use this instead of calling [`Self::get`] per PID.
+    pub fn fresh_summaries(&self) -> Option<&HashMap<u32, HandleSummary>> {
+        (self.last_update.elapsed().as_secs() < self.ttl_secs).then_some(&self.summaries)
+    }
+
     /// Get cached summary if still fresh
     pub fn get(&self, pid: u32) -> Option<&HandleSummary> {
         if self.last_update.elapsed().as_secs() >= self.ttl_secs {

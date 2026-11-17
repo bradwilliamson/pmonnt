@@ -1,9 +1,8 @@
-use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::time::Instant;
 
 use eframe::egui;
 use pmonnt_core::diff::ProcessDiff;
-use pmonnt_core::process;
 
 use crate::app::{CompactView, Density, PMonNTApp};
 use crate::process_table::{ProcessColumnId, process_table_policy};
@@ -298,27 +297,11 @@ impl PMonNTApp {
                 }
             });
 
-            // Build PID-based data structures for clean tree rendering.
-            // NOTE: Clone the process list so we can pass references to the tree renderer
-            // without holding an immutable borrow of `self` across an `&mut self` call.
-            let processes = self.current_snapshot.processes.clone();
-            let pid_to_proc: HashMap<u32, &process::Process> =
-                processes.iter().map(|p| (p.pid, p)).collect();
+            // Process relationships (children, roots, groups) come from the snapshot's view
+            // index, built once per snapshot rather than every frame. Holding the Arc lets us
+            // borrow it across the `&mut self` calls below without copying the process list.
+            let snapshot = Arc::clone(&self.current_snapshot);
 
-            let pid_set: HashSet<u32> = pid_to_proc.keys().copied().collect();
-
-            // Build parent -> children map
-            let mut children_map: HashMap<u32, Vec<u32>> = HashMap::new();
-            for proc in &processes {
-                // Only add to children map when PPID is present and non-zero; roots are handled separately
-                if let Some(parent) = proc.ppid
-                    && parent != 0
-                {
-                    children_map.entry(parent).or_default().push(proc.pid);
-                }
-            }
-
-            // DEBOUNCE: Only recompute filter if filter_text changed
             let filter_timer = Instant::now();
             let filter_lower = self.filter_text.to_lowercase();
 
@@ -337,69 +320,17 @@ impl PMonNTApp {
                 }
                 self.grouped_filter_was_active = filter_active;
             }
-            let visible_pids: Option<HashSet<u32>> = if filter_lower != self.last_filter_text_lower
+            // Recompute the filtered PID set only when the filter text or the snapshot changes
+            // (new processes must show up while a filter is active).
+            if filter_lower != self.last_filter_text_lower
+                || self.cached_visible_pids_snapshot != Some(snapshot.taken_at)
             {
-                // Filter text changed - recompute and cache
                 self.last_filter_text_lower.clone_from(&filter_lower);
-
-                let result = if !filter_lower.is_empty() {
-                    let mut matching_pids = HashSet::new();
-
-                    // Find all processes that match the filter (name or PID)
-                    for proc in &processes {
-                        if proc.name.to_lowercase().contains(&filter_lower)
-                            || proc.pid.to_string().contains(&filter_lower)
-                        {
-                            matching_pids.insert(proc.pid);
-                        }
-                    }
-
-                    // Include all ancestors of matching processes with cycle detection
-                    let mut expanded = matching_pids.clone();
-                    for &pid in &matching_pids {
-                        let mut current = pid;
-                        let mut visited = HashSet::new();
-                        let mut depth = 0;
-                        const MAX_DEPTH: usize = 128;
-
-                        while depth < MAX_DEPTH && !visited.contains(&current) {
-                            visited.insert(current);
-
-                            if let Some(proc) = pid_to_proc.get(&current)
-                                && let Some(parent_pid) = proc.ppid
-                                && parent_pid != 0
-                                && parent_pid != current
-                            {
-                                expanded.insert(parent_pid);
-                                current = parent_pid;
-                                depth += 1;
-                                continue;
-                            }
-                            break;
-                        }
-                    }
-
-                    // Include direct children of matching processes for context
-                    let matching_with_children: Vec<u32> = matching_pids.iter().copied().collect();
-                    for &pid in &matching_with_children {
-                        if let Some(children) = children_map.get(&pid) {
-                            for &child in children {
-                                expanded.insert(child);
-                            }
-                        }
-                    }
-
-                    Some(expanded)
-                } else {
-                    None
-                };
-
-                self.cached_visible_pids.clone_from(&result);
-                result
-            } else {
-                // Filter unchanged - reuse cached result
-                self.cached_visible_pids.clone()
-            };
+                self.cached_visible_pids_snapshot = Some(snapshot.taken_at);
+                self.cached_visible_pids =
+                    pmonnt_core::view::filter_visible_pids(&snapshot, &filter_lower).map(Arc::new);
+            }
+            let visible_pids = self.cached_visible_pids.clone();
 
             let filter_elapsed = filter_timer.elapsed().as_millis() as u64;
             if filter_elapsed > 10 {
@@ -424,6 +355,7 @@ impl PMonNTApp {
                         input,
                         row_height,
                         policy,
+                        &snapshot,
                         selection_changed,
                     );
                 }
@@ -433,10 +365,8 @@ impl PMonNTApp {
                         ui,
                         input,
                         row_height,
-                        &pid_set,
-                        &pid_to_proc,
-                        &children_map,
-                        visible_pids.as_ref(),
+                        &snapshot,
+                        visible_pids.as_deref(),
                         selection_changed,
                     );
                 }

@@ -1074,30 +1074,34 @@ mod tests {
         hidden.remove(&ProcessColumnId::Leader);
         app.process_columns_hidden = hidden;
 
-        app.current_snapshot.processes = vec![
-            process::Process {
-                pid: 1,
-                name: "test.exe".to_string(),
-                ppid: None,
-                cpu_percent: None,
-                memory_bytes: None,
-                gpu_percent: None,
-                gpu_memory_bytes: None,
-                path: None,
-                signature: None,
-            },
-            process::Process {
-                pid: 2,
-                name: "test.exe".to_string(),
-                ppid: None,
-                cpu_percent: None,
-                memory_bytes: None,
-                gpu_percent: None,
-                gpu_memory_bytes: None,
-                path: None,
-                signature: None,
-            },
-        ];
+        app.current_snapshot =
+            std::sync::Arc::new(pmonnt_core::snapshot::ProcessSnapshot::from_processes(
+                vec![
+                    process::Process {
+                        pid: 1,
+                        name: "test.exe".to_string(),
+                        ppid: None,
+                        cpu_percent: None,
+                        memory_bytes: None,
+                        gpu_percent: None,
+                        gpu_memory_bytes: None,
+                        path: None,
+                        signature: None,
+                    },
+                    process::Process {
+                        pid: 2,
+                        name: "test.exe".to_string(),
+                        ppid: None,
+                        cpu_percent: None,
+                        memory_bytes: None,
+                        gpu_percent: None,
+                        gpu_memory_bytes: None,
+                        path: None,
+                        signature: None,
+                    },
+                ],
+                std::time::Instant::now(),
+            ));
         app.cpu_memory_data.insert(1, (0.0, Some(1_000_000)));
         app.cpu_memory_data.insert(2, (0.0, Some(2_000_000)));
 
@@ -1148,17 +1152,21 @@ mod tests {
         hidden.remove(&ProcessColumnId::Leader);
         app.process_columns_hidden = hidden;
 
-        app.current_snapshot.processes = vec![process::Process {
-            pid: 1,
-            name: "nodata.exe".to_string(),
-            ppid: None,
-            cpu_percent: None,
-            memory_bytes: None,
-            gpu_percent: None,
-            gpu_memory_bytes: None,
-            path: None,
-            signature: None,
-        }];
+        app.current_snapshot =
+            std::sync::Arc::new(pmonnt_core::snapshot::ProcessSnapshot::from_processes(
+                vec![process::Process {
+                    pid: 1,
+                    name: "nodata.exe".to_string(),
+                    ppid: None,
+                    cpu_percent: None,
+                    memory_bytes: None,
+                    gpu_percent: None,
+                    gpu_memory_bytes: None,
+                    path: None,
+                    signature: None,
+                }],
+                std::time::Instant::now(),
+            ));
 
         let rows = vec![group("nodata.exe", vec![1], true)];
 
@@ -1298,17 +1306,21 @@ mod tests {
         app.process_columns_order = ProcessColumnId::default_order();
         app.selected_pid = Some(1); // Select the group
 
-        app.current_snapshot.processes = vec![process::Process {
-            pid: 1,
-            name: "test.exe".to_string(),
-            ppid: None,
-            cpu_percent: None,
-            memory_bytes: None,
-            gpu_percent: None,
-            gpu_memory_bytes: None,
-            path: None,
-            signature: None,
-        }];
+        app.current_snapshot =
+            std::sync::Arc::new(pmonnt_core::snapshot::ProcessSnapshot::from_processes(
+                vec![process::Process {
+                    pid: 1,
+                    name: "test.exe".to_string(),
+                    ppid: None,
+                    cpu_percent: None,
+                    memory_bytes: None,
+                    gpu_percent: None,
+                    gpu_memory_bytes: None,
+                    path: None,
+                    signature: None,
+                }],
+                std::time::Instant::now(),
+            ));
 
         let rows = vec![group("test.exe", vec![1], true)];
 
@@ -1367,17 +1379,21 @@ mod tests {
         app.process_columns_order = ProcessColumnId::default_order();
         app.selected_pid = Some(42); // Select by PID
 
-        app.current_snapshot.processes = vec![process::Process {
-            pid: 42,
-            name: "secure.exe".to_string(),
-            ppid: None,
-            cpu_percent: None,
-            memory_bytes: None,
-            gpu_percent: None,
-            gpu_memory_bytes: None,
-            path: None,
-            signature: None,
-        }];
+        app.current_snapshot =
+            std::sync::Arc::new(pmonnt_core::snapshot::ProcessSnapshot::from_processes(
+                vec![process::Process {
+                    pid: 42,
+                    name: "secure.exe".to_string(),
+                    ppid: None,
+                    cpu_percent: None,
+                    memory_bytes: None,
+                    gpu_percent: None,
+                    gpu_memory_bytes: None,
+                    path: None,
+                    signature: None,
+                }],
+                std::time::Instant::now(),
+            ));
 
         let rows = vec![group("secure.exe", vec![42], true)];
 
@@ -1432,17 +1448,21 @@ mod tests {
         app.process_columns_hidden = ProcessColumnId::default_hidden().into_iter().collect();
 
         let test_pid: u32 = 12345;
-        app.current_snapshot.processes = vec![process::Process {
-            pid: test_pid,
-            name: "doubleclick_test.exe".to_string(),
-            ppid: None,
-            cpu_percent: None,
-            memory_bytes: None,
-            gpu_percent: None,
-            gpu_memory_bytes: None,
-            path: None,
-            signature: None,
-        }];
+        app.current_snapshot =
+            std::sync::Arc::new(pmonnt_core::snapshot::ProcessSnapshot::from_processes(
+                vec![process::Process {
+                    pid: test_pid,
+                    name: "doubleclick_test.exe".to_string(),
+                    ppid: None,
+                    cpu_percent: None,
+                    memory_bytes: None,
+                    gpu_percent: None,
+                    gpu_memory_bytes: None,
+                    path: None,
+                    signature: None,
+                }],
+                std::time::Instant::now(),
+            ));
 
         let rows = vec![group("doubleclick_test.exe", vec![test_pid], false)];
 

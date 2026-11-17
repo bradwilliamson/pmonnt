@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::sync::Arc;
 use std::time::Instant;
 
 use eframe::egui;
@@ -20,25 +21,12 @@ impl PMonNTApp {
         // Update snapshot every 2 seconds
         if self.last_snapshot_update.elapsed().as_secs() >= 2 {
             if let Ok(new_snapshot) = ProcessSnapshot::new() {
-                // Move current to previous
-                self.previous_snapshot = Some(self.current_snapshot.clone());
-                self.current_snapshot = new_snapshot;
-
-                // Rebuild process tree
-                self.process_tree.clear();
-                for process in &self.current_snapshot.processes {
-                    self.process_tree
-                        .entry(process.ppid)
-                        .or_default()
-                        .push(process.clone());
-                }
-
-                // Compute diff if we have a previous snapshot
-                if let Some(ref prev) = self.previous_snapshot {
-                    let diff = ProcessDiff::new(prev, &self.current_snapshot);
-                    self.exited_buffer.add_from_diff(&diff, prev);
-                    self.last_diff = Some(diff);
-                }
+                // The old snapshot moves to `previous_snapshot` (no copy).
+                let prev = std::mem::replace(&mut self.current_snapshot, Arc::new(new_snapshot));
+                let diff = ProcessDiff::new(&prev, &self.current_snapshot);
+                self.exited_buffer.add_from_diff(&diff, &prev);
+                self.last_diff = Some(diff);
+                self.previous_snapshot = Some(prev);
 
                 // Hardening: Prune expanded_pids to only include alive processes
                 let alive: HashSet<u32> = self

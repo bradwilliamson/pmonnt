@@ -1,3 +1,6 @@
+//! Every benchmark returns its inputs and hands them to the `discard` teardown, so dropping
+//! them happens outside the measured region.
+//!
 //! Non-UI hot paths: snapshot diffing (every 2 s), handle summaries (every handle scan),
 //! SHA-256 of executables (reputation lookups) and YARA buffer scanning.
 
@@ -24,17 +27,24 @@ fn two_refreshes(n: usize) -> (Vec<Process>, Vec<Process>) {
 
 // One 2-second refresh: build the new snapshot, diff it against the previous one and
 // record exited processes (pmonnt-ui/src/app/update/snapshot.rs).
-#[library_benchmark(setup = two_refreshes)]
+#[library_benchmark(setup = two_refreshes, teardown = fixtures::discard)]
 #[bench::desktop_400(400)]
 #[bench::busy_1200(1200)]
-fn snapshot_refresh((prev, next): (Vec<Process>, Vec<Process>)) -> ExitedProcessBuffer {
+fn snapshot_refresh(
+    (prev, next): (Vec<Process>, Vec<Process>),
+) -> (
+    ProcessSnapshot,
+    ProcessSnapshot,
+    ProcessDiff,
+    ExitedProcessBuffer,
+) {
     let t = epoch();
     let prev = ProcessSnapshot::from_processes(prev, t);
     let next = ProcessSnapshot::from_processes(next, t);
     let diff = ProcessDiff::new(&prev, &next);
     let mut exited = ExitedProcessBuffer::new(std::time::Duration::from_secs(30));
     exited.add_from_diff(&diff, &prev);
-    black_box(exited)
+    black_box((prev, next, diff, exited))
 }
 
 fn handles_input(n: usize, per_process: usize) -> (Vec<HandleEntry>, HandleCache) {
@@ -47,12 +57,14 @@ fn handles_input(n: usize, per_process: usize) -> (Vec<HandleEntry>, HandleCache
 
 // One handle scan: per-PID summaries plus leak-detector updates
 // (pmonnt-ui/src/app/update/handles.rs). 400 x 250 = 100k handles is a typical desktop.
-#[library_benchmark(setup = handles_input)]
+#[library_benchmark(setup = handles_input, teardown = fixtures::discard)]
 #[bench::handles_100k(400, 250)]
-fn handle_scan((handles, mut cache): (Vec<HandleEntry>, HandleCache)) -> HandleCache {
+fn handle_scan(
+    (handles, mut cache): (Vec<HandleEntry>, HandleCache),
+) -> (Vec<HandleEntry>, HandleCache) {
     let summaries = compute_summaries(&handles);
     cache.update(summaries);
-    black_box(cache)
+    black_box((handles, cache))
 }
 
 fn file_bytes(len: usize) -> Vec<u8> {
@@ -61,10 +73,11 @@ fn file_bytes(len: usize) -> Vec<u8> {
 }
 
 // SHA-256 of an executable image read through the streaming hasher.
-#[library_benchmark(setup = file_bytes)]
+#[library_benchmark(setup = file_bytes, teardown = fixtures::discard)]
 #[bench::exe_4mib(4 * 1024 * 1024)]
-fn sha256_stream(bytes: Vec<u8>) -> String {
-    black_box(sha256_hex_from_reader(Cursor::new(bytes)).unwrap())
+fn sha256_stream(bytes: Vec<u8>) -> (String, Vec<u8>) {
+    let hex = sha256_hex_from_reader(Cursor::new(bytes.as_slice())).unwrap();
+    black_box((hex, bytes))
 }
 
 fn yara_input(len: usize) -> (YaraEngine, Vec<u8>) {
@@ -91,10 +104,11 @@ rule Url_Indicator {
 }
 
 // Scanning one memory region chunk (the process scanner works in 1-4 MiB chunks).
-#[library_benchmark(setup = yara_input)]
+#[library_benchmark(setup = yara_input, teardown = fixtures::discard)]
 #[bench::chunk_1mib(1024 * 1024)]
-fn yara_scan_chunk((engine, data): (YaraEngine, Vec<u8>)) -> usize {
-    black_box(engine.scan_buffer(&data).map_or(0, |m| m.len()))
+fn yara_scan_chunk((engine, data): (YaraEngine, Vec<u8>)) -> (usize, YaraEngine, Vec<u8>) {
+    let hits = engine.scan_buffer(&data).map_or(0, |m| m.len());
+    black_box((hits, engine, data))
 }
 
 library_benchmark_group!(

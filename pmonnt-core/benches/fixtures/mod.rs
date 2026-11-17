@@ -345,3 +345,10 @@ pub fn handle_table(processes: &[Process], per_process: usize) -> Vec<HandleEntr
 pub fn epoch() -> Instant {
     Instant::now()
 }
+
+/// Teardown for every benchmark: drop the benchmark's output (and the inputs it hands back)
+/// outside the measured region, so freeing fixtures is not counted.
+#[inline(never)] // must stay a real symbol: Gungraun toggles measurement off by function name
+pub fn discard<T>(value: T) {
+    drop(std::hint::black_box(value));
+}
