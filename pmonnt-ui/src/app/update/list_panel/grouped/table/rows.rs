@@ -237,6 +237,8 @@ pub(super) fn render_rows(
 
     body.rows(row_height, display_rows.len(), |mut row| {
         let item = &display_rows[row.index()];
+        // A click that expands or collapses the group must not also select the row.
+        let mut toggled_expansion = false;
         let (group, maybe_child_pid, match_count) = match item {
             DisplayRow::Group {
                 group,
@@ -310,6 +312,7 @@ pub(super) fn render_rows(
                                                         || name_resp.clicked()
                                                         || name_resp.double_clicked()
                                                     {
+                                                        toggled_expansion = true;
                                                         if is_expanded {
                                                             app.expanded_groups.remove(group_key);
                                                         } else {
@@ -827,9 +830,12 @@ pub(super) fn render_rows(
         }
 
         // Get row response for click handling and scrolling
-        let row_resp = row.response().interact(egui::Sense::click());
+        // The cells sense clicks (see the TableBuilder). Calling `interact` here again
+        // re-registered the first cell's id over the whole row, which lost clicks in the
+        // first column.
+        let row_resp = row.response();
 
-        if row_resp.clicked() {
+        if row_resp.clicked() && !toggled_expansion {
             match item {
                 DisplayRow::Group { group, .. } => {
                     app.selected_pid = Some(group.representative_pid);
@@ -1061,7 +1067,7 @@ mod tests {
 
         clear_test_rects();
 
-        let mut app = PMonNTApp::try_new().expect("test app init");
+        let mut app = PMonNTApp::for_tests();
         app.view_mode = ViewMode::Grouped;
         app.group_sort = GroupSort::Memory;
         app.sort_desc = true;
@@ -1139,7 +1145,7 @@ mod tests {
 
         clear_test_rects();
 
-        let mut app = PMonNTApp::try_new().expect("test app init");
+        let mut app = PMonNTApp::for_tests();
         app.view_mode = ViewMode::Grouped;
         app.group_sort = GroupSort::Name;
         app.group_sort_by_leader = false;
@@ -1252,7 +1258,7 @@ mod tests {
 
         clear_test_rects();
 
-        let mut app = PMonNTApp::try_new().expect("test app init");
+        let mut app = PMonNTApp::for_tests();
         app.view_mode = ViewMode::Grouped;
         app.theme = Theme::GreenScreen;
         app.group_sort = GroupSort::CPU;
@@ -1299,7 +1305,7 @@ mod tests {
 
         clear_test_rects();
 
-        let mut app = PMonNTApp::try_new().expect("test app init");
+        let mut app = PMonNTApp::for_tests();
         app.view_mode = ViewMode::Grouped;
         app.theme = Theme::Light; // Non-3270 theme
         app.group_sort = GroupSort::CPU;
@@ -1373,7 +1379,7 @@ mod tests {
 
         clear_test_rects();
 
-        let mut app = PMonNTApp::try_new().expect("test app init");
+        let mut app = PMonNTApp::for_tests();
         app.view_mode = ViewMode::Grouped;
         app.theme = Theme::GreenScreen; // 3270 mode
         app.group_sort = GroupSort::CPU;
@@ -1443,7 +1449,7 @@ mod tests {
         use crate::process_table::process_table_policy;
         use egui::{CentralPanel, Context, Pos2, RawInput, Rect, Vec2};
 
-        let mut app = PMonNTApp::try_new().expect("test app init");
+        let mut app = PMonNTApp::for_tests();
         app.view_mode = ViewMode::Grouped;
         app.group_sort = GroupSort::Name;
         app.sort_desc = false;

@@ -3,9 +3,10 @@
 // Add this as a new file: pmonnt-ui/src/credentials.rs
 // Then add `mod credentials;` to main.rs
 
-use log::{error, info, warn};
+use log::info;
 
 /// Windows Credential Manager service name
+#[cfg(not(test))]
 const KEYRING_SERVICE: &str = "PMonNT";
 
 /// Credential entry names
@@ -113,24 +114,26 @@ impl ApiKeys {
 }
 
 /// Load a single credential from Windows Credential Manager
+#[cfg(not(test))]
 fn load_credential(name: &str) -> CredResult<String> {
     match keyring::Entry::new(KEYRING_SERVICE, name) {
         Ok(entry) => match entry.get_password() {
             Ok(password) => Ok(password),
             Err(keyring::Error::NoEntry) => Err("No entry found".to_string()),
             Err(e) => {
-                warn!("Failed to load credential '{name}': {e}");
+                log::warn!("Failed to load credential '{name}': {e}");
                 Err(format!("Keyring error: {e}"))
             }
         },
         Err(e) => {
-            warn!("Failed to access keyring for '{name}': {e}");
+            log::warn!("Failed to access keyring for '{name}': {e}");
             Err(format!("Keyring access error: {e}"))
         }
     }
 }
 
 /// Save a credential to Windows Credential Manager
+#[cfg(not(test))]
 pub fn save_credential(name: &str, value: &str) -> CredResult<()> {
     match keyring::Entry::new(KEYRING_SERVICE, name) {
         Ok(entry) => match entry.set_password(value) {
@@ -139,18 +142,19 @@ pub fn save_credential(name: &str, value: &str) -> CredResult<()> {
                 Ok(())
             }
             Err(e) => {
-                error!("Failed to save credential '{name}': {e}");
+                log::error!("Failed to save credential '{name}': {e}");
                 Err(format!("Failed to save: {e}"))
             }
         },
         Err(e) => {
-            error!("Failed to create keyring entry for '{name}': {e}");
+            log::error!("Failed to create keyring entry for '{name}': {e}");
             Err(format!("Keyring error: {e}"))
         }
     }
 }
 
 /// Delete a credential from Windows Credential Manager
+#[cfg(not(test))]
 pub fn delete_credential(name: &str) -> CredResult<()> {
     match keyring::Entry::new(KEYRING_SERVICE, name) {
         Ok(entry) => {
@@ -164,16 +168,49 @@ pub fn delete_credential(name: &str) -> CredResult<()> {
                     Ok(())
                 }
                 Err(e) => {
-                    error!("Failed to delete credential '{name}': {e}");
+                    log::error!("Failed to delete credential '{name}': {e}");
                     Err(format!("Failed to delete: {e}"))
                 }
             }
         }
         Err(e) => {
-            error!("Failed to access keyring for '{name}': {e}");
+            log::error!("Failed to access keyring for '{name}': {e}");
             Err(format!("Keyring error: {e}"))
         }
     }
+}
+
+/// In unit tests (the UI tests included) keys live in this map instead of Windows
+/// Credential Manager, so no test can read or overwrite the user's saved keys, for example
+/// by typing a key into Settings and clicking "Save key".
+#[cfg(test)]
+fn test_credentials() -> std::sync::MutexGuard<'static, std::collections::BTreeMap<String, String>>
+{
+    static STORE: std::sync::Mutex<std::collections::BTreeMap<String, String>> =
+        std::sync::Mutex::new(std::collections::BTreeMap::new());
+    STORE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+#[cfg(test)]
+fn load_credential(name: &str) -> CredResult<String> {
+    test_credentials()
+        .get(name)
+        .cloned()
+        .ok_or_else(|| "No entry found".to_string())
+}
+
+#[cfg(test)]
+pub fn save_credential(name: &str, value: &str) -> CredResult<()> {
+    test_credentials().insert(name.to_string(), value.to_string());
+    Ok(())
+}
+
+#[cfg(test)]
+pub fn delete_credential(name: &str) -> CredResult<()> {
+    test_credentials().remove(name);
+    Ok(())
 }
 
 // Public API for each key type

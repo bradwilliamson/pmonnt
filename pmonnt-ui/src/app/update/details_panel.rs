@@ -100,7 +100,9 @@ impl PMonNTApp {
                 let has_pid = selected_pid.is_some();
 
                 egui::Panel::top("thread_tabs").show(ui, |ui| {
-                    ui.horizontal(|ui| {
+                    // Wrap: on one line, tabs past the panel's width were cut off and could
+                    // not be clicked at the default panel width.
+                    ui.horizontal_wrapped(|ui| {
                         // Close button - flat to align with tabs
                         if ui
                             .add(egui::Button::new("X").frame(false))

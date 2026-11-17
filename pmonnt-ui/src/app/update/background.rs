@@ -423,7 +423,7 @@ mod tests {
 
     #[test]
     fn explicit_lookups_progress_off_screen_and_respect_online_toggle() {
-        let mut app = crate::app::PMonNTApp::try_new().expect("test app init");
+        let mut app = crate::app::PMonNTApp::for_tests();
         // A real file so the re-hash succeeds; two fake PIDs that use it.
         let file = std::env::temp_dir().join(format!("pmonnt_dispatch_{}", std::process::id()));
         std::fs::write(&file, b"dispatch test image").unwrap();
@@ -461,7 +461,7 @@ mod tests {
 
     #[test]
     fn service_background_work_error_then_success_updates_caches() {
-        let mut app = crate::app::PMonNTApp::try_new().expect("test app init");
+        let mut app = crate::app::PMonNTApp::for_tests();
 
         // Signature: error then success should overwrite cache and clear in-flight.
         let path = r"C:\unit-test\fake.exe".to_string();
