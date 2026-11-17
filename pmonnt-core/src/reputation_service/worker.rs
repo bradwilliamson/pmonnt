@@ -68,8 +68,9 @@ fn handle_hash_and_lookup_job(
         Ok(hash) => hash,
         Err(e) => {
             log::warn!("Hash computation failed for {image_path}: {e}");
-            let mut results = write_or_recover(results);
-            results.insert(
+            // Never hold `results` while taking `in_flight` (retain_paths takes them one at a
+            // time; nesting them in opposite orders would deadlock).
+            write_or_recover(results).insert(
                 image_path.clone(),
                 ReputationResult {
                     image_path: image_path.clone(),
@@ -398,6 +399,7 @@ impl ReputationService {
             tf_in_flight,
             vt_cache,
             vt_in_flight,
+            image_hashes: Arc::new(Mutex::new(HashMap::new())),
             _local_cache: local_cache,
         }
     }
@@ -438,6 +440,7 @@ impl ReputationService {
             tf_in_flight,
             vt_cache,
             vt_in_flight,
+            image_hashes: Arc::new(Mutex::new(HashMap::new())),
             _local_cache: local_cache,
         };
 
@@ -577,6 +580,7 @@ impl ReputationService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::reputation_service::ImageHashState;
     use std::fs;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -727,6 +731,51 @@ mod tests {
         let vt = service.vt_cache.read().unwrap();
         assert!(vt.contains_key("live") && vt.contains_key("busy"));
         assert!(!vt.contains_key("gone"));
+    }
+
+    fn wait_for_hash(service: &ReputationService, path: &str) -> ImageHashState {
+        for _ in 0..200 {
+            match service.image_hash_state(path) {
+                Some(ImageHashState::Pending) | None => {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Some(done) => return done,
+            }
+        }
+        panic!("re-hash of {path} did not finish");
+    }
+
+    #[test]
+    fn rehash_image_sees_a_replaced_binary_and_retries_failures() {
+        let local_cache = Arc::new(LocalCacheProvider::new(temp_path("cache_rehash")));
+        let (service, _job_rx, _cmd_rx) =
+            ReputationService::new_without_worker_for_tests(HashComputer::new(), local_cache);
+        let file = temp_path("rehash_target");
+        let path = file.to_string_lossy().to_string();
+
+        // Missing file: the failure is reported, and a later request tries again.
+        service.rehash_image(&path);
+        assert!(matches!(
+            wait_for_hash(&service, &path),
+            ImageHashState::Failed(_)
+        ));
+
+        std::fs::write(&file, b"version one").unwrap();
+        service.rehash_image(&path);
+        let ImageHashState::Ready(first) = wait_for_hash(&service, &path) else {
+            panic!("expected a hash");
+        };
+
+        // Same path, new contents and size (an upgraded binary): the hash follows the file.
+        std::fs::write(&file, b"version two, longer").unwrap();
+        service.rehash_image(&path);
+        let ImageHashState::Ready(second) = wait_for_hash(&service, &path) else {
+            panic!("expected a hash");
+        };
+        let expected = HashComputer::new().compute_sha256(&path).unwrap();
+        let _ = std::fs::remove_file(&file);
+        assert_ne!(first, second);
+        assert_eq!(second, expected);
     }
 
     #[test]

@@ -195,6 +195,51 @@ pub fn query_system_processes() -> Result<Vec<SystemProcessEntry>> {
     Ok(entries)
 }
 
+/// Every process with its image name, from a single `SystemProcessInformation` query.
+///
+/// PID, parent, creation time and name all come from the same kernel snapshot, so they
+/// always describe the same process instance (two separate queries can see different
+/// processes under a recycled PID).
+pub fn query_processes_with_names() -> Result<Vec<(SystemProcessEntry, String)>> {
+    let buffer = query_spi_buffer()?;
+    let mut entries = Vec::with_capacity(512);
+    for_each_spi_entry(&buffer, |spi| {
+        entries.push((
+            SystemProcessEntry::from_raw(spi),
+            spi_image_name(&buffer, &spi.image_name),
+        ));
+        true
+    });
+    Ok(entries)
+}
+
+/// Decode an entry's image name. The kernel points `Buffer` into the same output buffer; the
+/// name is read from the buffer's bytes, and a pointer or length outside it yields "".
+fn spi_image_name(
+    buffer: &AlignedBuf,
+    name: &windows::Win32::Foundation::UNICODE_STRING,
+) -> String {
+    let len_bytes = usize::from(name.Length);
+    let Some(offset) = (name.Buffer.0 as usize).checked_sub(buffer.as_ptr() as usize) else {
+        return String::new();
+    };
+    let Some(bytes) = offset
+        .checked_add(len_bytes)
+        .and_then(|end| buffer.as_bytes().get(offset..end))
+    else {
+        return String::new();
+    };
+    // An odd trailing byte (malformed length) is ignored.
+    let units = bytes
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|&pair| u16::from_le_bytes(pair));
+    char::decode_utf16(units)
+        .map(|c| c.unwrap_or(char::REPLACEMENT_CHARACTER))
+        .collect()
+}
+
 /// Counters for one process from a fresh `SystemProcessInformation` query.
 ///
 /// Callers that need several values for the same PID should call this once rather than

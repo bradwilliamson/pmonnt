@@ -1,4 +1,4 @@
-use super::sha::{ImageSha, image_sha};
+use super::sha::{known_image_sha, request_check, take_ready_check};
 use crate::ui_state::VtUiState;
 use eframe::egui;
 use pmonnt_core::reputation_service::ReputationService;
@@ -30,6 +30,25 @@ fn set_vt_error(vt_state: &mut VtUiState, message: String) {
     });
 }
 
+/// Queue an explicit lookup for `pid` (see [`request_check`]) or show why it cannot start.
+fn request_check_or_report(
+    vt_state: &mut VtUiState,
+    reputation_service: &ReputationService,
+    pid_to_image_path: &HashMap<u32, String>,
+    pid: u32,
+    force: bool,
+) {
+    if let Err(e) = request_check(
+        reputation_service,
+        pid_to_image_path,
+        pid,
+        force,
+        &mut vt_state.pending_checks,
+    ) {
+        set_vt_error(vt_state, e);
+    }
+}
+
 pub fn render_virustotal_section(
     ui: &mut egui::Ui,
     vt_state: &mut VtUiState,
@@ -50,32 +69,30 @@ pub fn render_virustotal_section(
         vt_state.querying_vt_pid = None;
         vt_state.querying_vt_sha = None;
         vt_state.current_process_sha = None;
-        vt_state.lookup_waiting_for_sha = None;
         vt_state.last_query_meta = None;
     }
 
-    // Show the image hash as soon as the reputation worker has it.
-    let image_sha = pid.map(|pid| image_sha(reputation_service, pid_to_image_path, pid));
+    // Show the image hash as soon as it is known.
     if vt_state.current_process_sha.is_none()
-        && let Some(ImageSha::Known(sha)) = &image_sha
+        && let Some(sha) =
+            pid.and_then(|pid| known_image_sha(reputation_service, pid_to_image_path, pid))
     {
-        vt_state.current_process_sha = Some(sha.clone());
+        vt_state.current_process_sha = Some(sha);
     }
 
-    // A "Check" clicked before the hash was ready starts once it is.
-    if let Some(waiting) = vt_state.lookup_waiting_for_sha
-        && pid == Some(waiting)
+    // Explicit requests start once their re-validated image hash is ready.
+    if let Some(pid) = pid
+        && let Some(ready) = take_ready_check(
+            reputation_service,
+            pid_to_image_path,
+            pid,
+            online_lookups_enabled,
+            &mut vt_state.pending_checks,
+        )
     {
-        match &image_sha {
-            Some(ImageSha::Known(sha)) => {
-                vt_state.lookup_waiting_for_sha = None;
-                start_vt_lookup(vt_state, reputation_service, waiting, sha.clone(), false);
-            }
-            Some(ImageSha::Failed(e)) => {
-                vt_state.lookup_waiting_for_sha = None;
-                set_vt_error(vt_state, e.clone());
-            }
-            _ => {}
+        match ready {
+            Ok((sha, force)) => start_vt_lookup(vt_state, reputation_service, pid, sha, force),
+            Err(e) => set_vt_error(vt_state, e),
         }
     }
 
@@ -89,29 +106,19 @@ pub fn render_virustotal_section(
             .clicked()
             && let Some(pid) = pid
         {
-            match &image_sha {
-                Some(ImageSha::Known(sha)) => {
-                    start_vt_lookup(vt_state, reputation_service, pid, sha.clone(), false);
-                }
-                Some(ImageSha::Failed(e)) => set_vt_error(vt_state, e.clone()),
-                _ => vt_state.lookup_waiting_for_sha = Some(pid),
-            }
+            request_check_or_report(vt_state, reputation_service, pid_to_image_path, pid, false);
         }
 
-        // Refresh bypasses both the in-memory result and the provider's local cache.
+        // Refresh re-validates the hash and bypasses the cached answers.
         if ui
             .add_enabled(can_query, egui::Button::new("Refresh VT data"))
             .clicked()
             && let Some(pid) = pid
-            && let Some(sha) = vt_state
-                .current_process_sha
-                .clone()
-                .or_else(|| vt_state.querying_vt_sha.clone())
         {
-            start_vt_lookup(vt_state, reputation_service, pid, sha, true);
+            request_check_or_report(vt_state, reputation_service, pid_to_image_path, pid, true);
         }
 
-        if vt_state.lookup_waiting_for_sha.is_some() && vt_state.lookup_waiting_for_sha == pid {
+        if pid.is_some_and(|pid| vt_state.pending_checks.contains_key(&pid)) {
             ui.spinner();
             ui.label("Hashing image...");
         } else if let Some(sha) = vt_state

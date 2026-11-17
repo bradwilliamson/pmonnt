@@ -9,4 +9,4 @@ mod vt;
 mod worker;
 
 pub use service::ReputationService;
-pub use types::{ReputationCommand, ReputationResult};
+pub use types::{ImageHashState, ReputationCommand, ReputationResult};

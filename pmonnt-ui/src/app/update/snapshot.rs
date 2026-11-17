@@ -46,6 +46,9 @@ impl PMonNTApp {
         self.pid_to_environment.retain(|&pid, _| keep(pid));
         self.pid_env_attempted.retain(|&pid| keep(pid));
 
+        self.vt_ui_state.pending_checks.retain(|&pid, _| keep(pid));
+        self.mb_ui_state.pending_checks.retain(|&pid, _| keep(pid));
+        self.tf_ui_state.pending_checks.retain(|&pid, _| keep(pid));
         self.security_cache_by_pid.retain(|&pid, _| keep(pid));
         self.services_cache_by_pid.retain(|&pid, _| keep(pid));
         self.services_error_by_pid.retain(|&pid, _| keep(pid));

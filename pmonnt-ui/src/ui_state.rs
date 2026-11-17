@@ -43,9 +43,8 @@ pub(crate) struct MbUiState {
     pub(crate) querying_started_at: Option<Instant>,
     pub(crate) last_seen_pid: Option<u32>,
     pub(crate) current_process_sha: Option<String>,
-    /// Set when "Check" was clicked before the image hash was known; the lookup starts once
-    /// the reputation worker has hashed the file.
-    pub(crate) lookup_waiting_for_sha: Option<u32>,
+    /// Explicit lookups waiting for their image hash: PID -> force (Refresh).
+    pub(crate) pending_checks: std::collections::HashMap<u32, bool>,
     // CSCB cache
     pub(crate) cscb_entries: Vec<pmonnt_core::providers::MbCscbEntry>,
     pub(crate) cscb_fetch_in_progress: bool,
@@ -91,7 +90,7 @@ impl Default for MbUiState {
             querying_started_at: None,
             last_seen_pid: None,
             current_process_sha: None,
-            lookup_waiting_for_sha: None,
+            pending_checks: std::collections::HashMap::new(),
             cscb_entries: Vec::new(),
             cscb_fetch_in_progress: false,
             cscb_error: None,
@@ -124,9 +123,8 @@ pub(crate) struct VtUiState {
     pub(crate) querying_started_at: Option<std::time::Instant>,
     pub(crate) last_seen_pid: Option<u32>,
     pub(crate) current_process_sha: Option<String>,
-    /// Set when "Check" was clicked before the image hash was known; the lookup starts once
-    /// the reputation worker has hashed the file.
-    pub(crate) lookup_waiting_for_sha: Option<u32>,
+    /// Explicit lookups waiting for their image hash: PID -> force (Refresh).
+    pub(crate) pending_checks: std::collections::HashMap<u32, bool>,
     pub(crate) last_query_meta: Option<pmonnt_core::vt::VtQueryMeta>,
 }
 
@@ -138,8 +136,8 @@ pub(crate) struct TfUiState {
     pub(crate) querying_tf_sha: Option<String>,
     pub(crate) current_process_sha: Option<String>,
     pub(crate) last_seen_pid: Option<u32>,
-    /// See [`VtUiState::lookup_waiting_for_sha`].
-    pub(crate) lookup_waiting_for_sha: Option<u32>,
+    /// See [`VtUiState::pending_checks`].
+    pub(crate) pending_checks: std::collections::HashMap<u32, bool>,
 }
 
 #[derive(Clone)]

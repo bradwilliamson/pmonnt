@@ -1,4 +1,4 @@
-use super::sha::{ImageSha, image_sha};
+use super::sha::{known_image_sha, request_check, take_ready_check};
 use crate::ui_state::{TfQueryState, TfUiState};
 use eframe::egui;
 use pmonnt_core::reputation_service::ReputationService;
@@ -29,6 +29,25 @@ fn set_tf_error(tf_state: &mut TfUiState, message: String) {
     });
 }
 
+/// Queue an explicit lookup for `pid` (see [`request_check`]) or show why it cannot start.
+fn request_check_or_report(
+    tf_state: &mut TfUiState,
+    reputation_service: &ReputationService,
+    pid_to_image_path: &HashMap<u32, String>,
+    pid: u32,
+    force: bool,
+) {
+    if let Err(e) = request_check(
+        reputation_service,
+        pid_to_image_path,
+        pid,
+        force,
+        &mut tf_state.pending_checks,
+    ) {
+        set_tf_error(tf_state, e);
+    }
+}
+
 pub fn render_threatfox_section(
     ui: &mut egui::Ui,
     tf_state: &mut TfUiState,
@@ -45,32 +64,30 @@ pub fn render_threatfox_section(
         tf_state.querying_tf_pid = None;
         tf_state.querying_tf_sha = None;
         tf_state.current_process_sha = None;
-        tf_state.lookup_waiting_for_sha = None;
         tf_state.last_query_state = None;
     }
 
-    // Show the image hash as soon as the reputation worker has it.
-    let image_sha = pid.map(|pid| image_sha(reputation_service, pid_to_image_path, pid));
+    // Show the image hash as soon as it is known.
     if tf_state.current_process_sha.is_none()
-        && let Some(ImageSha::Known(sha)) = &image_sha
+        && let Some(sha) =
+            pid.and_then(|pid| known_image_sha(reputation_service, pid_to_image_path, pid))
     {
-        tf_state.current_process_sha = Some(sha.clone());
+        tf_state.current_process_sha = Some(sha);
     }
 
-    // A "Check" clicked before the hash was ready starts once it is.
-    if let Some(waiting) = tf_state.lookup_waiting_for_sha
-        && pid == Some(waiting)
+    // Explicit requests start once their re-validated image hash is ready.
+    if let Some(pid) = pid
+        && let Some(ready) = take_ready_check(
+            reputation_service,
+            pid_to_image_path,
+            pid,
+            online_lookups_enabled,
+            &mut tf_state.pending_checks,
+        )
     {
-        match &image_sha {
-            Some(ImageSha::Known(sha)) => {
-                tf_state.lookup_waiting_for_sha = None;
-                start_tf_lookup(tf_state, reputation_service, waiting, sha.clone(), false);
-            }
-            Some(ImageSha::Failed(e)) => {
-                tf_state.lookup_waiting_for_sha = None;
-                set_tf_error(tf_state, e.clone());
-            }
-            _ => {}
+        match ready {
+            Ok((sha, force)) => start_tf_lookup(tf_state, reputation_service, pid, sha, force),
+            Err(e) => set_tf_error(tf_state, e),
         }
     }
 
@@ -84,28 +101,19 @@ pub fn render_threatfox_section(
             .clicked()
             && let Some(pid) = pid
         {
-            match &image_sha {
-                Some(ImageSha::Known(sha)) => {
-                    start_tf_lookup(tf_state, reputation_service, pid, sha.clone(), false);
-                }
-                Some(ImageSha::Failed(e)) => set_tf_error(tf_state, e.clone()),
-                _ => tf_state.lookup_waiting_for_sha = Some(pid),
-            }
+            request_check_or_report(tf_state, reputation_service, pid_to_image_path, pid, false);
         }
 
+        // Refresh re-validates the hash and bypasses the cached answers.
         if ui
             .add_enabled(can_query, egui::Button::new("Refresh TF data"))
             .clicked()
             && let Some(pid) = pid
-            && let Some(sha) = tf_state
-                .current_process_sha
-                .clone()
-                .or_else(|| tf_state.querying_tf_sha.clone())
         {
-            start_tf_lookup(tf_state, reputation_service, pid, sha, true);
+            request_check_or_report(tf_state, reputation_service, pid_to_image_path, pid, true);
         }
 
-        if tf_state.lookup_waiting_for_sha.is_some() && tf_state.lookup_waiting_for_sha == pid {
+        if pid.is_some_and(|pid| tf_state.pending_checks.contains_key(&pid)) {
             ui.spinner();
             ui.label("Hashing image...");
         } else if let Some(sha) = tf_state

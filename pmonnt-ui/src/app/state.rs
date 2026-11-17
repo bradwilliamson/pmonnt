@@ -464,7 +464,7 @@ pub(super) fn try_build_app() -> anyhow::Result<PMonNTApp> {
             querying_started_at: None,
             last_seen_pid: None,
             current_process_sha: None,
-            lookup_waiting_for_sha: None,
+            pending_checks: HashMap::new(),
             last_query_meta: None,
         },
         tf_ui_state: TfUiState::default(),

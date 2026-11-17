@@ -1,95 +1,36 @@
-//! Windows process enumeration implementation
-//!
-//! This module provides unsafe Windows API calls for process enumeration.
-//! All unsafe blocks are documented with their invariants.
+//! Windows process enumeration (one `SystemProcessInformation` snapshot).
 
 use crate::process::Process;
-use crate::win::HandleGuard;
-use anyhow::{Result, anyhow};
-use windows::Win32::Foundation::INVALID_HANDLE_VALUE;
-use windows::Win32::System::Diagnostics::ToolHelp::{
-    CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
-};
+use anyhow::Result;
 
 /// Enumerate all running processes on the system.
 ///
-/// Uses the wide-character ToolHelp API so executable names in any language come back
-/// intact (the ANSI variant mangles anything outside the system code page).
+/// Uses one `SystemProcessInformation` query, so each process's PID, parent, creation time
+/// and name come from the same kernel snapshot. (ToolHelp plus a second query for creation
+/// times could pair a name with a different instance that reused the PID in between.)
+/// Names are decoded from UTF-16, so executables in any language come back intact.
 pub fn enumerate_processes() -> Result<Vec<Process>> {
-    // SAFETY: CreateToolhelp32Snapshot has no pointer arguments; on success the returned
-    // handle is owned by us and closed by the guard below.
-    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)? };
-    if snapshot == INVALID_HANDLE_VALUE {
-        return Err(anyhow!("Failed to create process snapshot"));
-    }
-    // Owns the snapshot from here on, so every return path closes it.
-    let snapshot = HandleGuard::new(snapshot);
-
-    let mut entry = PROCESSENTRY32W {
-        dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
-        ..Default::default()
-    };
-
-    // SAFETY: `entry` is a valid PROCESSENTRY32W with dwSize set, as the API requires.
-    if unsafe { Process32FirstW(snapshot.raw(), &raw mut entry) }.is_err() {
-        return Err(anyhow!("Failed to get first process"));
-    }
-
-    let mut processes = Vec::with_capacity(512);
-    loop {
-        processes.push(Process {
-            pid: entry.th32ProcessID,
-            name: wide_to_string(&entry.szExeFile),
-            ppid: Some(entry.th32ParentProcessID),
+    let entries = crate::win::process_metrics::query_processes_with_names()?;
+    Ok(entries
+        .into_iter()
+        .map(|(entry, name)| Process {
+            pid: entry.pid,
+            // The idle process has no image name; keep ToolHelp's label for it.
+            name: if entry.pid == 0 && name.is_empty() {
+                "[System Process]".to_string()
+            } else {
+                name
+            },
+            ppid: Some(entry.parent_pid),
             cpu_percent: None,
             memory_bytes: None,
             gpu_percent: None,
             gpu_memory_bytes: None,
             path: None,
             signature: None,
-            create_time: None,
-        });
-
-        // SAFETY: same snapshot handle and entry buffer as above.
-        if unsafe { Process32NextW(snapshot.raw(), &raw mut entry) }.is_err() {
-            break;
-        }
-    }
-
-    fill_create_times(&mut processes);
-    Ok(processes)
-}
-
-/// Attach creation times from one `SystemProcessInformation` query.
-///
-/// ToolHelp does not report creation times. A process that exits between the two queries is
-/// left without one, and a PID recycled in that window is caught by its parent PID no longer
-/// matching, so a process never receives another instance's creation time.
-fn fill_create_times(processes: &mut [Process]) {
-    let entries = match crate::win::process_metrics::query_system_processes() {
-        Ok(entries) => entries,
-        Err(e) => {
-            log::debug!("SystemProcessInformation query for creation times failed: {e}");
-            return;
-        }
-    };
-    let by_pid: crate::snapshot::PidMap<(u32, u64)> = entries
-        .iter()
-        .map(|e| (e.pid, (e.parent_pid, e.create_time)))
-        .collect();
-    for process in processes {
-        if let Some(&(parent_pid, create_time)) = by_pid.get(&process.pid)
-            && process.ppid == Some(parent_pid)
-        {
-            process.create_time = Some(create_time);
-        }
-    }
-}
-
-/// Convert a NUL-terminated UTF-16 buffer to a String, replacing invalid sequences.
-fn wide_to_string(wide: &[u16]) -> String {
-    let len = wide.iter().position(|&c| c == 0).unwrap_or(wide.len());
-    String::from_utf16_lossy(&wide[..len])
+            create_time: Some(entry.create_time),
+        })
+        .collect())
 }
 
 #[cfg(test)]
@@ -97,18 +38,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn wide_to_string_handles_non_ascii_and_missing_terminator() {
-        let name: Vec<u16> = "日本語プロセス.exe\0garbage".encode_utf16().collect();
-        assert_eq!(wide_to_string(&name), "日本語プロセス.exe");
-        let unterminated: Vec<u16> = "Größe.exe".encode_utf16().collect();
-        assert_eq!(wide_to_string(&unterminated), "Größe.exe");
-    }
-
-    #[test]
-    fn enumerate_finds_current_process() {
+    fn enumerate_finds_current_process_by_name() {
         let me = std::process::id();
+        let exe = std::env::current_exe().unwrap();
+        let exe_name = exe.file_name().unwrap().to_string_lossy();
         let procs = enumerate_processes().unwrap();
-        assert!(procs.iter().any(|p| p.pid == me && !p.name.is_empty()));
+        let mine = procs
+            .iter()
+            .find(|p| p.pid == me)
+            .expect("current process listed");
+        assert!(mine.name.eq_ignore_ascii_case(&exe_name), "{:?}", mine.name);
+        assert!(procs.iter().any(|p| p.pid == 4 && p.name == "System"));
+        assert!(
+            procs
+                .iter()
+                .any(|p| p.pid == 0 && p.name == "[System Process]")
+        );
     }
 
     #[test]
@@ -121,5 +66,33 @@ mod tests {
             .create_time;
         assert_eq!(mine.create_time, Some(expected));
         assert!(expected > 0);
+    }
+
+    #[test]
+    fn non_ascii_executable_names_survive() {
+        // A copy of a tiny system executable under a non-ASCII name (review H4: the ANSI
+        // ToolHelp API used to abort the whole snapshot on such names).
+        let dir = std::env::temp_dir().join(format!("pmonnt_enum_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join("日本語プロセス.exe");
+        std::fs::copy(r"C:\Windows\System32\PING.EXE", &exe).unwrap();
+        let mut child = std::process::Command::new(&exe)
+            .args(["-n", "30", "127.0.0.1"])
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        let procs = enumerate_processes();
+        let _ = child.kill();
+        let _ = child.wait();
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let procs = procs.unwrap();
+        let name = &procs
+            .iter()
+            .find(|p| p.pid == pid)
+            .expect("child listed")
+            .name;
+        assert_eq!(name, "日本語プロセス.exe");
     }
 }

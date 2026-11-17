@@ -33,6 +33,8 @@ pub struct ReputationService {
     pub(super) tf_in_flight: Arc<Mutex<HashSet<String>>>,
     pub(super) vt_cache: VtCacheType,
     pub(super) vt_in_flight: Arc<Mutex<HashSet<String>>>,
+    /// Hashes re-validated for explicit "Check"/"Refresh" requests, by image path.
+    pub(super) image_hashes: Arc<Mutex<HashMap<String, super::types::ImageHashState>>>,
     // Keep local_cache owned by MB/TF providers; service only needs it for construction
     pub(super) _local_cache: Arc<LocalCacheProvider>,
 }
@@ -55,11 +57,15 @@ impl ReputationService {
     /// Forget results for image paths `keep` rejects, and provider answers for hashes no
     /// remaining path has. Work that is still in flight is kept.
     pub fn retain_paths(&self, keep: impl Fn(&str) -> bool) {
+        // Locks are taken one at a time (never nested) so this cannot deadlock with the
+        // worker, which also takes `results` and `in_flight`. A path that becomes in flight
+        // after the copy may lose its placeholder result; the worker writes the real one.
+        let in_flight: HashSet<String> = self
+            .in_flight
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
         let live_shas: HashSet<String> = {
-            let in_flight = self
-                .in_flight
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
             let mut results = self
                 .results
                 .write()
@@ -67,6 +73,10 @@ impl ReputationService {
             results.retain(|path, _| keep(path) || in_flight.contains(path));
             results.values().filter_map(|r| r.sha256.clone()).collect()
         };
+        self.image_hashes
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .retain(|path, state| keep(path) || *state == super::types::ImageHashState::Pending);
         let keep_sha = |sha: &String, in_flight: &Mutex<HashSet<String>>| {
             live_shas.contains(sha) || set_contains(in_flight, sha)
         };
@@ -82,6 +92,51 @@ impl ReputationService {
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .retain(|sha, _| keep_sha(sha, &self.vt_in_flight));
+    }
+
+    /// Re-hash `path` on a background thread for an explicit lookup.
+    ///
+    /// The path-keyed results above can predate an upgrade of the binary at that path, and
+    /// remember a failed hash. This goes through the shared [`HashComputer`], which re-reads
+    /// the file only if its modification time or size changed, so it is cheap when nothing
+    /// changed. Does nothing while a re-hash of `path` is already running.
+    pub fn rehash_image(&self, path: &str) {
+        {
+            let mut hashes = self
+                .image_hashes
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if hashes.get(path) == Some(&super::types::ImageHashState::Pending) {
+                return;
+            }
+            hashes.insert(path.to_string(), super::types::ImageHashState::Pending);
+        }
+        let hashes = Arc::clone(&self.image_hashes);
+        let hasher = self.hash_computer.clone();
+        let path = path.to_string();
+        std::thread::spawn(move || {
+            // AssertUnwindSafe: the hash cache only gains an entry after a hash completes,
+            // so a panic part-way through leaves it consistent.
+            let hash = std::panic::AssertUnwindSafe(|| hasher.compute_sha256(&path));
+            let state = match std::panic::catch_unwind(hash) {
+                Ok(Ok(sha)) => super::types::ImageHashState::Ready(sha),
+                Ok(Err(e)) => super::types::ImageHashState::Failed(format!("Hash error: {e}")),
+                Err(_) => super::types::ImageHashState::Failed("hashing failed".to_string()),
+            };
+            hashes
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .insert(path, state);
+        });
+    }
+
+    /// State of the last [`Self::rehash_image`] for `path`, if any.
+    pub fn image_hash_state(&self, path: &str) -> Option<super::types::ImageHashState> {
+        self.image_hashes
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(path)
+            .cloned()
     }
 
     /// Whether a VirusTotal lookup for `sha` is queued or running.

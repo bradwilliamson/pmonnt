@@ -351,6 +351,18 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_and_handle_creation_times_agree() {
+        // Kills compare the snapshot's creation time (SystemProcessInformation) with the one
+        // read from the opened handle (GetProcessTimes); they must be the same value.
+        let child = spawn_sleeper();
+        let pid = child.0.id();
+        let from_spi = crate::win::process_metrics::system_process_entry(pid)
+            .expect("child in SystemProcessInformation")
+            .create_time;
+        assert_eq!(query_process_create_time(pid).unwrap(), from_spi);
+    }
+
+    #[test]
     fn blocks_self() {
         let pid = std::process::id();
         let err = kill_process(pid, 0).unwrap_err();

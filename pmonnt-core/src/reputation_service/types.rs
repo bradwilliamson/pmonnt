@@ -37,6 +37,14 @@ pub enum ReputationCommand {
     },
 }
 
+/// State of an explicitly requested image hash (see `ReputationService::rehash_image`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImageHashState {
+    Pending,
+    Ready(String),
+    Failed(String),
+}
+
 /// Result from a reputation job
 #[derive(Debug, Clone)]
 pub struct ReputationResult {
