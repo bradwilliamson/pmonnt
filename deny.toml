@@ -28,6 +28,7 @@ yanked = "deny"
 ignore = [
     { id = "RUSTSEC-2025-0141", reason = "bincode is unmaintained; only reached through yara-x's compiled-rule serialization and there is no maintained drop-in upstream yet" },
     { id = "RUSTSEC-2023-0071", reason = "rsa Marvin timing attack needs a private-key decryption oracle; yara-x only verifies Authenticode signatures with public keys" },
+    { id = "RUSTSEC-2026-0543", reason = "chrono is unmaintained, with no known vulnerability; yara-x-proto needs it at build time, so it stays in the tree even if pmonnt-core's own timestamp formatting moves to jiff" },
 ]
 
 # ---------------------------------------------------------------------------
