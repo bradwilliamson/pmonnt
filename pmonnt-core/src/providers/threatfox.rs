@@ -166,7 +166,7 @@ impl ThreatFoxProvider {
         };
 
         // Build client
-        let client = reqwest::blocking::Client::builder()
+        let client = crate::http::blocking_client_builder()
             .timeout(Duration::from_secs(15))
             .build()
             .map_err(|e| format!("http build error: {}", e))?;
@@ -280,7 +280,7 @@ impl ReputationProvider for ThreatFoxProvider {
         }
 
         // Build HTTP client
-        let client = match reqwest::blocking::Client::builder()
+        let client = match crate::http::blocking_client_builder()
             .timeout(Duration::from_secs(10))
             .build()
         {

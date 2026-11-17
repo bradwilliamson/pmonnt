@@ -24,6 +24,7 @@ pub mod diff;
 #[cfg(windows)]
 pub mod handles;
 pub mod hashing;
+pub mod http;
 pub mod local_cache;
 #[cfg(windows)]
 pub mod module;

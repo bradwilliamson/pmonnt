@@ -145,7 +145,7 @@ impl VirusTotalProvider {
 
         // Build request
         let url = format!("{}/files/{}", self.base_url, sha256);
-        let client = match reqwest::Client::builder()
+        let client = match crate::http::client_builder()
             .timeout(Duration::from_secs(10))
             .build()
         {
@@ -285,7 +285,7 @@ impl VirusTotalProvider {
 
         // Build blocking request
         let url = format!("{}/files/{}", self.base_url, sha256);
-        let client = match reqwest::blocking::Client::builder()
+        let client = match crate::http::blocking_client_builder()
             .timeout(Duration::from_secs(10))
             .build()
         {

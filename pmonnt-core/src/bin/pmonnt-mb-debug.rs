@@ -1,4 +1,3 @@
-use reqwest::blocking::Client;
 use std::env;
 use std::time::Duration;
 
@@ -17,7 +16,9 @@ fn post_and_print(form: &[(&str, &str)], raw: bool) -> Result<(), Box<dyn std::e
         }
     };
 
-    let client = Client::builder().timeout(Duration::from_secs(30)).build()?;
+    let client = pmonnt_core::http::blocking_client_builder()
+        .timeout(Duration::from_secs(30))
+        .build()?;
     let mb_url = std::env::var("MB_BASE_URL")
         .unwrap_or_else(|_| "https://mb-api.abuse.ch/api/v1/".to_string());
     let resp = client
