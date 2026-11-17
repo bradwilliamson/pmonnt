@@ -9,7 +9,6 @@ mod credentials;
 mod gpu;
 mod gpu_pdh;
 mod process_info;
-mod process_rows;
 mod process_table;
 mod theme;
 mod ui_renderer;

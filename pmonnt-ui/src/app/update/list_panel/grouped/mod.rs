@@ -1,8 +1,8 @@
 use eframe::egui;
 
 use crate::app::PMonNTApp;
-use crate::process_rows::build_grouped_rows;
 use crate::process_table::ProcessTablePolicy;
+use pmonnt_core::view::build_grouped_rows;
 
 mod keyboard;
 mod selection;
@@ -28,19 +28,8 @@ impl PMonNTApp {
             self.group_sort,
             self.sort_desc,
             self.group_sort_by_leader,
-            &self.handle_cache,
-            &self.global_thread_counts,
-            &self.cpu_memory_data,
-            &self.io_rate_by_pid,
-            &self.gpu_data,
             &self.pid_to_image_path,
-            &self.signature_cache_by_path,
-            &self.pid_to_command_line,
-            &self.pid_to_company_name,
-            &self.pid_to_file_description,
-            &self.pid_to_integrity_level,
-            &self.pid_to_user,
-            &self.pid_to_session_id,
+            &self.row_metrics(),
         );
 
         selection::clear_invalid_selection(self, &grouped_rows);

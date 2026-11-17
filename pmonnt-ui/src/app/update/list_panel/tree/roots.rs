@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use pmonnt_core::process;
 
 use crate::app::PMonNTApp;
-use crate::process_rows::compare_tree_pids;
+use pmonnt_core::view::compare_tree_pids;
 
 pub(super) fn compute_sorted_roots(
     app: &PMonNTApp,
@@ -32,20 +32,9 @@ pub(super) fn compute_sorted_roots(
     }
 
     // Deduplicate and sort roots based on current sort mode
+    let metrics = app.row_metrics();
     roots.sort_by(|&a, &b| {
-        compare_tree_pids(
-            a,
-            b,
-            app.group_sort,
-            app.sort_desc,
-            pid_to_proc,
-            &app.handle_cache,
-            &app.global_thread_counts,
-            &app.cpu_memory_data,
-            &app.io_rate_by_pid,
-            &app.gpu_data,
-            &app.signature_cache_by_path,
-        )
+        compare_tree_pids(a, b, app.group_sort, app.sort_desc, pid_to_proc, &metrics)
     });
     roots.dedup();
 

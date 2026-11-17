@@ -44,6 +44,7 @@ pub mod snapshot;
 pub mod thread;
 #[cfg(windows)]
 pub mod token;
+pub mod view;
 pub mod vt;
 #[cfg(windows)]
 pub mod win;

@@ -12,9 +12,13 @@ publish.workspace = true
 default = []
 handles_v2 = []  # Per-handle name resolution (future)
 
+[lib]
+bench = false
+
 [[bin]]
 name = "test_services"
 path = "src/bin/test_services.rs"
+bench = false
 
 [dependencies]
 
@@ -52,7 +56,17 @@ windows-sys = { version = "0.61", features = [
 ] }
 
 [dev-dependencies]
+gungraun = "0.20"
 tempfile = "3.27"
+
+# Gungraun/Valgrind benchmarks (Linux only; see docs/performance.md).
+[[bench]]
+name = "view_model"
+harness = false
+
+[[bench]]
+name = "core_paths"
+harness = false
 
 [lints]
 workspace = true

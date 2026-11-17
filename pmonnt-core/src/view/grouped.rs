@@ -1,31 +1,29 @@
-use pmonnt_core::{handles::HandleCache, process, win_process_metrics::IoRate};
+use super::RowMetrics;
+use crate::process;
 use std::collections::{HashMap, HashSet};
 
-use crate::view::{GroupSort, GroupedRow};
+use super::{GroupSort, GroupedRow};
 
 /// Build grouped rows for Task Manager-style view (flat, no collapsing)
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn build_grouped_rows(
+pub fn build_grouped_rows(
     processes: &[process::Process],
     selected_pid: Option<u32>,
     filter_text_lower: &str,
     group_sort: GroupSort,
     sort_desc: bool,
     sort_by_leader: bool,
-    handle_cache: &HandleCache,
-    global_thread_counts: &HashMap<u32, usize>,
-    cpu_memory_data: &HashMap<u32, (f32, Option<u64>)>,
-    io_rate_by_pid: &HashMap<u32, IoRate>,
-    gpu_data: &HashMap<u32, (f32, u64, u64, u64)>,
     pid_to_image_path: &HashMap<u32, String>,
-    signature_cache_by_path: &HashMap<String, pmonnt_core::SignatureInfo>,
-    pid_to_command_line: &HashMap<u32, String>,
-    pid_to_company_name: &HashMap<u32, String>,
-    pid_to_file_description: &HashMap<u32, String>,
-    pid_to_integrity_level: &HashMap<u32, String>,
-    pid_to_user: &HashMap<u32, String>,
-    pid_to_session_id: &HashMap<u32, u32>,
+    metrics: &RowMetrics<'_>,
 ) -> Vec<GroupedRow> {
+    let RowMetrics {
+        handle_cache,
+        global_thread_counts,
+        cpu_memory_data,
+        io_rate_by_pid,
+        gpu_data,
+        signature_cache_by_path,
+    } = *metrics;
     let mut rows = Vec::new();
 
     // Group processes by executable name
@@ -638,21 +636,14 @@ pub(crate) fn build_grouped_rows(
             gpu_shared_bytes: total_gpu_shared,
             gpu_total_bytes: total_gpu_total,
             member_pids: pids,
-            // Process Explorer parity fields from representative PID
             image_path: pid_to_image_path.get(&representative_pid).cloned(),
-            command_line: pid_to_command_line.get(&representative_pid).cloned(),
-            company_name: pid_to_company_name.get(&representative_pid).cloned(),
-            file_description: pid_to_file_description.get(&representative_pid).cloned(),
-            integrity_level: pid_to_integrity_level.get(&representative_pid).cloned(),
-            user: pid_to_user.get(&representative_pid).cloned(),
-            session_id: pid_to_session_id.get(&representative_pid).copied(),
         });
     }
 
     if group_sort == GroupSort::VerifiedSigner {
         fn sig_sort_key(
             image_path: Option<&String>,
-            signature_cache_by_path: &HashMap<String, pmonnt_core::SignatureInfo>,
+            signature_cache_by_path: &HashMap<String, crate::SignatureInfo>,
         ) -> (u8, String) {
             let Some(path) = image_path else {
                 return (5, String::new());
@@ -662,24 +653,24 @@ pub(crate) fn build_grouped_rows(
             };
 
             match info.status() {
-                pmonnt_core::SignatureStatus::Valid => (
+                crate::SignatureStatus::Valid => (
                     0,
                     info.signer_name
                         .clone()
                         .unwrap_or_else(|| "verified".to_string())
                         .to_lowercase(),
                 ),
-                pmonnt_core::SignatureStatus::CatalogSigned => (
+                crate::SignatureStatus::CatalogSigned => (
                     1,
                     info.signer_name
                         .clone()
                         .unwrap_or_else(|| "verified (catalog)".to_string())
                         .to_lowercase(),
                 ),
-                pmonnt_core::SignatureStatus::NotSigned => (3, "not signed".to_string()),
-                pmonnt_core::SignatureStatus::Untrusted => (2, "untrusted".to_string()),
-                pmonnt_core::SignatureStatus::Expired => (2, "expired".to_string()),
-                pmonnt_core::SignatureStatus::Invalid => (2, "invalid".to_string()),
+                crate::SignatureStatus::NotSigned => (3, "not signed".to_string()),
+                crate::SignatureStatus::Untrusted => (2, "untrusted".to_string()),
+                crate::SignatureStatus::Expired => (2, "expired".to_string()),
+                crate::SignatureStatus::Invalid => (2, "invalid".to_string()),
             }
         }
 

@@ -4,7 +4,7 @@ use eframe::egui;
 use pmonnt_core::process;
 
 use crate::app::PMonNTApp;
-use crate::process_rows::build_process_rows;
+use pmonnt_core::view::build_process_rows;
 
 mod keyboard;
 mod roots;
@@ -41,12 +41,7 @@ impl PMonNTApp {
             128,
             self.group_sort,
             self.sort_desc,
-            &self.handle_cache,
-            &self.global_thread_counts,
-            &self.cpu_memory_data,
-            &self.io_rate_by_pid,
-            &self.gpu_data,
-            &self.signature_cache_by_path,
+            &self.row_metrics(),
         );
 
         selection::clear_invalid_selection(self, &rows);

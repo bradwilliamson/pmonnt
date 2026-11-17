@@ -254,6 +254,18 @@ pub(crate) struct PMonNTApp {
 }
 
 impl PMonNTApp {
+    /// Per-PID metric lookups for the process-list view model.
+    pub(crate) fn row_metrics(&self) -> pmonnt_core::view::RowMetrics<'_> {
+        pmonnt_core::view::RowMetrics {
+            handle_cache: &self.handle_cache,
+            global_thread_counts: &self.global_thread_counts,
+            cpu_memory_data: &self.cpu_memory_data,
+            io_rate_by_pid: &self.io_rate_by_pid,
+            gpu_data: &self.gpu_data,
+            signature_cache_by_path: &self.signature_cache_by_path,
+        }
+    }
+
     pub(crate) fn dump_confirm_dialog_state(&self) -> Option<DumpConfirmDialogState> {
         self.dump_confirm_dialog.clone()
     }

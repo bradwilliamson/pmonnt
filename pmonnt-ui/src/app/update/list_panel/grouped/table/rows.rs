@@ -1026,12 +1026,6 @@ mod tests {
             gpu_total_bytes: 0,
             member_pids,
             image_path: None,
-            command_line: None,
-            company_name: None,
-            file_description: None,
-            integrity_level: None,
-            user: None,
-            session_id: None,
         }
     }
 

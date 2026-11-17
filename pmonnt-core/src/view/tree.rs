@@ -1,11 +1,12 @@
-use pmonnt_core::{handles::HandleCache, process, win_process_metrics::IoRate};
+use super::RowMetrics;
+use crate::process;
 use std::collections::{HashMap, HashSet};
 
-use crate::view::{GroupSort, ProcRow};
+use super::{GroupSort, ProcRow};
 
 /// Build a flattened list of visible rows for virtualized rendering
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn build_process_rows(
+pub fn build_process_rows(
     roots: &[u32],
     children: &HashMap<u32, Vec<u32>>,
     pid_to_proc: &HashMap<u32, &process::Process>,
@@ -16,12 +17,7 @@ pub(crate) fn build_process_rows(
     max_depth: usize,
     group_sort: GroupSort,
     sort_desc: bool,
-    handle_cache: &HandleCache,
-    global_thread_counts: &HashMap<u32, usize>,
-    cpu_memory_data: &HashMap<u32, (f32, Option<u64>)>,
-    io_rate_by_pid: &HashMap<u32, IoRate>,
-    gpu_data: &HashMap<u32, (f32, u64, u64, u64)>,
-    signature_cache_by_path: &HashMap<String, pmonnt_core::SignatureInfo>,
+    metrics: &RowMetrics<'_>,
 ) -> Vec<ProcRow> {
     let mut rows = Vec::new();
     let mut visited = HashSet::new();
@@ -41,32 +37,29 @@ pub(crate) fn build_process_rows(
             &mut rows,
             group_sort,
             sort_desc,
-            handle_cache,
-            global_thread_counts,
-            cpu_memory_data,
-            io_rate_by_pid,
-            gpu_data,
-            signature_cache_by_path,
+            metrics,
         );
     }
 
     rows
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn compare_tree_pids(
+pub fn compare_tree_pids(
     a: u32,
     b: u32,
     group_sort: GroupSort,
     sort_desc: bool,
     pid_to_proc: &HashMap<u32, &process::Process>,
-    handle_cache: &HandleCache,
-    global_thread_counts: &HashMap<u32, usize>,
-    cpu_memory_data: &HashMap<u32, (f32, Option<u64>)>,
-    io_rate_by_pid: &HashMap<u32, IoRate>,
-    gpu_data: &HashMap<u32, (f32, u64, u64, u64)>,
-    signature_cache_by_path: &HashMap<String, pmonnt_core::SignatureInfo>,
+    metrics: &RowMetrics<'_>,
 ) -> std::cmp::Ordering {
+    let RowMetrics {
+        handle_cache,
+        global_thread_counts,
+        cpu_memory_data,
+        io_rate_by_pid,
+        gpu_data,
+        signature_cache_by_path,
+    } = *metrics;
     let name_a = pid_to_proc.get(&a).map_or("", |p| p.name.as_str());
     let name_b = pid_to_proc.get(&b).map_or("", |p| p.name.as_str());
 
@@ -216,7 +209,7 @@ pub(crate) fn compare_tree_pids(
             fn sig_sort_key(
                 pid: u32,
                 pid_to_proc: &HashMap<u32, &process::Process>,
-                signature_cache_by_path: &HashMap<String, pmonnt_core::SignatureInfo>,
+                signature_cache_by_path: &HashMap<String, crate::SignatureInfo>,
             ) -> (u8, String) {
                 let Some(proc) = pid_to_proc.get(&pid) else {
                     return (5, String::new());
@@ -229,24 +222,24 @@ pub(crate) fn compare_tree_pids(
                 };
 
                 match info.status() {
-                    pmonnt_core::SignatureStatus::Valid => (
+                    crate::SignatureStatus::Valid => (
                         0,
                         info.signer_name
                             .clone()
                             .unwrap_or_else(|| "verified".to_string())
                             .to_lowercase(),
                     ),
-                    pmonnt_core::SignatureStatus::CatalogSigned => (
+                    crate::SignatureStatus::CatalogSigned => (
                         1,
                         info.signer_name
                             .clone()
                             .unwrap_or_else(|| "verified (catalog)".to_string())
                             .to_lowercase(),
                     ),
-                    pmonnt_core::SignatureStatus::NotSigned => (3, "not signed".to_string()),
-                    pmonnt_core::SignatureStatus::Untrusted => (2, "untrusted".to_string()),
-                    pmonnt_core::SignatureStatus::Expired => (2, "expired".to_string()),
-                    pmonnt_core::SignatureStatus::Invalid => (2, "invalid".to_string()),
+                    crate::SignatureStatus::NotSigned => (3, "not signed".to_string()),
+                    crate::SignatureStatus::Untrusted => (2, "untrusted".to_string()),
+                    crate::SignatureStatus::Expired => (2, "expired".to_string()),
+                    crate::SignatureStatus::Invalid => (2, "invalid".to_string()),
                 }
             }
 
@@ -280,12 +273,7 @@ fn build_rows_recursive(
     rows: &mut Vec<ProcRow>,
     group_sort: GroupSort,
     sort_desc: bool,
-    handle_cache: &HandleCache,
-    global_thread_counts: &HashMap<u32, usize>,
-    cpu_memory_data: &HashMap<u32, (f32, Option<u64>)>,
-    io_rate_by_pid: &HashMap<u32, IoRate>,
-    gpu_data: &HashMap<u32, (f32, u64, u64, u64)>,
-    signature_cache_by_path: &HashMap<String, pmonnt_core::SignatureInfo>,
+    metrics: &RowMetrics<'_>,
 ) {
     // Prevent cycles and stack overflow
     if visited.contains(&pid) || depth >= max_depth {
@@ -344,21 +332,8 @@ fn build_rows_recursive(
     {
         // Sort children by current mode
         let mut sorted_children: Vec<u32> = child_pids.clone();
-        sorted_children.sort_by(|&a, &b| {
-            compare_tree_pids(
-                a,
-                b,
-                group_sort,
-                sort_desc,
-                pid_to_proc,
-                handle_cache,
-                global_thread_counts,
-                cpu_memory_data,
-                io_rate_by_pid,
-                gpu_data,
-                signature_cache_by_path,
-            )
-        });
+        sorted_children
+            .sort_by(|&a, &b| compare_tree_pids(a, b, group_sort, sort_desc, pid_to_proc, metrics));
 
         for &child_pid in &sorted_children {
             build_rows_recursive(
@@ -375,12 +350,7 @@ fn build_rows_recursive(
                 rows,
                 group_sort,
                 sort_desc,
-                handle_cache,
-                global_thread_counts,
-                cpu_memory_data,
-                io_rate_by_pid,
-                gpu_data,
-                signature_cache_by_path,
+                metrics,
             );
         }
     }

@@ -20,6 +20,13 @@ codegen-units = 16
 [profile.dev.package."*"]
 opt-level = 0
 
+# Benchmarks run under Valgrind: keep symbols and line tables so Callgrind/DHAT output
+# names functions, while still optimizing like a release build.
+[profile.bench]
+inherits = "release"
+debug = true
+strip = "none"
+
 [profile.release]
 lto = "thin"
 codegen-units = 1
