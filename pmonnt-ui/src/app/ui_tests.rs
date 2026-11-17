@@ -19,9 +19,12 @@ use super::PMonNTApp;
 use crate::view::RightTab;
 
 /// The real app in a 1400x900 test window.
+/// The size of the test window.
+pub(crate) const WINDOW: egui::Vec2 = egui::vec2(1400.0, 900.0);
+
 pub(crate) fn app_harness() -> Harness<'static, PMonNTApp> {
     let mut harness = Harness::builder()
-        .with_size(egui::vec2(1400.0, 900.0))
+        .with_size(WINDOW)
         // Many icon-only widgets have no accessible name yet; `unnamed_widgets` lists them.
         .with_accessibility_check(false)
         // The app loads system fonts in production; the harness only has egui's built-in
@@ -546,16 +549,49 @@ fn clicking_anywhere_in_a_row_selects_it() {
     let me = std::process::id();
     let mut h = app_harness();
     let row = select_in_tree(&mut h, me);
-    let y = widget_with_text(&h, &row).rect().center().y;
-    // Name column, a middle column, and near the right of the list.
-    for x in [20.0, 520.0, 900.0] {
+    let name = widget_with_text(&h, &row).rect();
+    let y = name.center().y;
+
+    // Click points come from the row's own cells, not fixed positions: the details panel
+    // widens to fit what it shows for the process, so where the list ends varies by machine.
+    let list_right = h
+        .query_all_by_role(egui::accesskit::Role::Splitter)
+        .map(|splitter| splitter.rect().min.x)
+        .filter(|&x| x > name.max.x)
+        .fold(WINDOW.x, f32::min);
+    let mut cells: Vec<egui::Rect> = h
+        .query_all_by_role(egui::accesskit::Role::Label)
+        .map(|label| label.rect())
+        .filter(|r| r.min.y <= y && y <= r.max.y && r.min.x > name.max.x && r.max.x < list_right)
+        .collect();
+    cells.sort_by(|a, b| a.min.x.total_cmp(&b.min.x));
+    assert!(
+        cells.len() >= 3,
+        "expected the row's cells left of x={list_right}, found {cells:?}"
+    );
+    let middle = cells[cells.len() / 2];
+    // Blank space after a cell's text, well clear of the next column's resize handle.
+    let Some(gap) = cells
+        .windows(2)
+        .rev()
+        .find(|pair| pair[1].min.x - pair[0].max.x >= 30.0)
+    else {
+        panic!("no blank space between the row's cells: {cells:?}");
+    };
+    let padding = gap[0].max.x + (gap[1].min.x - gap[0].max.x) / 3.0;
+
+    for (what, x) in [
+        ("the process name", name.center().x),
+        ("a middle cell's text", middle.center().x),
+        ("blank space in a cell", padding),
+    ] {
         h.state_mut().selected_pid = None;
         h.run_steps(3);
         click_at(&mut h, egui::pos2(x, y));
         assert_eq!(
             h.state().selected_pid,
             Some(me),
-            "click at x={x} did not select"
+            "clicking {what} at x={x} (list ends at x={list_right}) did not select"
         );
     }
 }
