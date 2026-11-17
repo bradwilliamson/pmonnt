@@ -166,6 +166,9 @@ unsafe fn read_header<T: Copy>(buf: &AlignedBuf) -> Result<T, SecurityError> {
 
 /// Borrow the variable-length array that follows a token information header.
 fn trailing_array<T>(buf: &AlignedBuf, offset: usize, count: usize) -> Result<&[T], SecurityError> {
+    if count == 0 {
+        return Ok(&[]);
+    }
     let bytes = count.checked_mul(std::mem::size_of::<T>());
     if bytes.is_none_or(|b| offset.checked_add(b).is_none_or(|end| end > buf.len())) {
         return Err(SecurityError::Win32 {
@@ -413,11 +416,10 @@ fn privilege_attrs_to_strings(attrs: u32) -> Vec<String> {
 
 fn token_groups(token: HANDLE) -> Result<Vec<GroupEntry>, SecurityError> {
     let buf = token_info_raw(token, TOKEN_INFORMATION_CLASS(2))?; // TokenGroups
-    // SAFETY: `buf` is populated by `GetTokenInformation(TokenGroups)` and begins with a
-    // `TOKEN_GROUPS`. `read_header` checks the size; AlignedBuf is 8-byte aligned.
-    let groups = unsafe { read_header::<TOKEN_GROUPS>(&buf)? };
-
-    let count = groups.GroupCount as usize;
+    // Read only the leading count: an empty list is just 4 bytes, shorter than
+    // size_of::<TOKEN_GROUPS>() (which includes a one-element placeholder array).
+    // SAFETY: TokenGroups data starts with the u32 GroupCount.
+    let count = unsafe { read_header::<u32>(&buf)? } as usize;
     // SAFETY: The groups array begins at the `Groups` field within the returned `TOKEN_GROUPS`
     // buffer. The OS promises the buffer is large enough for `count` entries.
     let slice = trailing_array::<SID_AND_ATTRIBUTES>(
@@ -503,10 +505,10 @@ fn luid_to_display(name: &str) -> Option<String> {
 
 fn token_privileges(token: HANDLE) -> Result<Vec<PrivEntry>, SecurityError> {
     let buf = token_info_raw(token, TOKEN_INFORMATION_CLASS(3))?; // TokenPrivileges
-    // SAFETY: `buf` is populated by `GetTokenInformation(TokenPrivileges)` and begins with a
-    // `TOKEN_PRIVILEGES`. `read_header` checks the size; AlignedBuf is 8-byte aligned.
-    let tp = unsafe { read_header::<TOKEN_PRIVILEGES>(&buf)? };
-    let count = tp.PrivilegeCount as usize;
+    // Read only the leading count: a token with every privilege removed returns just the
+    // 4-byte PrivilegeCount, shorter than size_of::<TOKEN_PRIVILEGES>().
+    // SAFETY: TokenPrivileges data starts with the u32 PrivilegeCount.
+    let count = unsafe { read_header::<u32>(&buf)? } as usize;
 
     log::debug!("token_privileges: found {count} privilege(s)");
 

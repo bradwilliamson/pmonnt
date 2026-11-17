@@ -61,6 +61,7 @@ pub fn compare_tree_pids(
         io_rate_by_pid,
         gpu_data,
         signature_cache_by_path,
+        ..
     } = *metrics;
     let name_a = pid_to_proc.get(&a).map_or("", |p| p.name.as_str());
     let name_b = pid_to_proc.get(&b).map_or("", |p| p.name.as_str());

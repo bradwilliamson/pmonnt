@@ -357,7 +357,9 @@ pub(super) fn try_build_app() -> anyhow::Result<PMonNTApp> {
     drop(thread_result_tx);
 
     // Load handle leak detector config
-    let mut handle_cache = HandleCache::new(5);
+    // Must outlive the slowest adaptive scan interval (10 s) plus a slow scan, or handle
+    // counts blink out between scans and shuffle the handle sort.
+    let mut handle_cache = HandleCache::new(30);
     let config_path = get_config_path();
     let _ = handle_cache.load_config(&config_path);
 

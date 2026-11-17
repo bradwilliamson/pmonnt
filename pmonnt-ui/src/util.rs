@@ -268,21 +268,19 @@ pub(crate) fn truncate_path_middle(path: &str, max_width: usize) -> String {
         return path.to_string();
     }
 
+    // Widths are in bytes; every cut snaps to a char boundary so non-ASCII paths can't panic.
     const ELLIPSIS: &str = "...";
     let available = max_width.saturating_sub(ELLIPSIS.len());
     if available < 4 {
-        return format!("{}...", &path[..path.len().min(max_width)]);
+        return format!("{}...", &path[..path.floor_char_boundary(max_width)]);
     }
 
     let start_len = available / 2;
     let end_len = available - start_len;
+    let head = &path[..path.floor_char_boundary(start_len)];
+    let tail = &path[path.ceil_char_boundary(path.len() - end_len)..];
 
-    format!(
-        "{}{}{}",
-        &path[..start_len],
-        ELLIPSIS,
-        &path[path.len() - end_len..]
-    )
+    format!("{head}{ELLIPSIS}{tail}")
 }
 
 /// Run one headless egui pass for tests.
@@ -303,6 +301,15 @@ pub(crate) fn run_headless(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn truncate_path_middle_never_splits_a_character() {
+        let path = r"C:\abcdefghijklmnéé\ünïcödé\日本語のフォルダ\データ\file.exe";
+        for width in 0..path.len() + 2 {
+            let out = truncate_path_middle(path, width);
+            assert!(out.len() <= path.len().max(width + 3));
+        }
+    }
 
     // ========================================================================
     // format_number_* tests

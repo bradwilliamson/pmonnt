@@ -113,6 +113,7 @@ impl Fixture {
             io_rate_by_pid: &self.io_rates,
             gpu_data: &self.gpu,
             signature_cache_by_path: &self.signatures,
+            pid_to_image_path: &self.image_paths,
         }
     }
 

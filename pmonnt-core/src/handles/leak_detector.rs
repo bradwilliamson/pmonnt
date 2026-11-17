@@ -41,12 +41,13 @@ impl HandleLeakDetector {
         leak_threshold: u32,
         flat_tolerance: usize,
     ) -> Self {
+        const MAX_HISTORY: usize = 120; // about 10 minutes at a 5 s interval
         Self {
             history: VecDeque::new(),
-            max_history: 120, // Keep 120 samples (about 10 minutes at 5s interval)
+            max_history: MAX_HISTORY,
             leak_threshold,
             consecutive_increases: 0,
-            consecutive_threshold,
+            consecutive_threshold: clamp_threshold(consecutive_threshold, MAX_HISTORY),
             flat_tolerance,
             flat_samples_used: 0,
         }
@@ -190,7 +191,7 @@ impl HandleLeakDetector {
         leak_threshold: u32,
         flat_tolerance: usize,
     ) {
-        self.consecutive_threshold = consecutive_threshold;
+        self.consecutive_threshold = clamp_threshold(consecutive_threshold, self.max_history);
         self.leak_threshold = leak_threshold;
         self.flat_tolerance = flat_tolerance;
 
@@ -206,9 +207,27 @@ impl Default for HandleLeakDetector {
     }
 }
 
+/// The leak window must hold at least two samples (to have a first and last value) and can't
+/// exceed the stored history. Persisted configs are user-editable, so clamp rather than trust.
+fn clamp_threshold(consecutive_threshold: usize, max_history: usize) -> usize {
+    consecutive_threshold.clamp(2, max_history)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn zero_threshold_from_config_does_not_panic() {
+        let mut d = HandleLeakDetector::new_with_config(0, 10, 1);
+        for i in 0..10 {
+            d.add_sample(100 + i * 50);
+        }
+        let _ = d.is_leaking();
+        d.update_config(0, 10, 1);
+        d.add_sample(1_000);
+        let _ = d.is_leaking();
+    }
 
     #[test]
     fn test_leak_detector_consecutive_increases() {

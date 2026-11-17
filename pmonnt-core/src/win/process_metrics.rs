@@ -87,6 +87,8 @@ pub struct SystemProcessEntry {
     pub user_time_100ns: u64,
     pub working_set_bytes: u64,
     pub private_bytes: u64,
+    /// Reserved + committed virtual address space.
+    pub virtual_size_bytes: u64,
     pub io: IoCounters,
 }
 
@@ -104,6 +106,7 @@ impl SystemProcessEntry {
             user_time_100ns: nonneg(spi.user_time),
             working_set_bytes: spi.working_set_size as u64,
             private_bytes: spi.private_page_count as u64,
+            virtual_size_bytes: spi.virtual_size as u64,
             io: IoCounters {
                 read_bytes: nonneg(spi.read_transfer_count),
                 write_bytes: nonneg(spi.write_transfer_count),

@@ -116,7 +116,10 @@ pub(crate) fn sort_tree_pids(
             let mut keyed: Vec<((u8, String), u32)> = pids
                 .iter()
                 .map(|&pid| {
-                    let path = snapshot.get_process(pid).and_then(|p| p.path.as_ref());
+                    let path = metrics
+                        .pid_to_image_path
+                        .get(&pid)
+                        .or_else(|| snapshot.get_process(pid).and_then(|p| p.path.as_ref()));
                     (signer_key(path, metrics.signature_cache_by_path), pid)
                 })
                 .collect();

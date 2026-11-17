@@ -23,7 +23,6 @@ struct Keyed<'s> {
 pub fn build_grouped_rows(
     snapshot: &ProcessSnapshot,
     opts: &GroupedOptions<'_>,
-    pid_to_image_path: &std::collections::HashMap<u32, String>,
     metrics: &RowMetrics<'_>,
 ) -> Vec<GroupedRow> {
     let handles = metrics.handle_cache.fresh_summaries();
@@ -55,7 +54,6 @@ pub fn build_grouped_rows(
             pids,
             group_matches,
             opts.selected_pid,
-            pid_to_image_path,
             metrics,
             handles,
         ));
@@ -260,14 +258,12 @@ fn sort_groups(keyed: &mut [Keyed<'_>], opts: &GroupedOptions<'_>) {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn aggregate_row(
     snapshot: &ProcessSnapshot,
     group: &NameGroup,
     pids: Vec<u32>,
     is_match: bool,
     selected_pid: Option<u32>,
-    pid_to_image_path: &std::collections::HashMap<u32, String>,
     metrics: &RowMetrics<'_>,
     handles: Handles<'_>,
 ) -> GroupedRow {
@@ -301,7 +297,7 @@ fn aggregate_row(
         gpu_shared_bytes: 0,
         gpu_total_bytes: 0,
         member_pids: Vec::new(),
-        image_path: pid_to_image_path.get(&representative_pid).cloned(),
+        image_path: metrics.pid_to_image_path.get(&representative_pid).cloned(),
     };
 
     let mut total_memory: u64 = 0;

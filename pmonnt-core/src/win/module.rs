@@ -271,32 +271,42 @@ fn list_modules_psapi(pid: u32) -> Result<Vec<ModuleInfo>, PmonntError> {
             )));
         }
 
-        // Allocate buffer for module handles
-        let module_count = (needed as usize) / std::mem::size_of::<usize>();
+        // Allocate buffer for module handles. The target can load more DLLs between calls,
+        // so retry with the larger size it reports (as EnumProcessModulesEx documents).
+        let mut module_count = (needed as usize) / std::mem::size_of::<usize>();
         if module_count == 0 {
             return Ok(modules);
         }
 
-        let mut module_handles: Vec<usize> = vec![0; module_count];
+        let mut module_handles: Vec<usize> = Vec::new();
         let mut actual_needed: u32 = 0;
-
-        let result = K32EnumProcessModulesEx(
-            raw_handle,
-            module_handles.as_mut_ptr(),
-            needed,
-            &raw mut actual_needed,
-            LIST_MODULES_ALL,
-        );
-
-        if result == 0 {
-            let err = std::io::Error::last_os_error();
-            return Err(PmonntError::ModuleEnumerationFailed(format!(
-                "PSAPI: EnumProcessModulesEx (second call) failed: {err}"
-            )));
+        for _attempt in 0..4 {
+            // Headroom for modules loaded while we enumerate.
+            module_handles = vec![0; module_count + 16];
+            let capacity_bytes = u32::try_from(module_handles.len() * std::mem::size_of::<usize>())
+                .unwrap_or(u32::MAX);
+            let result = K32EnumProcessModulesEx(
+                raw_handle,
+                module_handles.as_mut_ptr(),
+                capacity_bytes,
+                &raw mut actual_needed,
+                LIST_MODULES_ALL,
+            );
+            if result == 0 {
+                let err = std::io::Error::last_os_error();
+                return Err(PmonntError::ModuleEnumerationFailed(format!(
+                    "PSAPI: EnumProcessModulesEx (second call) failed: {err}"
+                )));
+            }
+            if actual_needed <= capacity_bytes {
+                break;
+            }
+            module_count = (actual_needed as usize) / std::mem::size_of::<usize>();
         }
 
-        // Get info for each module
-        let actual_count = (actual_needed as usize) / std::mem::size_of::<usize>();
+        // Get info for each module (never past what the buffer holds)
+        let actual_count =
+            ((actual_needed as usize) / std::mem::size_of::<usize>()).min(module_handles.len());
         for &hmod in &module_handles[..actual_count] {
             // Get module name
             let mut name_buf: [u16; 260] = [0; 260];
@@ -497,7 +507,9 @@ unsafe fn read_unicode_string(handle: isize, us: &UNICODE_STRING) -> String {
         return String::new();
     }
 
-    let len_chars = (us.Length / 2) as usize;
+    // `Length` comes from the target process and is a byte count; read whole UTF-16 units
+    // only (an odd length would otherwise overrun the buffer by one byte).
+    let len_chars = usize::from(us.Length / 2);
     if len_chars == 0 || len_chars > 32768 {
         return String::new();
     }
@@ -505,14 +517,14 @@ unsafe fn read_unicode_string(handle: isize, us: &UNICODE_STRING) -> String {
     let mut buffer: Vec<u16> = vec![0; len_chars];
     let mut bytes_read: usize = 0;
 
-    // SAFETY: `buffer` holds `len_chars * 2 >= us.Length` writable bytes, and
-    // ReadProcessMemory checks the remote range itself.
+    // SAFETY: `buffer` has exactly `len_chars * 2` writable bytes and we ask for no more;
+    // ReadProcessMemory validates the remote range itself.
     let result = unsafe {
         ReadProcessMemory(
             handle,
             us.Buffer,
             buffer.as_mut_ptr().cast::<std::ffi::c_void>(),
-            us.Length as usize,
+            len_chars * 2,
             &raw mut bytes_read,
         )
     };
@@ -521,6 +533,8 @@ unsafe fn read_unicode_string(handle: isize, us: &UNICODE_STRING) -> String {
         return String::new();
     }
 
+    // Only trust what was actually copied.
+    buffer.truncate(bytes_read / 2);
     wchar_to_string(&buffer)
 }
 

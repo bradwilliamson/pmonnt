@@ -114,7 +114,8 @@ impl PMonNTApp {
             let current_working_set = mem_info.WorkingSetSize;
             let current_peak_working_set = mem_info.PeakWorkingSetSize;
 
-            stats.virtual_size = Some(current_commit); // Virtual size is commit size in Process Explorer
+            // Virtual size is the address space reserved + committed (not the commit charge).
+            stats.virtual_size = spi.map(|e| e.virtual_size_bytes as usize);
             stats.private_bytes = Some(current_private);
             stats.commit_charge = Some(current_commit);
             stats.peak_commit_charge = Some(current_peak_commit);

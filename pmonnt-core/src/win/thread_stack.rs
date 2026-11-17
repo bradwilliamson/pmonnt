@@ -147,6 +147,14 @@ pub fn thread_stack_trace(
         return Ok(String::new());
     }
 
+    // Never suspend one of our own threads: it may hold the heap or another lock this walk
+    // needs (deadlock), and suspending the calling thread itself never returns.
+    if pid == std::process::id() {
+        return Err(ThreadStackError::Unsupported {
+            reason: "stack capture of PMonNT's own threads is not supported".to_string(),
+        });
+    }
+
     // Best-effort: if we're elevated, this often improves access to service / higher-IL targets.
     // If it fails, we continue (we still want a clear error message below).
     let _ = crate::win::enable_debug_privilege();

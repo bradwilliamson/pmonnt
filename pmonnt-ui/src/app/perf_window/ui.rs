@@ -81,10 +81,12 @@ impl PMonNTApp {
                 let elapsed = w
                     .last_sample
                     .map_or(1.0, |last| now.duration_since(last).as_secs_f64());
+                // Deltas are against the most recent sample, over the interval since it was
+                // taken (comparing with `last_stats` doubled every rate: two ticks / one tick).
                 if let Some(new_stats) =
-                    PMonNTApp::sample_perf_stats(pid, w.last_stats.as_ref(), elapsed)
+                    PMonNTApp::sample_perf_stats(pid, w.current_stats.as_ref(), elapsed)
                 {
-                    w.last_stats = w.current_stats.clone();
+                    w.last_stats = w.current_stats.take();
                     w.current_stats = Some(new_stats);
                     w.last_sample = Some(now);
 

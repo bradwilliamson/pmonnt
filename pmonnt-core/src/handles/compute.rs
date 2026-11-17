@@ -12,6 +12,14 @@ use std::collections::HashMap;
 pub fn compute_summaries(
     handles: &[crate::handles::entry::HandleEntry],
 ) -> HashMap<u32, HandleSummary> {
+    summaries_from_counts(&count_handle_types(handles))
+}
+
+/// Per-PID `(type index, count)` pairs, in first-seen order. One pass over the handle table;
+/// see [`compute_summaries`] for why it counts runs.
+pub fn count_handle_types(
+    handles: &[crate::handles::entry::HandleEntry],
+) -> PidMap<Vec<(u16, u32)>> {
     let mut per_pid: PidMap<Vec<(u16, u32)>> = PidMap::default();
     let mut counts: Vec<u32> = Vec::new();
     let mut touched: Vec<u16> = Vec::new();
@@ -36,10 +44,14 @@ pub fn compute_summaries(
             }
         }
     }
-
     per_pid
-        .into_iter()
-        .map(|(pid, entries)| (pid, HandleSummary::from_entries(&entries)))
+}
+
+/// Build summaries from [`count_handle_types`] output.
+pub fn summaries_from_counts(counts: &PidMap<Vec<(u16, u32)>>) -> HashMap<u32, HandleSummary> {
+    counts
+        .iter()
+        .map(|(&pid, entries)| (pid, HandleSummary::from_entries(entries)))
         .collect()
 }
 

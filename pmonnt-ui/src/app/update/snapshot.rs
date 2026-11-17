@@ -37,14 +37,12 @@ impl PMonNTApp {
                     .collect();
                 self.expanded_pids.retain(|pid| alive.contains(pid));
 
-                // Hardening: Prune expanded_groups to only include groups that still exist
-                let alive_groups: HashSet<String> = self
-                    .current_snapshot
-                    .processes
-                    .iter()
-                    .map(|p| p.name.to_lowercase())
-                    .collect();
-                self.expanded_groups.retain(|k| alive_groups.contains(k));
+                // Hardening: Prune expanded_groups to only include groups that still exist.
+                // Groups are keyed by exact executable name (as the grouped table inserts them);
+                // comparing lowercase names here collapsed every mixed-case group on refresh.
+                let groups = &self.current_snapshot.view_index().groups;
+                self.expanded_groups
+                    .retain(|k| groups.iter().any(|g| &g.name == k));
 
                 // Close perf windows for exited processes
                 self.perf_windows.retain(|pid, _| alive.contains(pid));

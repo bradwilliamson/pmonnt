@@ -84,7 +84,6 @@ fn grouped_rows(i: Input) -> (Vec<GroupedRow>, Input) {
     let rows = black_box(build_grouped_rows(
         &i.snapshot,
         &grouped_options(&i),
-        &i.fx.image_paths,
         &i.fx.metrics(),
     ));
     (rows, i)
@@ -112,7 +111,6 @@ fn grouped_frame(i: Input) -> (Vec<GroupedRow>, Input) {
     let rows = black_box(build_grouped_rows(
         &i.snapshot,
         &grouped_options(&i),
-        &i.fx.image_paths,
         &i.fx.metrics(),
     ));
     (rows, i)

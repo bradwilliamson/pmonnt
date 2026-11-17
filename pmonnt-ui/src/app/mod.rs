@@ -264,6 +264,7 @@ impl PMonNTApp {
             io_rate_by_pid: &self.io_rate_by_pid,
             gpu_data: &self.gpu_data,
             signature_cache_by_path: &self.signature_cache_by_path,
+            pid_to_image_path: &self.pid_to_image_path,
         }
     }
 

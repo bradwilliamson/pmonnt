@@ -73,7 +73,6 @@ fn grouped_sort_cpu_desc_uses_total_cpu_sum() {
             sort_desc: true,
             sort_by_leader: false,
         },
-        &empty_str_map,
         &RowMetrics {
             handle_cache: &handle_cache,
             global_thread_counts: &global_thread_counts,
@@ -81,6 +80,7 @@ fn grouped_sort_cpu_desc_uses_total_cpu_sum() {
             io_rate_by_pid: &io_rate_by_pid,
             gpu_data: &gpu_data,
             signature_cache_by_path: &empty_sig_cache,
+            pid_to_image_path: &empty_str_map,
         },
     );
 
@@ -119,7 +119,6 @@ fn grouped_sort_cpu_leader_toggle_changes_first_group() {
             sort_desc: true,
             sort_by_leader: true,
         },
-        &empty_str_map,
         &RowMetrics {
             handle_cache: &handle_cache,
             global_thread_counts: &global_thread_counts,
@@ -127,6 +126,7 @@ fn grouped_sort_cpu_leader_toggle_changes_first_group() {
             io_rate_by_pid: &io_rate_by_pid,
             gpu_data: &gpu_data,
             signature_cache_by_path: &empty_sig_cache,
+            pid_to_image_path: &empty_str_map,
         },
     );
     assert_eq!(desc[0].name, "b.exe");
@@ -140,7 +140,6 @@ fn grouped_sort_cpu_leader_toggle_changes_first_group() {
             sort_desc: false,
             sort_by_leader: true,
         },
-        &empty_str_map,
         &RowMetrics {
             handle_cache: &handle_cache,
             global_thread_counts: &global_thread_counts,
@@ -148,6 +147,7 @@ fn grouped_sort_cpu_leader_toggle_changes_first_group() {
             io_rate_by_pid: &io_rate_by_pid,
             gpu_data: &gpu_data,
             signature_cache_by_path: &empty_sig_cache,
+            pid_to_image_path: &empty_str_map,
         },
     );
     assert_eq!(asc[0].name, "a.exe");
@@ -179,7 +179,6 @@ fn leader_sort_falls_back_to_cpu_when_sort_is_name() {
             sort_desc: true,
             sort_by_leader: true,
         },
-        &empty_str_map,
         &RowMetrics {
             handle_cache: &handle_cache,
             global_thread_counts: &global_thread_counts,
@@ -187,6 +186,7 @@ fn leader_sort_falls_back_to_cpu_when_sort_is_name() {
             io_rate_by_pid: &io_rate_by_pid,
             gpu_data: &gpu_data,
             signature_cache_by_path: &empty_sig_cache,
+            pid_to_image_path: &empty_str_map,
         },
     );
     assert_eq!(desc[0].name, "b.exe");
@@ -200,7 +200,6 @@ fn leader_sort_falls_back_to_cpu_when_sort_is_name() {
             sort_desc: false,
             sort_by_leader: true,
         },
-        &empty_str_map,
         &RowMetrics {
             handle_cache: &handle_cache,
             global_thread_counts: &global_thread_counts,
@@ -208,6 +207,7 @@ fn leader_sort_falls_back_to_cpu_when_sort_is_name() {
             io_rate_by_pid: &io_rate_by_pid,
             gpu_data: &gpu_data,
             signature_cache_by_path: &empty_sig_cache,
+            pid_to_image_path: &empty_str_map,
         },
     );
     assert_eq!(asc[0].name, "a.exe");
@@ -238,7 +238,6 @@ fn grouped_sort_memory_desc_uses_total_memory_sum() {
             sort_desc: true,
             sort_by_leader: false,
         },
-        &empty_str_map,
         &RowMetrics {
             handle_cache: &handle_cache,
             global_thread_counts: &global_thread_counts,
@@ -246,6 +245,7 @@ fn grouped_sort_memory_desc_uses_total_memory_sum() {
             io_rate_by_pid: &io_rate_by_pid,
             gpu_data: &gpu_data,
             signature_cache_by_path: &empty_sig_cache,
+            pid_to_image_path: &empty_str_map,
         },
     );
 
@@ -285,7 +285,6 @@ fn grouped_sort_gpu_desc_uses_group_max_gpu() {
             sort_desc: true,
             sort_by_leader: false,
         },
-        &empty_str_map,
         &RowMetrics {
             handle_cache: &handle_cache,
             global_thread_counts: &global_thread_counts,
@@ -293,6 +292,7 @@ fn grouped_sort_gpu_desc_uses_group_max_gpu() {
             io_rate_by_pid: &io_rate_by_pid,
             gpu_data: &gpu_data,
             signature_cache_by_path: &empty_sig_cache,
+            pid_to_image_path: &empty_str_map,
         },
     );
 
@@ -321,6 +321,7 @@ fn tree_sort_cpu_desc_sorts_siblings_by_cpu() {
 
     let gpu_data: HashMap<u32, (f32, u64, u64, u64)> = HashMap::new();
     let empty_sig_cache: HashMap<String, crate::SignatureInfo> = HashMap::new();
+    let empty_str_map: HashMap<u32, String> = HashMap::new();
 
     let rows = build_process_rows(
         &snapshot_of(&processes),
@@ -340,6 +341,7 @@ fn tree_sort_cpu_desc_sorts_siblings_by_cpu() {
             io_rate_by_pid: &io_rate_by_pid,
             gpu_data: &gpu_data,
             signature_cache_by_path: &empty_sig_cache,
+            pid_to_image_path: &empty_str_map,
         },
     );
 
@@ -369,6 +371,7 @@ fn tree_sort_memory_desc_sorts_siblings_by_memory() {
 
     let gpu_data: HashMap<u32, (f32, u64, u64, u64)> = HashMap::new();
     let empty_sig_cache: HashMap<String, crate::SignatureInfo> = HashMap::new();
+    let empty_str_map: HashMap<u32, String> = HashMap::new();
 
     let rows = build_process_rows(
         &snapshot_of(&processes),
@@ -388,6 +391,7 @@ fn tree_sort_memory_desc_sorts_siblings_by_memory() {
             io_rate_by_pid: &io_rate_by_pid,
             gpu_data: &gpu_data,
             signature_cache_by_path: &empty_sig_cache,
+            pid_to_image_path: &empty_str_map,
         },
     );
 
@@ -411,6 +415,7 @@ fn tree_expansion_controls_child_visibility() {
     let io_rate_by_pid: HashMap<u32, IoRate> = HashMap::new();
     let gpu_data: HashMap<u32, (f32, u64, u64, u64)> = HashMap::new();
     let empty_sig_cache: HashMap<String, crate::SignatureInfo> = HashMap::new();
+    let empty_str_map: HashMap<u32, String> = HashMap::new();
 
     // Collapsed: only root is visible.
     let expanded: HashSet<u32> = HashSet::new();
@@ -432,6 +437,7 @@ fn tree_expansion_controls_child_visibility() {
             io_rate_by_pid: &io_rate_by_pid,
             gpu_data: &gpu_data,
             signature_cache_by_path: &empty_sig_cache,
+            pid_to_image_path: &empty_str_map,
         },
     );
     assert_eq!(rows.len(), 1);
@@ -457,6 +463,7 @@ fn tree_expansion_controls_child_visibility() {
             io_rate_by_pid: &io_rate_by_pid,
             gpu_data: &gpu_data,
             signature_cache_by_path: &empty_sig_cache,
+            pid_to_image_path: &empty_str_map,
         },
     );
     assert_eq!(rows.len(), 3);
@@ -543,6 +550,7 @@ mod differential {
                 io_rate_by_pid: &self.io,
                 gpu_data: &self.gpu,
                 signature_cache_by_path: &self.sigs,
+                pid_to_image_path: &self.paths,
             }
         }
     }
@@ -845,7 +853,6 @@ mod differential {
                                     sort_desc: desc,
                                     sort_by_leader: leader,
                                 },
-                                &w.paths,
                                 &metrics,
                             );
                             let grouped_ref = reference::grouped::build_grouped_rows(

@@ -178,4 +178,6 @@ pub struct RowMetrics<'a> {
     /// PID -> (GPU %, dedicated bytes, shared bytes, total bytes)
     pub gpu_data: &'a HashMap<u32, (f32, u64, u64, u64)>,
     pub signature_cache_by_path: &'a HashMap<String, SignatureInfo>,
+    /// PID -> executable path (resolved lazily by the UI; `Process::path` is usually unset).
+    pub pid_to_image_path: &'a HashMap<u32, String>,
 }

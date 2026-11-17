@@ -32,7 +32,6 @@ impl PMonNTApp {
                 sort_desc: self.sort_desc,
                 sort_by_leader: self.group_sort_by_leader,
             },
-            &self.pid_to_image_path,
             &self.row_metrics(),
         );
 

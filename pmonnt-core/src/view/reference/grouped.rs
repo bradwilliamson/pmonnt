@@ -25,6 +25,7 @@ pub fn build_grouped_rows(
         io_rate_by_pid,
         gpu_data,
         signature_cache_by_path,
+        ..
     } = *metrics;
     let mut rows = Vec::new();
 
