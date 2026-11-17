@@ -15,9 +15,6 @@ pub fn render_threatfox_section(
     ui.heading("ThreatFox");
     ui.add_space(4.0);
 
-    #[allow(dead_code)]
-    const TF_QUERY_TIMEOUT_SECS: u64 = 10;
-
     if pid != tf_state.last_seen_pid {
         tf_state.last_seen_pid = pid;
         tf_state.querying_tf_pid = None;

@@ -15,7 +15,6 @@ use windows::Win32::Foundation::{
 const SYSTEM_EXTENDED_HANDLE_INFORMATION: u32 = 64;
 
 #[cfg(feature = "handles_v2")]
-#[allow(dead_code)]
 const OBJECT_TYPE_INFORMATION: u32 = 2;
 
 #[repr(C)]
@@ -38,7 +37,6 @@ struct SystemExtendedHandleInformation {
 }
 
 #[cfg(feature = "handles_v2")]
-#[allow(dead_code)]
 #[repr(C)]
 struct ObjectTypeInformation {
     type_name: windows::Win32::Foundation::UNICODE_STRING,
@@ -58,7 +56,6 @@ unsafe extern "system" {
     ) -> NTSTATUS;
 
     #[cfg(feature = "handles_v2")]
-    #[allow(dead_code)]
     fn NtQueryObject(
         handle: HANDLE,
         object_information_class: u32,

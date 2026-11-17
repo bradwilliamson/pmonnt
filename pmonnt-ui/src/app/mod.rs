@@ -47,11 +47,8 @@ pub(crate) struct KillDialogState {
 
 #[derive(Clone, Debug)]
 pub(crate) struct DumpJobResult {
-    #[allow(dead_code)]
     pub(crate) pid: u32,
-    #[allow(dead_code)]
     pub(crate) process_name: String,
-    #[allow(dead_code)]
     pub(crate) kind: pmonnt_core::win::dump::DumpKind,
     pub(crate) result: Result<std::path::PathBuf, String>,
 }
@@ -441,39 +438,6 @@ impl PMonNTApp {
         });
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn perform_process_action(&mut self, pid: u32, action: &str) {
-        let result = match action {
-            "Suspend" => pmonnt_core::win::process_control::suspend_process(pid),
-            "Resume" => pmonnt_core::win::process_control::resume_process(pid),
-            "Restart" => {
-                let cmd = self
-                    .pid_to_command_line
-                    .get(&pid)
-                    .map_or("", std::string::String::as_str);
-                let cwd = self
-                    .pid_to_current_directory
-                    .get(&pid)
-                    .map(std::string::String::as_str);
-                if cmd.is_empty() {
-                    Err(
-                        pmonnt_core::win::process_control::ProcessControlError::SpawnError(
-                            "No command line available".to_string(),
-                        ),
-                    )
-                } else {
-                    pmonnt_core::win::process_control::restart_process(pid, cmd, cwd)
-                }
-            }
-            _ => Ok(()),
-        };
-
-        if let Err(e) = result {
-            eprintln!("Failed to {action}: {e}");
-            // TODO: Show in UI
-        }
-    }
-
     pub(crate) fn open_priority_dialog(&mut self, pid: u32) {
         // Don't stack multiple modal dialogs.
         if self.kill_dialog.is_some()
@@ -569,72 +533,6 @@ impl PMonNTApp {
             group_pids: None,
             group_descendant_count: None,
             name,
-            step: KillDialogStep::Confirm,
-        });
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn open_group_kill_dialog(
-        &mut self,
-        representative_pid: u32,
-        group_name: String,
-        group_pids: Vec<u32>,
-        kill_tree: bool,
-    ) {
-        // Don't stack multiple kill dialogs.
-        if let Some(KillDialogStep::Running) = self.kill_dialog.as_ref().map(|s| &s.step) {
-            return;
-        }
-
-        // Pre-compute descendant count for the group-trees confirmation wording.
-        let descendant_count = if kill_tree {
-            let processes = &self.current_snapshot.processes;
-
-            let mut children: HashMap<u32, Vec<u32>> = HashMap::new();
-            for p in processes {
-                if let Some(ppid) = p.ppid
-                    && ppid != 0
-                {
-                    children.entry(ppid).or_default().push(p.pid);
-                }
-            }
-
-            fn visit(
-                pid: u32,
-                children: &HashMap<u32, Vec<u32>>,
-                visited: &mut HashSet<u32>,
-                depth: usize,
-            ) {
-                if depth > 512 {
-                    return;
-                }
-                if !visited.insert(pid) {
-                    return;
-                }
-                if let Some(kids) = children.get(&pid) {
-                    for &c in kids {
-                        visit(c, children, visited, depth + 1);
-                    }
-                }
-            }
-
-            let mut visited = HashSet::new();
-            for &root in &group_pids {
-                visit(root, &children, &mut visited, 0);
-            }
-
-            // visited includes the roots, so child count excludes them.
-            visited.len().saturating_sub(group_pids.len())
-        } else {
-            0
-        };
-
-        self.kill_dialog = Some(KillDialogState {
-            pid: representative_pid,
-            kill_tree,
-            group_pids: Some(group_pids),
-            group_descendant_count: kill_tree.then_some(descendant_count),
-            name: group_name,
             step: KillDialogStep::Confirm,
         });
     }

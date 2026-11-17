@@ -52,18 +52,6 @@ impl Default for GpuSampler {
 }
 
 impl GpuSampler {
-    #[allow(dead_code)]
-    pub fn is_available(&self) -> bool {
-        #[cfg(windows)]
-        {
-            matches!(self, GpuSampler::Windows(_))
-        }
-        #[cfg(not(windows))]
-        {
-            false
-        }
-    }
-
     pub fn rebuild_counters(&mut self) {
         #[cfg(windows)]
         {

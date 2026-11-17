@@ -1,7 +1,6 @@
 use crate::aligned_buf::AlignedBuf;
-use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use std::sync::{LazyLock, RwLock};
+use std::sync::{Arc, LazyLock, RwLock};
 use std::time::{Duration, Instant};
 
 use thiserror::Error;
@@ -50,82 +49,58 @@ const CACHE_TTL: Duration = Duration::from_secs(1);
 #[derive(Debug, Clone)]
 struct CacheEntry {
     fetched_at: Instant,
-    all: Vec<NetworkConnection>,
-    by_pid: HashMap<u32, Vec<NetworkConnection>>,
+    /// Shared so cache hits copy only the connections a caller asks for.
+    all: Arc<Vec<NetworkConnection>>,
 }
 
 static CACHE: LazyLock<RwLock<Option<CacheEntry>>> = LazyLock::new(|| RwLock::new(None));
 
 pub fn get_connections_for_process(pid: u32) -> Result<Vec<NetworkConnection>, NetworkError> {
-    let all = get_all_connections()?;
-    Ok(all.into_iter().filter(|c| c.pid == pid).collect())
+    Ok(cached_all()?
+        .iter()
+        .filter(|c| c.pid == pid)
+        .cloned()
+        .collect())
 }
 
 pub fn get_all_connections() -> Result<Vec<NetworkConnection>, NetworkError> {
-    if let Some(hit) = cache_get_all() {
-        return Ok(hit);
-    }
-
-    let all = refresh_all()?;
-    Ok(all)
+    Ok(cached_all()?.as_ref().clone())
 }
 
 pub fn get_tcp_connections() -> Result<Vec<NetworkConnection>, NetworkError> {
-    let all = get_all_connections()?;
-    Ok(all
-        .into_iter()
+    Ok(cached_all()?
+        .iter()
         .filter(|c| c.protocol == Protocol::Tcp)
+        .cloned()
         .collect())
 }
 
 pub fn get_udp_connections() -> Result<Vec<NetworkConnection>, NetworkError> {
-    let all = get_all_connections()?;
-    Ok(all
-        .into_iter()
+    Ok(cached_all()?
+        .iter()
         .filter(|c| c.protocol == Protocol::Udp)
+        .cloned()
         .collect())
 }
 
-fn cache_get_all() -> Option<Vec<NetworkConnection>> {
-    let guard = CACHE.read().ok()?.as_ref().cloned();
-    let entry = guard?;
-    if entry.fetched_at.elapsed() <= CACHE_TTL {
-        Some(entry.all)
-    } else {
-        None
+/// The connection table, from the cache if it is younger than `CACHE_TTL`.
+fn cached_all() -> Result<Arc<Vec<NetworkConnection>>, NetworkError> {
+    if let Ok(guard) = CACHE.read()
+        && let Some(entry) = guard.as_ref()
+        && entry.fetched_at.elapsed() <= CACHE_TTL
+    {
+        return Ok(Arc::clone(&entry.all));
     }
-}
 
-#[allow(dead_code)]
-fn cache_get_pid(pid: u32) -> Option<Vec<NetworkConnection>> {
-    let guard = CACHE.read().ok()?.as_ref().cloned();
-    let entry = guard?;
-    if entry.fetched_at.elapsed() > CACHE_TTL {
-        return None;
-    }
-    entry.by_pid.get(&pid).cloned()
-}
-
-fn refresh_all() -> Result<Vec<NetworkConnection>, NetworkError> {
-    let mut all = Vec::new();
-    all.extend(query_tcp()?);
+    let mut all = query_tcp()?;
     all.extend(query_udp()?);
-
-    let mut by_pid: HashMap<u32, Vec<NetworkConnection>> = HashMap::new();
-    for conn in &all {
-        by_pid.entry(conn.pid).or_default().push(conn.clone());
-    }
-
-    let entry = CacheEntry {
-        fetched_at: Instant::now(),
-        all: all.clone(),
-        by_pid,
-    };
-
+    let all = Arc::new(all);
     if let Ok(mut guard) = CACHE.write() {
-        *guard = Some(entry);
+        *guard = Some(CacheEntry {
+            fetched_at: Instant::now(),
+            all: Arc::clone(&all),
+        });
     }
-
     Ok(all)
 }
 

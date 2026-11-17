@@ -3,8 +3,11 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 /// UI state for MalwareBazaar interactions
-#[allow(dead_code)]
 #[derive(Clone)]
+#[expect(
+    dead_code,
+    reason = "status/visibility fields are written by the MalwareBazaar panel but never read"
+)]
 pub(crate) struct MbUiState {
     pub(crate) status: Option<String>,
     pub(crate) last_query_state: Option<MbQueryState>,
@@ -98,8 +101,11 @@ impl Default for MbUiState {
 }
 
 /// Light-weight query state for UI display
-#[allow(dead_code)]
 #[derive(Clone)]
+#[expect(
+    dead_code,
+    reason = "query diagnostics are recorded but no view shows them yet; read them or drop the writers"
+)]
 pub(crate) struct MbQueryState {
     pub(crate) last_query: Option<String>,
     pub(crate) last_http_status: Option<u16>,
@@ -109,7 +115,6 @@ pub(crate) struct MbQueryState {
 }
 
 /// UI state for VirusTotal manual lookups
-#[allow(dead_code)]
 #[derive(Clone)]
 pub(crate) struct VtUiState {
     pub(crate) querying_vt_pid: Option<u32>,
@@ -132,7 +137,10 @@ pub(crate) struct TfUiState {
 }
 
 #[derive(Clone)]
-#[allow(dead_code)]
+#[expect(
+    dead_code,
+    reason = "query diagnostics are recorded but no view shows them yet; read them or drop the writers"
+)]
 pub(crate) struct TfQueryState {
     pub(crate) last_query: Option<String>,
     pub(crate) last_http_status: Option<u16>,
@@ -209,11 +217,6 @@ impl YaraScanState {
                 }
             }
         });
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn refresh_rules(&mut self) {
-        self.refresh_yaraify_rules();
     }
 
     pub(crate) fn load_local_file(&mut self, path: std::path::PathBuf) {

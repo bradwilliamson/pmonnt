@@ -425,40 +425,4 @@ impl PMonNTApp {
             self.request_signature_check_for_path(&path);
         }
     }
-
-    /// Collect all descendant PIDs for a root PID (recursive tree traversal)
-    #[cfg(feature = "dev-tools")]
-    #[allow(dead_code)]
-    pub(super) fn collect_descendants(&self, root_pid: u32) -> Vec<u32> {
-        use std::collections::{HashMap, HashSet};
-
-        // Build parent -> children map
-        let mut children_map: HashMap<u32, Vec<u32>> = HashMap::new();
-        for proc in &self.current_snapshot.processes {
-            if let Some(ppid) = proc.ppid {
-                if ppid != 0 {
-                    children_map.entry(ppid).or_default().push(proc.pid);
-                }
-            }
-        }
-
-        let mut result = Vec::new();
-        let mut visited = HashSet::new();
-        let mut stack = vec![root_pid];
-
-        while let Some(pid) = stack.pop() {
-            if !visited.insert(pid) {
-                continue; // Already visited (cycle detection)
-            }
-            result.push(pid);
-
-            if let Some(children) = children_map.get(&pid) {
-                for &child in children {
-                    stack.push(child);
-                }
-            }
-        }
-
-        result
-    }
 }

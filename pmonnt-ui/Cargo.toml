@@ -34,8 +34,6 @@ raw-window-handle = "0.6"
 name = "pmonnt"
 path = "src/main.rs"
 
-[features]
-dev-tools = []
 
 [lints]
 workspace = true

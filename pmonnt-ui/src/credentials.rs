@@ -112,6 +112,88 @@ impl ApiKeys {
     }
 }
 
+/// Load a single credential from Windows Credential Manager
+fn load_credential(name: &str) -> CredResult<String> {
+    match keyring::Entry::new(KEYRING_SERVICE, name) {
+        Ok(entry) => match entry.get_password() {
+            Ok(password) => Ok(password),
+            Err(keyring::Error::NoEntry) => Err("No entry found".to_string()),
+            Err(e) => {
+                warn!("Failed to load credential '{name}': {e}");
+                Err(format!("Keyring error: {e}"))
+            }
+        },
+        Err(e) => {
+            warn!("Failed to access keyring for '{name}': {e}");
+            Err(format!("Keyring access error: {e}"))
+        }
+    }
+}
+
+/// Save a credential to Windows Credential Manager
+pub fn save_credential(name: &str, value: &str) -> CredResult<()> {
+    match keyring::Entry::new(KEYRING_SERVICE, name) {
+        Ok(entry) => match entry.set_password(value) {
+            Ok(()) => {
+                info!("Saved credential '{name}' to Windows Credential Manager");
+                Ok(())
+            }
+            Err(e) => {
+                error!("Failed to save credential '{name}': {e}");
+                Err(format!("Failed to save: {e}"))
+            }
+        },
+        Err(e) => {
+            error!("Failed to create keyring entry for '{name}': {e}");
+            Err(format!("Keyring error: {e}"))
+        }
+    }
+}
+
+/// Delete a credential from Windows Credential Manager
+pub fn delete_credential(name: &str) -> CredResult<()> {
+    match keyring::Entry::new(KEYRING_SERVICE, name) {
+        Ok(entry) => {
+            match entry.delete_credential() {
+                Ok(()) => {
+                    info!("Deleted credential '{name}' from Windows Credential Manager");
+                    Ok(())
+                }
+                Err(keyring::Error::NoEntry) => {
+                    // Not an error - credential didn't exist
+                    Ok(())
+                }
+                Err(e) => {
+                    error!("Failed to delete credential '{name}': {e}");
+                    Err(format!("Failed to delete: {e}"))
+                }
+            }
+        }
+        Err(e) => {
+            error!("Failed to access keyring for '{name}': {e}");
+            Err(format!("Keyring error: {e}"))
+        }
+    }
+}
+
+// Public API for each key type
+
+pub fn save_vt_key(key: &str) -> CredResult<()> {
+    save_credential(VT_KEY_NAME, key)
+}
+
+pub fn delete_vt_key() -> CredResult<()> {
+    delete_credential(VT_KEY_NAME)
+}
+
+pub fn save_mb_key(key: &str) -> CredResult<()> {
+    save_credential(MB_KEY_NAME, key)
+}
+
+pub fn save_tf_key(key: &str) -> CredResult<()> {
+    save_credential(TF_KEY_NAME, key)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -198,120 +280,4 @@ mod tests {
         assert_eq!(keys.mb.as_deref(), Some("mb_env"));
         assert_eq!(keys.tf.as_deref(), Some("tf_store"));
     }
-}
-
-/// Load a single credential from Windows Credential Manager
-fn load_credential(name: &str) -> CredResult<String> {
-    match keyring::Entry::new(KEYRING_SERVICE, name) {
-        Ok(entry) => match entry.get_password() {
-            Ok(password) => Ok(password),
-            Err(keyring::Error::NoEntry) => Err("No entry found".to_string()),
-            Err(e) => {
-                warn!("Failed to load credential '{name}': {e}");
-                Err(format!("Keyring error: {e}"))
-            }
-        },
-        Err(e) => {
-            warn!("Failed to access keyring for '{name}': {e}");
-            Err(format!("Keyring access error: {e}"))
-        }
-    }
-}
-
-/// Save a credential to Windows Credential Manager
-pub fn save_credential(name: &str, value: &str) -> CredResult<()> {
-    match keyring::Entry::new(KEYRING_SERVICE, name) {
-        Ok(entry) => match entry.set_password(value) {
-            Ok(()) => {
-                info!("Saved credential '{name}' to Windows Credential Manager");
-                Ok(())
-            }
-            Err(e) => {
-                error!("Failed to save credential '{name}': {e}");
-                Err(format!("Failed to save: {e}"))
-            }
-        },
-        Err(e) => {
-            error!("Failed to create keyring entry for '{name}': {e}");
-            Err(format!("Keyring error: {e}"))
-        }
-    }
-}
-
-/// Delete a credential from Windows Credential Manager
-pub fn delete_credential(name: &str) -> CredResult<()> {
-    match keyring::Entry::new(KEYRING_SERVICE, name) {
-        Ok(entry) => {
-            match entry.delete_credential() {
-                Ok(()) => {
-                    info!("Deleted credential '{name}' from Windows Credential Manager");
-                    Ok(())
-                }
-                Err(keyring::Error::NoEntry) => {
-                    // Not an error - credential didn't exist
-                    Ok(())
-                }
-                Err(e) => {
-                    error!("Failed to delete credential '{name}': {e}");
-                    Err(format!("Failed to delete: {e}"))
-                }
-            }
-        }
-        Err(e) => {
-            error!("Failed to access keyring for '{name}': {e}");
-            Err(format!("Keyring error: {e}"))
-        }
-    }
-}
-
-// Public API for each key type
-
-pub fn save_vt_key(key: &str) -> CredResult<()> {
-    save_credential(VT_KEY_NAME, key)
-}
-
-pub fn delete_vt_key() -> CredResult<()> {
-    delete_credential(VT_KEY_NAME)
-}
-
-pub fn save_mb_key(key: &str) -> CredResult<()> {
-    save_credential(MB_KEY_NAME, key)
-}
-
-#[allow(dead_code)]
-pub fn delete_mb_key() -> CredResult<()> {
-    delete_credential(MB_KEY_NAME)
-}
-
-#[allow(dead_code)]
-pub fn save_tf_key(key: &str) -> CredResult<()> {
-    save_credential(TF_KEY_NAME, key)
-}
-
-#[allow(dead_code)]
-pub fn delete_tf_key() -> CredResult<()> {
-    delete_credential(TF_KEY_NAME)
-}
-
-/// Check if env var override is active for a key type
-#[allow(dead_code)]
-pub fn is_env_override_active(key_type: KeyType) -> bool {
-    match key_type {
-        KeyType::VirusTotal => {
-            std::env::var("PMONNT_VT_API_KEY").is_ok() || std::env::var("VT_API_KEY").is_ok()
-        }
-        KeyType::MalwareBazaar => {
-            std::env::var("PMONNT_MB_API_KEY").is_ok()
-                || std::env::var("PMONNT_MALWAREBAZAAR_KEY").is_ok()
-        }
-        KeyType::ThreatFox => std::env::var("PMONNT_THREATFOX_KEY").is_ok(),
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
-pub enum KeyType {
-    VirusTotal,
-    MalwareBazaar,
-    ThreatFox,
 }

@@ -129,12 +129,21 @@ impl PMonNTApp {
 
             match job.result {
                 Ok(path) => {
-                    self.last_dump_path = Some(path.clone());
-                    self.set_status_line(format!("Dump saved: {}", path.display()));
+                    self.set_status_line(format!(
+                        "{:?} dump of {} ({}) saved: {}",
+                        job.kind,
+                        job.process_name,
+                        job.pid,
+                        path.display()
+                    ));
+                    self.last_dump_path = Some(path);
                 }
                 Err(e) => {
                     self.last_dump_path = None;
-                    self.set_status_line(format!("Dump failed: {e}"));
+                    self.set_status_line(format!(
+                        "{:?} dump of {} ({}) failed: {e}",
+                        job.kind, job.process_name, job.pid
+                    ));
                 }
             }
         }

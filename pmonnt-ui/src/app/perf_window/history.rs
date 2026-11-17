@@ -144,7 +144,6 @@ pub(crate) struct TcpStateCounts {
 /// A single sample of network statistics
 #[derive(Debug, Clone)]
 pub(crate) struct NetChurnSample {
-    #[allow(dead_code)]
     pub(crate) _t: Instant,
     pub(crate) total_tcp: u32,
     pub(crate) tcp_states: TcpStateCounts,
@@ -187,58 +186,5 @@ impl Default for NetChurnMonitor {
             error: None,
             child_pid_count: 0,
         }
-    }
-}
-
-#[cfg(any(test, feature = "dev-tools"))]
-#[allow(dead_code)]
-pub(crate) fn fake_perf_stats() -> PerfStats {
-    PerfStats {
-        priority_class: Some("Normal".to_string()),
-        kernel_time: Some(123456789),
-        user_time: Some(987654321),
-        total_time: Some(1111111110),
-        kernel_delta: Some(12345),
-        user_delta: Some(67890),
-        total_delta: Some(80235),
-        cycles: Some(1_000_000_000),
-        cycles_delta: Some(100_000),
-        virtual_size: Some(1_000_000_000),
-        private_bytes: Some(500_000_000),
-        peak_private_bytes: Some(600_000_000),
-        commit_charge: Some(800_000_000),
-        peak_commit_charge: Some(900_000_000),
-        page_faults: Some(1000),
-        page_fault_delta: Some(10),
-        working_set: Some(200_000_000),
-        ws_private: Some(150_000_000),
-        ws_shareable: Some(30_000_000),
-        ws_shared: Some(20_000_000),
-        peak_working_set: Some(250_000_000),
-        io_reads: Some(100),
-        io_read_delta: Some(5),
-        io_read_bytes: Some(10_000_000),
-        io_read_bytes_delta: Some(1_000_000),
-        io_writes: Some(50),
-        io_write_delta: Some(2),
-        io_write_bytes: Some(5_000_000),
-        io_write_bytes_delta: Some(500_000),
-        io_other: Some(20),
-        io_other_delta: Some(1),
-        io_other_bytes: Some(1_000_000),
-        io_other_bytes_delta: Some(100_000),
-        read_bytes_per_sec: Some(1000.0),
-        write_bytes_per_sec: Some(500.0),
-        total_bytes_per_sec: Some(1500.0),
-        read_ops_per_sec: Some(10.0),
-        write_ops_per_sec: Some(5.0),
-        total_ops_per_sec: Some(15.0),
-        avg_read_size: Some(100.0),
-        avg_write_size: Some(100.0),
-        handles: Some(200),
-        peak_handles: Some(250),
-        gdi_handles: Some(50),
-        user_handles: Some(30),
-        handles_delta: Some(5),
     }
 }
