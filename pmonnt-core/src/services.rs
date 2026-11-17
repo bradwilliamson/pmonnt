@@ -1,3 +1,4 @@
+use crate::aligned_buf::AlignedBuf;
 use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -179,10 +180,10 @@ fn enumerate_all_services_basic() -> Result<Vec<BasicService>> {
 
     {
         let guard = basic_cache().lock().expect("basic service cache lock");
-        if let Some(cache) = guard.as_ref() {
-            if cache.last_refresh.elapsed() < TTL {
-                return Ok(cache.services.clone());
-            }
+        if let Some(cache) = guard.as_ref()
+            && cache.last_refresh.elapsed() < TTL
+        {
+            return Ok(cache.services.clone());
         }
         // drop lock before expensive work
         drop(guard);
@@ -208,9 +209,9 @@ fn enumerate_all_services_basic() -> Result<Vec<BasicService>> {
             SERVICE_WIN32,
             SERVICE_STATE_ALL,
             None,
-            &mut bytes_needed,
-            &mut services_returned,
-            Some(&mut resume_handle),
+            &raw mut bytes_needed,
+            &raw mut services_returned,
+            Some(&raw mut resume_handle),
             None,
         )
     };
@@ -220,7 +221,7 @@ fn enumerate_all_services_basic() -> Result<Vec<BasicService>> {
         return Err(anyhow!("EnumServicesStatusExW failed: {err}"));
     }
 
-    let mut buffer = vec![0u8; bytes_needed as usize];
+    let mut buffer = AlignedBuf::new(bytes_needed as usize);
     // SAFETY: EnumServicesStatusExW writes structured service data into the buffer
     // - Buffer size matches bytes_needed determined by first API call
     // - API populates the buffer with services_returned valid entries
@@ -231,20 +232,20 @@ fn enumerate_all_services_basic() -> Result<Vec<BasicService>> {
             SC_ENUM_PROCESS_INFO,
             SERVICE_WIN32,
             SERVICE_STATE_ALL,
-            Some(&mut buffer),
-            &mut bytes_needed,
-            &mut services_returned,
-            Some(&mut resume_handle),
+            Some(buffer.as_bytes_mut()),
+            &raw mut bytes_needed,
+            &raw mut services_returned,
+            Some(&raw mut resume_handle),
             None,
         )?;
     }
 
     let mut services = Vec::with_capacity(services_returned as usize);
     // SAFETY: Buffer populated by EnumServicesStatusExW with proper alignment
-    // - Windows guarantees ENUM_SERVICE_STATUS_PROCESSW array alignment
+    // - AlignedBuf is 8-byte aligned, as ENUM_SERVICE_STATUS_PROCESSW requires
     // - services_returned indicates the actual entry count written by OS
     // - Buffer sized to accommodate all entries
-    let ptr = buffer.as_ptr() as *const ENUM_SERVICE_STATUS_PROCESSW;
+    let ptr = buffer.ptr_at::<ENUM_SERVICE_STATUS_PROCESSW>(0);
 
     for i in 0..(services_returned as usize) {
         // SAFETY: Pointer arithmetic within validated bounds (i < services_returned)
@@ -279,10 +280,10 @@ fn get_service_details(scm: SC_HANDLE, name: &str) -> Result<(ServiceStartType, 
 
     {
         let guard = details_cache().lock().expect("service details cache lock");
-        if let Some(e) = guard.get(name) {
-            if e.last_refresh.elapsed() < TTL {
-                return Ok((e.start_type, e.description.clone()));
-            }
+        if let Some(e) = guard.get(name)
+            && e.last_refresh.elapsed() < TTL
+        {
+            return Ok((e.start_type, e.description.clone()));
         }
         drop(guard);
     }
@@ -306,28 +307,28 @@ fn get_service_details(scm: SC_HANDLE, name: &str) -> Result<(ServiceStartType, 
     // SAFETY: QueryServiceConfigW size query
     // - service is a valid SC_HANDLE from OpenServiceW
     // - None buffer is standard pattern for size query
-    let _ = unsafe { QueryServiceConfigW(service, None, 0, &mut bytes_needed) };
+    let _ = unsafe { QueryServiceConfigW(service, None, 0, &raw mut bytes_needed) };
     if bytes_needed == 0 {
         // Fall back to defaults if we can't query.
         return Ok((ServiceStartType::Manual, None));
     }
 
-    let mut cfg_buf = vec![0u8; bytes_needed as usize];
+    let mut cfg_buf = AlignedBuf::new(bytes_needed as usize);
     // SAFETY: QueryServiceConfigW populates the buffer with QUERY_SERVICE_CONFIGW data
     // - Buffer size matches bytes_needed from the API
-    // - Windows guarantees proper alignment for service config structures
+    // - AlignedBuf guarantees 8-byte alignment for service config structures
     unsafe {
         QueryServiceConfigW(
             service,
-            Some(cfg_buf.as_mut_ptr() as *mut QUERY_SERVICE_CONFIGW),
-            cfg_buf.len() as u32,
-            &mut bytes_needed,
+            Some(cfg_buf.mut_ptr_at::<QUERY_SERVICE_CONFIGW>(0)),
+            cfg_buf.len_u32(),
+            &raw mut bytes_needed,
         )?;
     }
     // SAFETY: Buffer was populated by QueryServiceConfigW with valid QUERY_SERVICE_CONFIGW
     // - API guarantees proper structure layout and alignment
     // - Buffer size verified to accommodate the structure
-    let cfg = unsafe { &*(cfg_buf.as_ptr() as *const QUERY_SERVICE_CONFIGW) };
+    let cfg = unsafe { &*cfg_buf.ptr_at::<QUERY_SERVICE_CONFIGW>(0) };
 
     // Delayed auto-start info (only meaningful for auto-start).
     let mut delayed = false;
@@ -340,11 +341,11 @@ fn get_service_details(scm: SC_HANDLE, name: &str) -> Result<(ServiceStartType, 
             service,
             SERVICE_CONFIG_DELAYED_AUTO_START_INFO,
             None,
-            &mut bytes_needed2,
+            &raw mut bytes_needed2,
         )
     };
     if bytes_needed2 > 0 {
-        let mut buf2 = vec![0u8; bytes_needed2 as usize];
+        let mut buf2 = AlignedBuf::new(bytes_needed2 as usize);
         // SAFETY: QueryServiceConfig2W data retrieval with properly sized buffer
         // - Buffer allocated with exact size from previous query
         // - service handle remains valid
@@ -352,16 +353,16 @@ fn get_service_details(scm: SC_HANDLE, name: &str) -> Result<(ServiceStartType, 
             QueryServiceConfig2W(
                 service,
                 SERVICE_CONFIG_DELAYED_AUTO_START_INFO,
-                Some(&mut buf2),
-                &mut bytes_needed2,
+                Some(buf2.as_bytes_mut()),
+                &raw mut bytes_needed2,
             )
         }
         .is_ok()
         {
             // SAFETY: QueryServiceConfig2W populated buf2 with SERVICE_DELAYED_AUTO_START_INFO
             // - Buffer size matches bytes_needed2 determined by the API
-            // - Windows guarantees proper alignment for this structure
-            let info = unsafe { &*(buf2.as_ptr() as *const SERVICE_DELAYED_AUTO_START_INFO) };
+            // - AlignedBuf guarantees 8-byte alignment for this structure
+            let info = unsafe { &*buf2.ptr_at::<SERVICE_DELAYED_AUTO_START_INFO>(0) };
             delayed = info.fDelayedAutostart.as_bool();
         }
     }
@@ -377,11 +378,11 @@ fn get_service_details(scm: SC_HANDLE, name: &str) -> Result<(ServiceStartType, 
             service,
             SERVICE_CONFIG_DESCRIPTION,
             None,
-            &mut bytes_needed3,
+            &raw mut bytes_needed3,
         )
     };
     if bytes_needed3 > 0 {
-        let mut buf3 = vec![0u8; bytes_needed3 as usize];
+        let mut buf3 = AlignedBuf::new(bytes_needed3 as usize);
         // SAFETY: QueryServiceConfig2W data retrieval with properly sized buffer
         // - Buffer allocated with exact size from previous query
         // - service handle remains valid
@@ -389,16 +390,16 @@ fn get_service_details(scm: SC_HANDLE, name: &str) -> Result<(ServiceStartType, 
             QueryServiceConfig2W(
                 service,
                 SERVICE_CONFIG_DESCRIPTION,
-                Some(&mut buf3),
-                &mut bytes_needed3,
+                Some(buf3.as_bytes_mut()),
+                &raw mut bytes_needed3,
             )
         }
         .is_ok()
         {
             // SAFETY: QueryServiceConfig2W populated buf3 with SERVICE_DESCRIPTIONW
             // - Buffer size matches bytes_needed3 from API
-            // - Windows guarantees proper alignment and valid lpDescription pointer (or null)
-            let info = unsafe { &*(buf3.as_ptr() as *const SERVICE_DESCRIPTIONW) };
+            // - AlignedBuf guarantees 8-byte alignment and valid lpDescription pointer (or null)
+            let info = unsafe { &*buf3.ptr_at::<SERVICE_DESCRIPTIONW>(0) };
             if !info.lpDescription.is_null() {
                 description = Some(wide_ptr_to_string(PCWSTR(info.lpDescription.0).0));
             }
@@ -508,7 +509,7 @@ pub fn stop_service(service_name: &str, timeout: Duration) -> Result<()> {
 
     let mut status = SERVICE_STATUS::default();
     // SAFETY: ControlService with valid service handle and mutable status reference
-    unsafe { ControlService(service, SERVICE_CONTROL_STOP, &mut status)? };
+    unsafe { ControlService(service, SERVICE_CONTROL_STOP, &raw mut status)? };
 
     wait_for_service_state(
         service,
@@ -597,25 +598,25 @@ pub fn pause_service(service_name: &str, timeout: Duration) -> Result<()> {
 
     // Best-effort check for pause accept.
     let mut bytes_needed = 0u32;
-    let mut buf = vec![0u8; std::mem::size_of::<SERVICE_STATUS_PROCESS>()];
+    let mut buf = AlignedBuf::new(std::mem::size_of::<SERVICE_STATUS_PROCESS>());
     // SAFETY: QueryServiceStatusEx with valid service handle and properly sized buffer
     unsafe {
         QueryServiceStatusEx(
             service,
             SC_STATUS_PROCESS_INFO,
-            Some(&mut buf),
-            &mut bytes_needed,
+            Some(buf.as_bytes_mut()),
+            &raw mut bytes_needed,
         )?;
     }
     // SAFETY: Buffer properly sized and filled by QueryServiceStatusEx, valid for SERVICE_STATUS_PROCESS cast
-    let ssp = unsafe { &*(buf.as_ptr() as *const SERVICE_STATUS_PROCESS) };
+    let ssp = unsafe { &*buf.ptr_at::<SERVICE_STATUS_PROCESS>(0) };
     if (ssp.dwControlsAccepted & SERVICE_ACCEPT_PAUSE_CONTINUE) == 0 {
         return Err(anyhow!("Service does not accept pause"));
     }
 
     let mut status = SERVICE_STATUS::default();
     // SAFETY: ControlService with valid service handle and mutable status reference
-    unsafe { ControlService(service, SERVICE_CONTROL_PAUSE, &mut status)? };
+    unsafe { ControlService(service, SERVICE_CONTROL_PAUSE, &raw mut status)? };
 
     wait_for_service_state(
         service,
@@ -645,7 +646,7 @@ pub fn resume_service(service_name: &str, timeout: Duration) -> Result<()> {
 
     let mut status = SERVICE_STATUS::default();
     // SAFETY: ControlService with valid service handle and mutable status reference
-    unsafe { ControlService(service, SERVICE_CONTROL_CONTINUE, &mut status)? };
+    unsafe { ControlService(service, SERVICE_CONTROL_CONTINUE, &raw mut status)? };
 
     wait_for_service_state(service, SERVICE_RUNNING, timeout)
 }
@@ -659,18 +660,18 @@ fn wait_for_service_state(
 
     loop {
         let mut bytes_needed = 0u32;
-        let mut buf = vec![0u8; std::mem::size_of::<SERVICE_STATUS_PROCESS>()];
+        let mut buf = AlignedBuf::new(std::mem::size_of::<SERVICE_STATUS_PROCESS>());
         // SAFETY: QueryServiceStatusEx with valid service handle and properly sized buffer
         unsafe {
             QueryServiceStatusEx(
                 service,
                 SC_STATUS_PROCESS_INFO,
-                Some(&mut buf),
-                &mut bytes_needed,
+                Some(buf.as_bytes_mut()),
+                &raw mut bytes_needed,
             )?;
         }
         // SAFETY: Buffer properly sized and filled by QueryServiceStatusEx, valid for SERVICE_STATUS_PROCESS cast
-        let ssp = unsafe { &*(buf.as_ptr() as *const SERVICE_STATUS_PROCESS) };
+        let ssp = unsafe { &*buf.ptr_at::<SERVICE_STATUS_PROCESS>(0) };
 
         if ssp.dwCurrentState == desired {
             return Ok(());

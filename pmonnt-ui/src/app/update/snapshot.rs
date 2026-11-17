@@ -66,10 +66,10 @@ impl PMonNTApp {
                 self.io_rate_by_pid.retain(|pid, _| alive.contains(pid));
 
                 // Hardening: Clear selection if selected process exited
-                if let Some(pid) = self.selected_pid {
-                    if !alive.contains(&pid) {
-                        self.selected_pid = None;
-                    }
+                if let Some(pid) = self.selected_pid
+                    && !alive.contains(&pid)
+                {
+                    self.selected_pid = None;
                 }
 
                 // Update global thread counts (fast, ~5ms)
@@ -100,10 +100,7 @@ impl PMonNTApp {
                 match win_process_metrics::get_working_set_bytes_map() {
                     Ok(map) => Some(map),
                     Err(e) => {
-                        log::debug!(
-                            "Failed to query SystemProcessInformation working sets: {}",
-                            e
-                        );
+                        log::debug!("Failed to query SystemProcessInformation working sets: {e}");
                         None
                     }
                 };
@@ -204,7 +201,7 @@ impl PMonNTApp {
                         .keys()
                         .chain(snapshot.gpu_dedicated_bytes.keys())
                         .chain(snapshot.gpu_shared_bytes.keys())
-                        .cloned()
+                        .copied()
                         .collect();
 
                     for pid in all_pids {
@@ -221,12 +218,13 @@ impl PMonNTApp {
                     }
 
                     self.last_gpu_sample_timestamp = Some(snapshot.sample_timestamp);
-                } else if let Some(last_ts) = self.last_gpu_sample_timestamp {
-                    if last_ts.elapsed().as_secs() > 30 && should_warn() {
-                        log::warn!(
-                            "[GPU] No GPU data received for 30+ seconds, keeping last good sample"
-                        );
-                    }
+                } else if let Some(last_ts) = self.last_gpu_sample_timestamp
+                    && last_ts.elapsed().as_secs() > 30
+                    && should_warn()
+                {
+                    log::warn!(
+                        "[GPU] No GPU data received for 30+ seconds, keeping last good sample"
+                    );
                 }
             }
 
@@ -267,26 +265,23 @@ impl PMonNTApp {
 
                 if let std::collections::hash_map::Entry::Vacant(e) =
                     self.pid_to_image_path.entry(pid)
+                    && let Some(path) = process_info::get_image_path(pid)
                 {
-                    if let Some(path) = process_info::get_image_path(pid) {
-                        e.insert(path);
-                    }
+                    e.insert(path);
                 }
 
                 if let std::collections::hash_map::Entry::Vacant(e) =
                     self.pid_to_command_line.entry(pid)
+                    && let Some(cmd) = process_info::get_command_line(pid)
                 {
-                    if let Some(cmd) = process_info::get_command_line(pid) {
-                        e.insert(cmd);
-                    }
+                    e.insert(cmd);
                 }
 
                 if let std::collections::hash_map::Entry::Vacant(e) =
                     self.pid_to_current_directory.entry(pid)
+                    && let Some(cwd) = process_info::get_current_directory(pid)
                 {
-                    if let Some(cwd) = process_info::get_current_directory(pid) {
-                        e.insert(cwd);
-                    }
+                    e.insert(cwd);
                 }
 
                 if let Some(path) = self.pid_to_image_path.get(&pid) {

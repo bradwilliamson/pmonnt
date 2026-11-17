@@ -41,10 +41,10 @@ impl ThreadCache {
     }
     pub fn get(&mut self, pid: u32) -> Option<&ThreadList> {
         let now = Instant::now();
-        if let Some((fetched, threads)) = self.map.get(&pid) {
-            if now.duration_since(*fetched).as_secs() < self.ttl_secs {
-                return Some(threads);
-            }
+        if let Some((fetched, threads)) = self.map.get(&pid)
+            && now.duration_since(*fetched).as_secs() < self.ttl_secs
+        {
+            return Some(threads);
         }
         None
     }

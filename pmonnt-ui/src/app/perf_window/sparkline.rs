@@ -1,16 +1,12 @@
 #[allow(dead_code)]
 fn draw_sparkline_f32_auto(ui: &mut egui::Ui, values: &[f32], height: f32) {
-    let max_v = values
-        .iter()
-        .copied()
-        .fold(0.0f32, |a, b| a.max(b))
-        .max(1.0);
+    let max_v = values.iter().copied().fold(0.0f32, f32::max).max(1.0);
     draw_sparkline_f32(ui, values, 0.0, max_v, height);
 }
 
 #[allow(dead_code)]
 fn format_bytes_per_sec(bytes_per_sec: f32) -> String {
-    let mut v = bytes_per_sec.max(0.0) as f64;
+    let mut v = f64::from(bytes_per_sec.max(0.0));
     let units = ["B/s", "KB/s", "MB/s", "GB/s", "TB/s"];
     let mut u = 0usize;
     while v >= 1024.0 && u + 1 < units.len() {
@@ -122,7 +118,7 @@ pub(super) fn draw_sparkline_f32_with_label(
     draw_sparkline_f32(ui, values, y_min, y_max, height);
     if let Some(last) = values.last().copied() {
         ui.label(
-            egui::RichText::new(format!("Current: {:.0}", last))
+            egui::RichText::new(format!("Current: {last:.0}"))
                 .monospace()
                 .small(),
         );

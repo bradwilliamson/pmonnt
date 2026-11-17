@@ -8,12 +8,9 @@ fn get_key() -> Option<String> {
 }
 
 fn post_and_print(form: &[(&str, &str)], raw: bool) -> Result<(), Box<dyn std::error::Error>> {
-    let api_key = match get_key() {
-        Some(k) => k,
-        None => {
-            eprintln!("No API key found in PMONNT_MB_API_KEY or PMONNT_MALWAREBAZAAR_KEY");
-            return Ok(());
-        }
+    let Some(api_key) = get_key() else {
+        eprintln!("No API key found in PMONNT_MB_API_KEY or PMONNT_MALWAREBAZAAR_KEY");
+        return Ok(());
     };
 
     let client = pmonnt_core::http::blocking_client_builder()
@@ -36,7 +33,7 @@ fn post_and_print(form: &[(&str, &str)], raw: bool) -> Result<(), Box<dyn std::e
     if raw {
         // Print raw body
         let text = resp.text()?;
-        println!("--- RAW JSON ---\n{}", text);
+        println!("--- RAW JSON ---\n{text}");
         return Ok(());
     }
     if content_type.contains("application/json") {
@@ -45,14 +42,14 @@ fn post_and_print(form: &[(&str, &str)], raw: bool) -> Result<(), Box<dyn std::e
             .get("query_status")
             .and_then(|v| v.as_str())
             .unwrap_or("");
-        println!("query_status: {}", qs);
+        println!("query_status: {qs}");
         let data = json
             .get("data")
             .and_then(|v| v.as_array())
             .cloned()
             .unwrap_or_default();
         println!("entries: {}", data.len());
-        for entry in data.iter() {
+        for entry in &data {
             let sha = entry
                 .get("sha256_hash")
                 .or_else(|| entry.get("sha256"))
@@ -66,10 +63,10 @@ fn post_and_print(form: &[(&str, &str)], raw: bool) -> Result<(), Box<dyn std::e
                 .get("first_seen")
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
-            println!("{} {} {}", &sha, &sig, &first);
+            println!("{sha} {sig} {first}");
         }
     } else {
-        println!("Non-JSON response; content-type={}", content_type);
+        println!("Non-JSON response; content-type={content_type}");
     }
 
     Ok(())
@@ -85,16 +82,13 @@ fn print_usage() {
 
 fn main() {
     let mut args = env::args().skip(1);
-    let cmd = match args.next() {
-        Some(c) => c,
-        None => {
-            print_usage();
-            return;
-        }
+    let Some(cmd) = args.next() else {
+        print_usage();
+        return;
     };
 
     // Collect remaining args and detect --raw flag
-    let mut rest: Vec<String> = std::iter::once(cmd.clone()).chain(args).collect();
+    let mut rest: Vec<String> = std::iter::once(cmd).chain(args).collect();
     let raw = rest.iter().any(|s| s == "--raw");
     // Remove raw flag from args list
     rest.retain(|s| s != "--raw");
@@ -118,7 +112,7 @@ fn main() {
             let _ = post_and_print(&[("query", "recent_detections"), ("hours", &hours)], raw);
         }
         "recent-additions" => {
-            let sel = rest.first().map(|s| s.as_str()).unwrap_or("time");
+            let sel = rest.first().map_or("time", std::string::String::as_str);
             let selector = if sel == "100" { "100" } else { "time" };
             let _ = post_and_print(&[("query", "get_recent"), ("selector", selector)], raw);
         }

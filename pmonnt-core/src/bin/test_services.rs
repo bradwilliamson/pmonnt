@@ -9,10 +9,7 @@ fn main() {
     let dsa_pid = 5152; // DSAService.exe
     let brave_pid = 3648; // Brave.exe
 
-    println!(
-        "Testing service enumeration for DSAService.exe (PID {})",
-        dsa_pid
-    );
+    println!("Testing service enumeration for DSAService.exe (PID {dsa_pid})");
     match services::get_services_for_process(dsa_pid) {
         Ok(services) => {
             println!("Found {} services:", services.len());
@@ -20,13 +17,10 @@ fn main() {
                 println!("  - {} ({:?})", svc.name, svc.status);
             }
         }
-        Err(e) => println!("Error: {}", e),
+        Err(e) => println!("Error: {e}"),
     }
 
-    println!(
-        "\nTesting service enumeration for Brave.exe (PID {})",
-        brave_pid
-    );
+    println!("\nTesting service enumeration for Brave.exe (PID {brave_pid})");
     match services::get_services_for_process(brave_pid) {
         Ok(services) => {
             println!("Found {} services:", services.len());
@@ -34,7 +28,7 @@ fn main() {
                 println!("  - {} ({:?})", svc.name, svc.status);
             }
         }
-        Err(e) => println!("Error: {}", e),
+        Err(e) => println!("Error: {e}"),
     }
 
     // Also test enumerate_all_services directly (which calls enumerate_all_services_basic)
@@ -71,7 +65,7 @@ fn main() {
             // Try to find a PID from the services to test get_services_for_process
             if let Some(svc_with_pid) = all.iter().find(|s| s.pid.is_some()) {
                 let test_pid = svc_with_pid.pid.unwrap();
-                println!("\nTesting service enumeration for PID {}", test_pid);
+                println!("\nTesting service enumeration for PID {test_pid}");
 
                 match pmonnt_core::services::get_services_for_process(test_pid) {
                     Ok(services) => {
@@ -86,14 +80,14 @@ fn main() {
                         }
                     }
                     Err(e) => {
-                        println!("Error: {}", e);
+                        println!("Error: {e}");
                     }
                 }
             } else {
                 println!("Could not find any service with a PID to test get_services_for_process");
             }
         }
-        Err(e) => println!("Error: {}", e),
+        Err(e) => println!("Error: {e}"),
     }
 
     println!("\n--- Windows API Constants ---");

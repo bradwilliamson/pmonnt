@@ -18,7 +18,7 @@ fn test_cache_cleanup_removes_expired_entries() {
     let cache = HandleCache::new(1); // 1 second TTL
 
     // The cleanup method should exist and work without errors
-    let mut cache_mut = cache.clone();
+    let mut cache_mut = cache;
     cache_mut.cleanup(&[]); // cleanup requires active PIDs list
 
     // After cleanup, cache should still be functional
@@ -78,8 +78,8 @@ fn test_cache_new_with_different_ttl() {
     let cache_long = HandleCache::new(300);
 
     // Both caches should be created without panic
-    let mut cache_short_mut = cache_short.clone();
-    let mut cache_long_mut = cache_long.clone();
+    let mut cache_short_mut = cache_short;
+    let mut cache_long_mut = cache_long;
 
     cache_short_mut.cleanup(&[]);
     cache_long_mut.cleanup(&[]);

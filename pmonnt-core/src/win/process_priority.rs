@@ -150,7 +150,9 @@ pub fn get_affinity(pid: u32) -> Result<AffinityInfo, PriorityError> {
     let mut system_mask: usize = 0;
 
     // SAFETY: GetProcessAffinityMask is called with valid process handle and properly initialized output pointers
-    if unsafe { GetProcessAffinityMask(handle, &mut process_mask, &mut system_mask) }.is_err() {
+    if unsafe { GetProcessAffinityMask(handle, &raw mut process_mask, &raw mut system_mask) }
+        .is_err()
+    {
         return Err(map_last_error(pid));
     }
 

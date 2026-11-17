@@ -70,11 +70,11 @@ fn vt_200_ok_returns_hit() {
     let _guard = ENV_LOCK
         .get_or_init(|| Mutex::new(()))
         .lock()
-        .unwrap_or_else(|e| e.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
-    let prev = set_env("VT_BASE_URL", format!("http://{}/api/v3", addr));
+    let prev = set_env("VT_BASE_URL", format!("http://{addr}/api/v3"));
 
     let body = include_str!("data/vt_hit_clean.json");
     let response = format!(
@@ -103,11 +103,11 @@ fn vt_404_returns_not_found() {
     let _guard = ENV_LOCK
         .get_or_init(|| Mutex::new(()))
         .lock()
-        .unwrap_or_else(|e| e.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
-    let prev = set_env("VT_BASE_URL", format!("http://{}/api/v3", addr));
+    let prev = set_env("VT_BASE_URL", format!("http://{addr}/api/v3"));
 
     let response = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
     let server = spawn_http_server(listener, response.to_string());
@@ -130,11 +130,11 @@ fn vt_401_returns_error() {
     let _guard = ENV_LOCK
         .get_or_init(|| Mutex::new(()))
         .lock()
-        .unwrap_or_else(|e| e.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
-    let prev = set_env("VT_BASE_URL", format!("http://{}/api/v3", addr));
+    let prev = set_env("VT_BASE_URL", format!("http://{addr}/api/v3"));
 
     let response = "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n";
     let server = spawn_http_server(listener, response.to_string());
@@ -158,11 +158,11 @@ fn vt_429_returns_error() {
     let _guard = ENV_LOCK
         .get_or_init(|| Mutex::new(()))
         .lock()
-        .unwrap_or_else(|e| e.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
-    let prev = set_env("VT_BASE_URL", format!("http://{}/api/v3", addr));
+    let prev = set_env("VT_BASE_URL", format!("http://{addr}/api/v3"));
 
     let response = "HTTP/1.1 429 Too Many Requests\r\nContent-Length: 0\r\n\r\n";
     let server = spawn_http_server(listener, response.to_string());
@@ -186,11 +186,11 @@ fn vt_second_lookup_uses_cache() {
     let _guard = ENV_LOCK
         .get_or_init(|| Mutex::new(()))
         .lock()
-        .unwrap_or_else(|e| e.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
-    let prev = set_env("VT_BASE_URL", format!("http://{}/api/v3", addr));
+    let prev = set_env("VT_BASE_URL", format!("http://{addr}/api/v3"));
 
     let body = include_str!("data/vt_hit_clean.json");
     let response = format!(
@@ -232,11 +232,11 @@ fn threatfox_200_ok_returns_hit() {
     let _guard = ENV_LOCK
         .get_or_init(|| Mutex::new(()))
         .lock()
-        .unwrap_or_else(|e| e.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
-    let prev = set_env("TF_BASE_URL", format!("http://{}", addr));
+    let prev = set_env("TF_BASE_URL", format!("http://{addr}"));
 
     let body = include_str!("data/threatfox_search_hash_ok.json");
     let response = format!(
@@ -265,11 +265,11 @@ fn threatfox_no_result_returns_not_found() {
     let _guard = ENV_LOCK
         .get_or_init(|| Mutex::new(()))
         .lock()
-        .unwrap_or_else(|e| e.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
-    let prev = set_env("TF_BASE_URL", format!("http://{}", addr));
+    let prev = set_env("TF_BASE_URL", format!("http://{addr}"));
 
     // ThreatFox returns 200 with "query_status": "no_result"
     let body = r#"{"query_status":"no_result","data":null}"#;
@@ -298,11 +298,11 @@ fn threatfox_429_returns_error() {
     let _guard = ENV_LOCK
         .get_or_init(|| Mutex::new(()))
         .lock()
-        .unwrap_or_else(|e| e.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
-    let prev = set_env("TF_BASE_URL", format!("http://{}", addr));
+    let prev = set_env("TF_BASE_URL", format!("http://{addr}"));
 
     let response = "HTTP/1.1 429 Too Many Requests\r\nContent-Length: 0\r\n\r\n";
     let server = spawn_http_server(listener, response.to_string());
@@ -324,7 +324,7 @@ fn threatfox_network_error_returns_offline() {
     let _guard = ENV_LOCK
         .get_or_init(|| Mutex::new(()))
         .lock()
-        .unwrap_or_else(|e| e.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
 
     // Point to invalid URL that will fail to connect
     let prev = set_env("TF_BASE_URL", "http://127.0.0.1:1".to_string());

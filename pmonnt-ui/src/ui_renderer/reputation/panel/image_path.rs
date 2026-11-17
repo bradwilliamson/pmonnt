@@ -16,7 +16,7 @@ pub(super) fn get_or_query_image_path(
             Some(path)
         }
         Err(e) => {
-            ui.colored_label(egui::Color32::RED, format!("Cannot access process: {}", e));
+            ui.colored_label(egui::Color32::RED, format!("Cannot access process: {e}"));
             None
         }
     }

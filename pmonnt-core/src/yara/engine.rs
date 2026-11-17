@@ -211,7 +211,7 @@ impl YaraEngine {
 }
 
 /// Helper for cleaner severity parsing logic.
-fn parse_severity(val: &yara_x::MetaValue) -> Severity {
+fn parse_severity(val: &yara_x::MetaValue<'_>) -> Severity {
     match val {
         yara_x::MetaValue::String(s) => match s.to_ascii_lowercase().as_str() {
             "low" | "info" | "informational" => Severity::Low,

@@ -174,23 +174,19 @@ pub(crate) fn apply_theme(ctx: &egui::Context, theme: Theme) {
             let heading_sz = style
                 .text_styles
                 .get(&TextStyle::Heading)
-                .map(|f| f.size)
-                .unwrap_or(20.0);
+                .map_or(20.0, |f| f.size);
             let body_sz = style
                 .text_styles
                 .get(&TextStyle::Body)
-                .map(|f| f.size)
-                .unwrap_or(14.0);
+                .map_or(14.0, |f| f.size);
             let button_sz = style
                 .text_styles
                 .get(&TextStyle::Button)
-                .map(|f| f.size)
-                .unwrap_or(body_sz);
+                .map_or(body_sz, |f| f.size);
             let small_sz = style
                 .text_styles
                 .get(&TextStyle::Small)
-                .map(|f| f.size)
-                .unwrap_or((body_sz - 1.0).max(10.0));
+                .map_or_else(|| (body_sz - 1.0).max(10.0), |f| f.size);
 
             style.text_styles.insert(
                 TextStyle::Heading,

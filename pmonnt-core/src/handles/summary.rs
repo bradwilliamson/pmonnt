@@ -28,7 +28,7 @@ impl HandleSummary {
             .collect();
 
         // Sort by count descending
-        by_type.sort_by(|a, b| b.1.cmp(&a.1));
+        by_type.sort_by_key(|t| std::cmp::Reverse(t.1));
 
         Self {
             total,

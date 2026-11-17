@@ -49,16 +49,16 @@ pub fn render_handles_panel(
 
     // Show scan info
     ui.horizontal(|ui| {
-        ui.label(format!("Scan: {}ms", scan_duration_ms));
+        ui.label(format!("Scan: {scan_duration_ms}ms"));
         ui.label("|");
-        ui.label(format!("Interval: {}s", scan_interval_secs));
+        ui.label(format!("Interval: {scan_interval_secs}s"));
         if scan_duration_ms > 100 {
             ui.colored_label(egui::Color32::YELLOW, "(slow system, reduced frequency)");
         }
     });
 
     if let Some(err) = &handle_cache.last_error {
-        ui.colored_label(egui::Color32::RED, format!("⚠ Error: {}", err));
+        ui.colored_label(egui::Color32::RED, format!("⚠ Error: {err}"));
     }
 
     ui.add_space(4.0);
@@ -86,7 +86,7 @@ pub fn render_handles_panel(
                 };
 
                 let sign = if delta > 0 { "+" } else { "" };
-                ui.colored_label(color, format!("({}{} since last)", sign, delta));
+                ui.colored_label(color, format!("({sign}{delta} since last)"));
             }
 
             // Show leak indicator with explanation
@@ -99,8 +99,7 @@ pub fn render_handles_panel(
                     ui.colored_label(
                         egui::Color32::LIGHT_RED,
                         format!(
-                            "Triggered: {} samples, +{} handles, flats {}/{}",
-                            samples, delta, flats_used, flat_tol
+                            "Triggered: {samples} samples, +{delta} handles, flats {flats_used}/{flat_tol}"
                         ),
                     );
                 }
@@ -140,7 +139,7 @@ pub fn render_handles_panel(
         ui.collapsing("⚙ Leak detection", |ui| {
             let (mut consecutive, mut delta_thresh, mut flat_tol) =
                 handle_cache.get_detector_config(pid);
-            let image_path = pid_to_image_path.get(&pid).map(|s| s.as_str());
+            let image_path = pid_to_image_path.get(&pid).map(std::string::String::as_str);
 
             ui.horizontal(|ui| {
                 ui.label("Consecutive threshold:");
@@ -218,8 +217,7 @@ pub fn render_handles_panel(
         let gaps = 5u64.saturating_sub(1); // 5 samples = 4 intervals between them
         let estimated_seconds = gaps * scan_interval_secs;
         ui.label(format!(
-            "Top growing types (last 5 samples ~{}s):",
-            estimated_seconds
+            "Top growing types (last 5 samples ~{estimated_seconds}s):"
         ));
 
         if let Some(growing_types) = handle_cache.get_top_growing_types(pid) {
@@ -242,8 +240,8 @@ pub fn render_handles_panel(
                                 for (type_idx, delta, current_count) in growing_types {
                                     let type_name = get_type_name(type_idx);
                                     ui.label(&type_name);
-                                    ui.colored_label(egui::Color32::YELLOW, format!("+{}", delta));
-                                    ui.label(format!("{}", current_count));
+                                    ui.colored_label(egui::Color32::YELLOW, format!("+{delta}"));
+                                    ui.label(format!("{current_count}"));
                                     ui.end_row();
                                 }
                             });
@@ -278,7 +276,7 @@ pub fn render_handles_panel(
 
                             for (type_name, count) in &summary.by_type {
                                 ui.label(type_name);
-                                ui.label(format!("{}", count));
+                                ui.label(format!("{count}"));
                                 ui.end_row();
                             }
                         });

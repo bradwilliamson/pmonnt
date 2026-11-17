@@ -46,19 +46,19 @@ impl PMonNTApp {
             ui.heading("PMonNT");
             ui.separator();
 
-            ui.label(format!("Tick: {}", tick));
-            ui.label(format!("Process count: {}", process_count));
+            ui.label(format!("Tick: {tick}"));
+            ui.label(format!("Process count: {process_count}"));
 
-            if let Some(diff) = last_diff.as_ref() {
-                if diff.has_changes() {
-                    ui.separator();
-                    ui.label(format!(
-                        "Changes: +{} new, -{} exited, ~{} changed",
-                        diff.new_pids.len(),
-                        diff.exited_pids.len(),
-                        diff.changed_pids.len()
-                    ));
-                }
+            if let Some(diff) = last_diff.as_ref()
+                && diff.has_changes()
+            {
+                ui.separator();
+                ui.label(format!(
+                    "Changes: +{} new, -{} exited, ~{} changed",
+                    diff.new_pids.len(),
+                    diff.exited_pids.len(),
+                    diff.changed_pids.len()
+                ));
             }
 
             ui.separator();
@@ -311,10 +311,10 @@ impl PMonNTApp {
             let mut children_map: HashMap<u32, Vec<u32>> = HashMap::new();
             for proc in &processes {
                 // Only add to children map when PPID is present and non-zero; roots are handled separately
-                if let Some(parent) = proc.ppid {
-                    if parent != 0 {
-                        children_map.entry(parent).or_default().push(proc.pid);
-                    }
+                if let Some(parent) = proc.ppid
+                    && parent != 0
+                {
+                    children_map.entry(parent).or_default().push(proc.pid);
                 }
             }
 
@@ -329,17 +329,18 @@ impl PMonNTApp {
                 if filter_active && !self.grouped_filter_was_active {
                     self.expanded_groups_before_filter = Some(self.expanded_groups.clone());
                 }
-                if !filter_active && self.grouped_filter_was_active {
-                    if let Some(prev) = self.expanded_groups_before_filter.take() {
-                        self.expanded_groups = prev;
-                    }
+                if !filter_active
+                    && self.grouped_filter_was_active
+                    && let Some(prev) = self.expanded_groups_before_filter.take()
+                {
+                    self.expanded_groups = prev;
                 }
                 self.grouped_filter_was_active = filter_active;
             }
             let visible_pids: Option<HashSet<u32>> = if filter_lower != self.last_filter_text_lower
             {
                 // Filter text changed - recompute and cache
-                self.last_filter_text_lower = filter_lower.clone();
+                self.last_filter_text_lower.clone_from(&filter_lower);
 
                 let result = if !filter_lower.is_empty() {
                     let mut matching_pids = HashSet::new();
@@ -364,15 +365,15 @@ impl PMonNTApp {
                         while depth < MAX_DEPTH && !visited.contains(&current) {
                             visited.insert(current);
 
-                            if let Some(proc) = pid_to_proc.get(&current) {
-                                if let Some(parent_pid) = proc.ppid {
-                                    if parent_pid != 0 && parent_pid != current {
-                                        expanded.insert(parent_pid);
-                                        current = parent_pid;
-                                        depth += 1;
-                                        continue;
-                                    }
-                                }
+                            if let Some(proc) = pid_to_proc.get(&current)
+                                && let Some(parent_pid) = proc.ppid
+                                && parent_pid != 0
+                                && parent_pid != current
+                            {
+                                expanded.insert(parent_pid);
+                                current = parent_pid;
+                                depth += 1;
+                                continue;
                             }
                             break;
                         }
@@ -393,7 +394,7 @@ impl PMonNTApp {
                     None
                 };
 
-                self.cached_visible_pids = result.clone();
+                self.cached_visible_pids.clone_from(&result);
                 result
             } else {
                 // Filter unchanged - reuse cached result
@@ -402,7 +403,7 @@ impl PMonNTApp {
 
             let filter_elapsed = filter_timer.elapsed().as_millis() as u64;
             if filter_elapsed > 10 {
-                log::warn!("slow section filter computation: {}ms", filter_elapsed);
+                log::warn!("slow section filter computation: {filter_elapsed}ms");
             }
 
             // TableBuilder manages its own layout; no explicit height needed.

@@ -67,8 +67,8 @@ pub(crate) fn compare_tree_pids(
     gpu_data: &HashMap<u32, (f32, u64, u64, u64)>,
     signature_cache_by_path: &HashMap<String, pmonnt_core::SignatureInfo>,
 ) -> std::cmp::Ordering {
-    let name_a = pid_to_proc.get(&a).map(|p| p.name.as_str()).unwrap_or("");
-    let name_b = pid_to_proc.get(&b).map(|p| p.name.as_str()).unwrap_or("");
+    let name_a = pid_to_proc.get(&a).map_or("", |p| p.name.as_str());
+    let name_b = pid_to_proc.get(&b).map_or("", |p| p.name.as_str());
 
     let lower_a = name_a.to_lowercase();
     let lower_b = name_b.to_lowercase();
@@ -299,10 +299,10 @@ fn build_rows_recursive(
     }
 
     // Skip if filtered out
-    if let Some(visible) = visible_pids {
-        if !visible.contains(&pid) {
-            return;
-        }
+    if let Some(visible) = visible_pids
+        && !visible.contains(&pid)
+    {
+        return;
     }
 
     // Get process info
@@ -321,7 +321,7 @@ fn build_rows_recursive(
 
     // Check if this node has children
     let child_pids = children.get(&pid);
-    let has_children = child_pids.map(|c| !c.is_empty()).unwrap_or(false);
+    let has_children = child_pids.is_some_and(|c| !c.is_empty());
     let is_expanded = expanded.contains(&pid);
     let is_selected = selected_pid == Some(pid);
 
@@ -338,49 +338,50 @@ fn build_rows_recursive(
     });
 
     // Render children if expanded
-    if is_expanded && depth < max_depth {
-        if let Some(child_pids) = child_pids {
-            // Sort children by current mode
-            let mut sorted_children: Vec<u32> = child_pids.to_vec();
-            sorted_children.sort_by(|&a, &b| {
-                compare_tree_pids(
-                    a,
-                    b,
-                    group_sort,
-                    sort_desc,
-                    pid_to_proc,
-                    handle_cache,
-                    global_thread_counts,
-                    cpu_memory_data,
-                    io_rate_by_pid,
-                    gpu_data,
-                    signature_cache_by_path,
-                )
-            });
+    if is_expanded
+        && depth < max_depth
+        && let Some(child_pids) = child_pids
+    {
+        // Sort children by current mode
+        let mut sorted_children: Vec<u32> = child_pids.clone();
+        sorted_children.sort_by(|&a, &b| {
+            compare_tree_pids(
+                a,
+                b,
+                group_sort,
+                sort_desc,
+                pid_to_proc,
+                handle_cache,
+                global_thread_counts,
+                cpu_memory_data,
+                io_rate_by_pid,
+                gpu_data,
+                signature_cache_by_path,
+            )
+        });
 
-            for &child_pid in &sorted_children {
-                build_rows_recursive(
-                    child_pid,
-                    children,
-                    pid_to_proc,
-                    expanded,
-                    selected_pid,
-                    visible_pids,
-                    filter_text_lower,
-                    depth + 1,
-                    max_depth,
-                    visited,
-                    rows,
-                    group_sort,
-                    sort_desc,
-                    handle_cache,
-                    global_thread_counts,
-                    cpu_memory_data,
-                    io_rate_by_pid,
-                    gpu_data,
-                    signature_cache_by_path,
-                );
-            }
+        for &child_pid in &sorted_children {
+            build_rows_recursive(
+                child_pid,
+                children,
+                pid_to_proc,
+                expanded,
+                selected_pid,
+                visible_pids,
+                filter_text_lower,
+                depth + 1,
+                max_depth,
+                visited,
+                rows,
+                group_sort,
+                sort_desc,
+                handle_cache,
+                global_thread_counts,
+                cpu_memory_data,
+                io_rate_by_pid,
+                gpu_data,
+                signature_cache_by_path,
+            );
         }
     }
 }

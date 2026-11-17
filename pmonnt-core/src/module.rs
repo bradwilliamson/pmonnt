@@ -61,15 +61,15 @@ impl ModuleCache {
     /// Get cached module list for a PID, returns None if not cached or expired
     pub fn get(&mut self, pid: u32) -> Option<&ModuleListResult> {
         let now = Instant::now();
-        if let Some((fetched, _)) = self.map.get(&pid) {
-            if now.duration_since(*fetched).as_secs() < self.ttl_secs {
-                // Update access order (LRU)
-                if let Some(pos) = self.access_order.iter().position(|&x| x == pid) {
-                    self.access_order.remove(pos);
-                    self.access_order.push(pid);
-                }
-                return self.map.get(&pid).map(|(_, r)| r);
+        if let Some((fetched, _)) = self.map.get(&pid)
+            && now.duration_since(*fetched).as_secs() < self.ttl_secs
+        {
+            // Update access order (LRU)
+            if let Some(pos) = self.access_order.iter().position(|&x| x == pid) {
+                self.access_order.remove(pos);
+                self.access_order.push(pid);
             }
+            return self.map.get(&pid).map(|(_, r)| r);
         }
         None
     }
@@ -167,7 +167,7 @@ pub fn map_address_to_module(
         }
 
         let base = module.base_address;
-        let end = base.saturating_add(module.size as u64);
+        let end = base.saturating_add(u64::from(module.size));
 
         // Check if address is within [base, end)
         if addr >= base && addr < end {

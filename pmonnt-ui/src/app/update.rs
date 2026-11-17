@@ -55,7 +55,7 @@ impl eframe::App for PMonNTApp {
 
         // Cache input state to avoid multiple ctx.input() calls.
         // This is also used later for keyboard navigation in the process list.
-        let input = ctx.input(|i| i.clone());
+        let input = ctx.input(std::clone::Clone::clone);
 
         self.update_selection_hash_jobs();
         self.handle_filter_shortcuts(ctx, &input);

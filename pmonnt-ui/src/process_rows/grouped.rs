@@ -64,9 +64,9 @@ pub(crate) fn build_grouped_rows(
                     let mut agg: f64 = 0.0;
                     for pid in pids {
                         if let Some((cpu, _)) = cpu_memory_data.get(pid) {
-                            let v = *cpu as f64;
+                            let v = f64::from(*cpu);
                             agg += v;
-                            if leader.map(|(best, _)| v > best).unwrap_or(true) {
+                            if leader.is_none_or(|(best, _)| v > best) {
                                 leader = Some((v, *pid));
                             }
                         }
@@ -84,7 +84,7 @@ pub(crate) fn build_grouped_rows(
                         if let Some((_, Some(mem))) = cpu_memory_data.get(pid) {
                             let v = *mem as f64;
                             agg += v;
-                            if leader.map(|(best, _)| v > best).unwrap_or(true) {
+                            if leader.is_none_or(|(best, _)| v > best) {
                                 leader = Some((v, *pid));
                             }
                         }
@@ -102,7 +102,7 @@ pub(crate) fn build_grouped_rows(
                         if let Some(r) = io_rate_by_pid.get(pid) {
                             let v = r.read_bytes_per_sec + r.write_bytes_per_sec;
                             agg += v;
-                            if leader.map(|(best, _)| v > best).unwrap_or(true) {
+                            if leader.is_none_or(|(best, _)| v > best) {
                                 leader = Some((v, *pid));
                             }
                         }
@@ -119,11 +119,11 @@ pub(crate) fn build_grouped_rows(
                     let mut agg: f64 = 0.0;
                     for pid in pids {
                         if let Some((pct, _, _, _)) = gpu_data.get(pid) {
-                            let v = *pct as f64;
+                            let v = f64::from(*pct);
                             if v > agg {
                                 agg = v;
                             }
-                            if leader.map(|(best, _)| v > best).unwrap_or(true) {
+                            if leader.is_none_or(|(best, _)| v > best) {
                                 leader = Some((v, *pid));
                             }
                         }
@@ -141,7 +141,7 @@ pub(crate) fn build_grouped_rows(
                         if let Some((_, _, _, total)) = gpu_data.get(pid) {
                             let v = *total as f64;
                             agg += v;
-                            if leader.map(|(best, _)| v > best).unwrap_or(true) {
+                            if leader.is_none_or(|(best, _)| v > best) {
                                 leader = Some((v, *pid));
                             }
                         }
@@ -157,9 +157,9 @@ pub(crate) fn build_grouped_rows(
                     let mut agg: Option<f64> = None;
                     for pid in pids {
                         if let Some(summary) = handle_cache.get(*pid) {
-                            let v = summary.total as f64;
+                            let v = f64::from(summary.total);
                             agg = Some(agg.unwrap_or(0.0) + v);
-                            if leader.map(|(best, _)| v > best).unwrap_or(true) {
+                            if leader.is_none_or(|(best, _)| v > best) {
                                 leader = Some((v, *pid));
                             }
                         }
@@ -173,7 +173,7 @@ pub(crate) fn build_grouped_rows(
                         if let Some(count) = global_thread_counts.get(pid) {
                             let v = *count as f64;
                             agg += v;
-                            if leader.map(|(best, _)| v > best).unwrap_or(true) {
+                            if leader.is_none_or(|(best, _)| v > best) {
                                 leader = Some((v, *pid));
                             }
                         }
@@ -187,7 +187,7 @@ pub(crate) fn build_grouped_rows(
                 GroupSort::PID => {
                     // Leader for PID = highest PID in group.
                     let max_pid = pids.iter().max().copied();
-                    (max_pid.map(|p| p as f64), max_pid, None)
+                    (max_pid.map(f64::from), max_pid, None)
                 }
                 // For non-numeric sorts, leader isn't meaningful.
                 GroupSort::Name | GroupSort::VerifiedSigner => (None, None, None),
@@ -252,7 +252,7 @@ pub(crate) fn build_grouped_rows(
             GroupSort::VerifiedSigner => {
                 // Build rows first, then do a cache-only sort by representative signature.
                 // (Keeping this cache-only avoids triggering verification work during sorting.)
-                group_list.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
+                group_list.sort_by_key(|a| a.0.to_lowercase());
             }
             GroupSort::CPU => {
                 // Sort by total CPU % across group members (sum).
@@ -544,17 +544,17 @@ pub(crate) fn build_grouped_rows(
         }
 
         // Find representative PID (prefer root-level process, else lowest PID)
-        pids.sort();
+        pids.sort_unstable();
         let pids_in_group: HashSet<u32> = pids.iter().copied().collect();
         let representative_pid = pids
             .iter()
             .copied()
             .find(|&pid| {
                 // Prefer process whose parent is NOT in the same group
-                if let Some(proc) = pid_to_proc.get(&pid) {
-                    if let Some(ppid) = proc.ppid {
-                        return !pids_in_group.contains(&ppid);
-                    }
+                if let Some(proc) = pid_to_proc.get(&pid)
+                    && let Some(ppid) = proc.ppid
+                {
+                    return !pids_in_group.contains(&ppid);
                 }
                 true
             })

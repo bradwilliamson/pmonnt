@@ -205,17 +205,10 @@ pub fn list_modules(pid: u32) -> Result<Vec<ModuleInfo>, PmonntError> {
             return Ok(modules);
         }
         Ok(_) => {
-            log::debug!(
-                "ToolHelp32 returned empty for PID {}, trying PSAPI fallback",
-                pid
-            );
+            log::debug!("ToolHelp32 returned empty for PID {pid}, trying PSAPI fallback");
         }
         Err(e) => {
-            log::debug!(
-                "ToolHelp32 failed for PID {}: {}, trying PSAPI fallback",
-                pid,
-                e
-            );
+            log::debug!("ToolHelp32 failed for PID {pid}: {e}, trying PSAPI fallback");
         }
     }
 
@@ -230,10 +223,10 @@ pub fn list_modules(pid: u32) -> Result<Vec<ModuleInfo>, PmonntError> {
             return Ok(modules);
         }
         Ok(_) => {
-            log::debug!("PSAPI returned empty for PID {}, trying PEB fallback", pid);
+            log::debug!("PSAPI returned empty for PID {pid}, trying PEB fallback");
         }
         Err(e) => {
-            log::debug!("PSAPI failed for PID {}: {}, trying PEB fallback", pid, e);
+            log::debug!("PSAPI failed for PID {pid}: {e}, trying PEB fallback");
         }
     }
 
@@ -248,17 +241,16 @@ pub fn list_modules(pid: u32) -> Result<Vec<ModuleInfo>, PmonntError> {
             return Ok(modules);
         }
         Ok(_) => {
-            log::debug!("PEB walk returned empty for PID {}", pid);
+            log::debug!("PEB walk returned empty for PID {pid}");
         }
         Err(e) => {
-            log::debug!("PEB walk failed for PID {}: {}", pid, e);
+            log::debug!("PEB walk failed for PID {pid}: {e}");
         }
     }
 
     // All methods failed
     Err(PmonntError::ModuleEnumerationFailed(format!(
-        "All enumeration methods failed for PID {}",
-        pid
+        "All enumeration methods failed for PID {pid}"
     )))
 }
 
@@ -274,15 +266,14 @@ fn list_modules_toolhelp(pid: u32) -> Result<Vec<ModuleInfo>, PmonntError> {
             // Get last error for better diagnostics
             let err = std::io::Error::last_os_error();
             return Err(PmonntError::ModuleEnumerationFailed(format!(
-                "ToolHelp32 access denied or process not found: {}",
-                err
+                "ToolHelp32 access denied or process not found: {err}"
             )));
         }
 
         let mut entry: MODULEENTRY32W = std::mem::zeroed();
         entry.dwSize = std::mem::size_of::<MODULEENTRY32W>() as u32;
 
-        let mut ok = Module32FirstW(snapshot, &mut entry) != 0;
+        let mut ok = Module32FirstW(snapshot, &raw mut entry) != 0;
         while ok {
             let name = wchar_to_string(&entry.szModule);
             let path = wchar_to_string(&entry.szExePath);
@@ -297,7 +288,7 @@ fn list_modules_toolhelp(pid: u32) -> Result<Vec<ModuleInfo>, PmonntError> {
             };
             modules.push(info);
 
-            ok = Module32NextW(snapshot, &mut entry) != 0;
+            ok = Module32NextW(snapshot, &raw mut entry) != 0;
         }
 
         drop(HandleGuard::new(HANDLE(snapshot)));
@@ -321,8 +312,7 @@ fn list_modules_psapi(pid: u32) -> Result<Vec<ModuleInfo>, PmonntError> {
         let Ok(handle) = handle else {
             let err = std::io::Error::last_os_error();
             return Err(PmonntError::ModuleEnumerationFailed(format!(
-                "PSAPI: Cannot open process {}: {}",
-                pid, err
+                "PSAPI: Cannot open process {pid}: {err}"
             )));
         };
 
@@ -335,15 +325,14 @@ fn list_modules_psapi(pid: u32) -> Result<Vec<ModuleInfo>, PmonntError> {
             raw_handle,
             std::ptr::null_mut(),
             0,
-            &mut needed,
+            &raw mut needed,
             LIST_MODULES_ALL,
         );
 
         if result == 0 && needed == 0 {
             let err = std::io::Error::last_os_error();
             return Err(PmonntError::ModuleEnumerationFailed(format!(
-                "PSAPI: EnumProcessModulesEx failed: {}",
-                err
+                "PSAPI: EnumProcessModulesEx failed: {err}"
             )));
         }
 
@@ -360,15 +349,14 @@ fn list_modules_psapi(pid: u32) -> Result<Vec<ModuleInfo>, PmonntError> {
             raw_handle,
             module_handles.as_mut_ptr(),
             needed,
-            &mut actual_needed,
+            &raw mut actual_needed,
             LIST_MODULES_ALL,
         );
 
         if result == 0 {
             let err = std::io::Error::last_os_error();
             return Err(PmonntError::ModuleEnumerationFailed(format!(
-                "PSAPI: EnumProcessModulesEx (second call) failed: {}",
-                err
+                "PSAPI: EnumProcessModulesEx (second call) failed: {err}"
             )));
         }
 
@@ -398,7 +386,7 @@ fn list_modules_psapi(pid: u32) -> Result<Vec<ModuleInfo>, PmonntError> {
             let info_result = K32GetModuleInformation(
                 raw_handle,
                 hmod,
-                &mut mod_info,
+                &raw mut mod_info,
                 std::mem::size_of::<Moduleinfo>() as u32,
             );
 
@@ -449,8 +437,7 @@ fn list_modules_peb(pid: u32) -> Result<Vec<ModuleInfo>, PmonntError> {
         let Ok(handle) = handle else {
             let err = std::io::Error::last_os_error();
             return Err(PmonntError::ModuleEnumerationFailed(format!(
-                "PEB: Cannot open process {}: {}",
-                pid, err
+                "PEB: Cannot open process {pid}: {err}"
             )));
         };
 
@@ -463,9 +450,9 @@ fn list_modules_peb(pid: u32) -> Result<Vec<ModuleInfo>, PmonntError> {
         let status = NtQueryInformationProcess(
             handle_guard.raw(),
             PROCESS_BASIC_INFORMATION_CLASS,
-            &mut pbi as *mut _ as *mut std::ffi::c_void,
+            (&raw mut pbi).cast::<std::ffi::c_void>(),
             std::mem::size_of::<PROCESS_BASIC_INFORMATION>() as u32,
-            &mut ret_len,
+            &raw mut ret_len,
         );
 
         if status.0 < 0 || pbi.PebBaseAddress == 0 {
@@ -483,9 +470,9 @@ fn list_modules_peb(pid: u32) -> Result<Vec<ModuleInfo>, PmonntError> {
         let result = ReadProcessMemory(
             raw_handle,
             pbi.PebBaseAddress + ldr_offset,
-            &mut ldr_ptr as *mut _ as *mut std::ffi::c_void,
+            (&raw mut ldr_ptr).cast::<std::ffi::c_void>(),
             std::mem::size_of::<usize>(),
-            &mut bytes_read,
+            &raw mut bytes_read,
         );
 
         if result == 0 || ldr_ptr == 0 {
@@ -499,9 +486,9 @@ fn list_modules_peb(pid: u32) -> Result<Vec<ModuleInfo>, PmonntError> {
         let result = ReadProcessMemory(
             raw_handle,
             ldr_ptr,
-            &mut ldr_data as *mut _ as *mut std::ffi::c_void,
+            (&raw mut ldr_data).cast::<std::ffi::c_void>(),
             std::mem::size_of::<PEB_LDR_DATA>(),
-            &mut bytes_read,
+            &raw mut bytes_read,
         );
 
         if result == 0 {
@@ -522,9 +509,9 @@ fn list_modules_peb(pid: u32) -> Result<Vec<ModuleInfo>, PmonntError> {
             let result = ReadProcessMemory(
                 raw_handle,
                 current,
-                &mut entry as *mut _ as *mut std::ffi::c_void,
+                (&raw mut entry).cast::<std::ffi::c_void>(),
                 std::mem::size_of::<LDR_DATA_TABLE_ENTRY>(),
-                &mut bytes_read,
+                &raw mut bytes_read,
             );
 
             if result == 0 {
@@ -589,9 +576,9 @@ unsafe fn read_unicode_string(handle: isize, us: &UNICODE_STRING) -> String {
         ReadProcessMemory(
             handle,
             us.Buffer,
-            buffer.as_mut_ptr() as *mut std::ffi::c_void,
+            buffer.as_mut_ptr().cast::<std::ffi::c_void>(),
             us.Length as usize,
-            &mut bytes_read,
+            &raw mut bytes_read,
         )
     };
 
@@ -623,7 +610,7 @@ pub fn check_signature(path: &str) -> (Option<bool>, Option<String>) {
             dwUIChoice: WTD_UI_NONE,
             fdwRevocationChecks: WTD_REVOKE_NONE,
             dwUnionChoice: WTD_CHOICE_FILE,
-            pFile: &mut file_info,
+            pFile: &raw mut file_info,
             dwStateAction: WTD_STATEACTION_VERIFY,
             hWVTStateData: HANDLE::default(),
             pwszURLReference: std::ptr::null(),
@@ -633,11 +620,11 @@ pub fn check_signature(path: &str) -> (Option<bool>, Option<String>) {
         };
 
         let action_guid = WINTRUST_ACTION_GENERIC_VERIFY_V2;
-        let result = WinVerifyTrust(HANDLE::default(), &action_guid, &mut wvt_data);
+        let result = WinVerifyTrust(HANDLE::default(), &raw const action_guid, &raw mut wvt_data);
 
         // Close the state data
         wvt_data.dwStateAction = WTD_STATEACTION_CLOSE;
-        let _ = WinVerifyTrust(HANDLE::default(), &action_guid, &mut wvt_data);
+        let _ = WinVerifyTrust(HANDLE::default(), &raw const action_guid, &raw mut wvt_data);
 
         match result {
             0 => (Some(true), None), // Signature is valid

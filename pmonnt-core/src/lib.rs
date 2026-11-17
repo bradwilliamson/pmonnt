@@ -19,6 +19,7 @@ pub enum PmonntError {
     Other(String),
 }
 
+pub mod aligned_buf;
 #[cfg(windows)]
 pub mod diff;
 #[cfg(windows)]
@@ -68,8 +69,7 @@ pub use win::signature::{SignatureInfo, SignatureStatus, verify_signature};
 pub fn get_tick_count() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+        .map_or(0, |d| d.as_secs())
 }
 
 /// Get the library version

@@ -54,12 +54,11 @@ fn header_cell_button(
     if released {
         released_any.set(true);
     }
-    if released {
-        if let Some(drag_col) = app.process_columns_drag {
-            if response.hovered() {
-                app.move_process_column_before(drag_col, col);
-            }
-        }
+    if released
+        && let Some(drag_col) = app.process_columns_drag
+        && response.hovered()
+    {
+        app.move_process_column_before(drag_col, col);
     }
 
     response
@@ -215,7 +214,7 @@ pub(super) fn render_header(
                             };
                             if show_totals_in_headers {
                                 if let Some(pct) = ram_pct {
-                                    format!("{prefix}Memory {:.0}%", pct)
+                                    format!("{prefix}Memory {pct:.0}%")
                                 } else {
                                     format!("{prefix}Memory")
                                 }

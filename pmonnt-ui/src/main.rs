@@ -42,12 +42,12 @@ fn main() -> Result<(), eframe::Error> {
 
     // Try to enable SeDebugPrivilege for better access to system processes
     let is_elevated = match win::enable_debug_privilege() {
-        Ok(_) => {
+        Ok(()) => {
             log::info!("SeDebugPrivilege enabled successfully");
             true
         }
         Err(e) => {
-            log::warn!("Failed to enable SeDebugPrivilege: {}", e);
+            log::warn!("Failed to enable SeDebugPrivilege: {e}");
             false
         }
     };
@@ -68,7 +68,7 @@ fn main() -> Result<(), eframe::Error> {
                 Ok(Box::new(app))
             }
             Err(e) => {
-                log::error!("Failed to initialize app: {:#}", e);
+                log::error!("Failed to initialize app: {e:#}");
                 Ok(Box::new(StartupErrorApp {
                     message: format!("{e:#}"),
                 }))

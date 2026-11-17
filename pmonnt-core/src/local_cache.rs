@@ -47,23 +47,22 @@ impl LocalCacheProvider {
     fn now_unix_secs() -> u64 {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0)
+            .map_or(0, |d| d.as_secs())
     }
 
     fn load_from_disk(path: &PathBuf) -> HashMap<String, CacheEntry> {
-        if let Ok(content) = fs::read_to_string(path) {
-            if let Ok(entries) = serde_json::from_str::<Vec<CacheEntry>>(&content) {
-                let now = Self::now_unix_secs();
-                let ttl_secs = CACHE_TTL_DAYS * 24 * 60 * 60;
+        if let Ok(content) = fs::read_to_string(path)
+            && let Ok(entries) = serde_json::from_str::<Vec<CacheEntry>>(&content)
+        {
+            let now = Self::now_unix_secs();
+            let ttl_secs = CACHE_TTL_DAYS * 24 * 60 * 60;
 
-                // Filter out expired entries
-                return entries
-                    .into_iter()
-                    .filter(|e| now - e.timestamp < ttl_secs)
-                    .map(|e| (e.sha256.clone(), e))
-                    .collect();
-            }
+            // Filter out expired entries
+            return entries
+                .into_iter()
+                .filter(|e| now - e.timestamp < ttl_secs)
+                .map(|e| (e.sha256.clone(), e))
+                .collect();
         }
         HashMap::new()
     }
@@ -92,7 +91,7 @@ impl LocalCacheProvider {
             .collect();
 
         // Sort by timestamp (newest first) and keep only MAX_CACHE_ENTRIES
-        vec.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        vec.sort_by_key(|e| std::cmp::Reverse(e.timestamp));
         vec.truncate(MAX_CACHE_ENTRIES);
 
         let mut saved_ok = false;
@@ -242,7 +241,7 @@ impl LocalCacheProvider {
                         stats,
                         not_found,
                         timestamp,
-                        provider: provider.map(|s| s.to_string()),
+                        provider: provider.map(std::string::ToString::to_string),
                     },
                 );
             }
@@ -255,7 +254,7 @@ impl LocalCacheProvider {
                         stats,
                         not_found,
                         timestamp,
-                        provider: provider.map(|s| s.to_string()),
+                        provider: provider.map(std::string::ToString::to_string),
                     },
                 );
             }

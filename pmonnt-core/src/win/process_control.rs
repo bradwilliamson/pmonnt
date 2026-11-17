@@ -93,10 +93,10 @@ pub fn kill_process(pid: u32) -> Result<(), ProcessControlError> {
 pub fn suspend_process(pid: u32) -> Result<(), ProcessControlError> {
     // SAFETY: GetModuleHandleA, GetProcAddress, and transmute to get NtSuspendProcess function pointer with correct signature
     unsafe {
-        let ntdll = GetModuleHandleA(PCSTR(c"ntdll.dll".as_ptr() as _))
+        let ntdll = GetModuleHandleA(PCSTR(c"ntdll.dll".as_ptr().cast()))
             .map_err(|_| ProcessControlError::NtdllError("Could not load ntdll.dll".to_string()))?;
         let nt_suspend_process_addr =
-            GetProcAddress(ntdll, PCSTR(c"NtSuspendProcess".as_ptr() as _));
+            GetProcAddress(ntdll, PCSTR(c"NtSuspendProcess".as_ptr().cast()));
 
         if let Some(addr) = nt_suspend_process_addr {
             let nt_suspend_process: unsafe extern "system" fn(HANDLE) -> i32 =
@@ -126,9 +126,10 @@ pub fn suspend_process(pid: u32) -> Result<(), ProcessControlError> {
 pub fn resume_process(pid: u32) -> Result<(), ProcessControlError> {
     // SAFETY: GetModuleHandleA, GetProcAddress, and transmute to get NtResumeProcess function pointer with correct signature
     unsafe {
-        let ntdll = GetModuleHandleA(PCSTR(c"ntdll.dll".as_ptr() as _))
+        let ntdll = GetModuleHandleA(PCSTR(c"ntdll.dll".as_ptr().cast()))
             .map_err(|_| ProcessControlError::NtdllError("Could not load ntdll.dll".to_string()))?;
-        let nt_resume_process_addr = GetProcAddress(ntdll, PCSTR(c"NtResumeProcess".as_ptr() as _));
+        let nt_resume_process_addr =
+            GetProcAddress(ntdll, PCSTR(c"NtResumeProcess".as_ptr().cast()));
 
         if let Some(addr) = nt_resume_process_addr {
             let nt_resume_process: unsafe extern "system" fn(HANDLE) -> i32 =
@@ -196,8 +197,7 @@ fn spawn_process_with_command_line(
         });
         let cwd_ptr = cwd_wide
             .as_ref()
-            .map(|v| PCWSTR(v.as_ptr()))
-            .unwrap_or(PCWSTR::null());
+            .map_or(PCWSTR::null(), |v| PCWSTR(v.as_ptr()));
 
         let success = CreateProcessW(
             None,
@@ -208,8 +208,8 @@ fn spawn_process_with_command_line(
             windows::Win32::System::Threading::CREATE_NEW_CONSOLE, // Or 0?
             None,
             cwd_ptr,
-            &startup_info,
-            &mut process_info,
+            &raw const startup_info,
+            &raw mut process_info,
         );
 
         if success.is_ok() {

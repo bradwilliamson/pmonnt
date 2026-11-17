@@ -42,12 +42,11 @@ pub(super) fn handle_grouped_keyboard_nav(
             if let Some(idx) = grouped_rows
                 .iter()
                 .position(|r| r.member_pids.contains(&selected) || r.representative_pid == selected)
+                && idx > 0
             {
-                if idx > 0 {
-                    app.selected_pid = Some(grouped_rows[idx - 1].representative_pid);
-                    *selection_changed = true;
-                    ctx.request_repaint();
-                }
+                app.selected_pid = Some(grouped_rows[idx - 1].representative_pid);
+                *selection_changed = true;
+                ctx.request_repaint();
             }
         } else if !grouped_rows.is_empty() {
             if let Some(last) = grouped_rows.last() {
@@ -65,11 +64,11 @@ pub(super) fn handle_grouped_keyboard_nav(
     }
 
     // Delete = Kill Process, Shift+Delete = Kill Process Tree (opens confirmation)
-    if input.key_pressed(egui::Key::Delete) {
-        if let Some(selected) = app.selected_pid {
-            let kill_tree = input.modifiers.shift;
-            app.open_kill_dialog(selected, kill_tree);
-            ctx.request_repaint();
-        }
+    if input.key_pressed(egui::Key::Delete)
+        && let Some(selected) = app.selected_pid
+    {
+        let kill_tree = input.modifiers.shift;
+        app.open_kill_dialog(selected, kill_tree);
+        ctx.request_repaint();
     }
 }

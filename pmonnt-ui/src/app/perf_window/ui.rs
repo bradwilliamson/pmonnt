@@ -39,8 +39,7 @@ impl PMonNTApp {
             .processes
             .iter()
             .find(|p| p.pid == pid)
-            .map(|p| p.name.clone())
-            .unwrap_or_else(|| "<unknown>".to_string())
+            .map_or_else(|| "<unknown>".to_string(), |p| p.name.clone())
     }
 
     pub(crate) fn show_perf_windows(&mut self, ctx: &egui::Context) {
@@ -51,8 +50,7 @@ impl PMonNTApp {
         let main_inner = ctx.input(|i| {
             i.viewport()
                 .inner_rect
-                .map(|r| r.size())
-                .unwrap_or(egui::Vec2::ZERO)
+                .map_or(egui::Vec2::ZERO, |r| r.size())
         });
 
         let pids: Vec<u32> = self.perf_windows.keys().copied().collect();
@@ -119,7 +117,7 @@ impl PMonNTApp {
                 result
             };
 
-            let title = format!("{} (PID {})", process_name, pid);
+            let title = format!("{process_name} (PID {pid})");
 
             let reputation_service = self.reputation_service.clone();
 
@@ -270,8 +268,7 @@ impl PMonNTApp {
                     let inner_size = ctx.input(|i| {
                         i.viewport()
                             .inner_rect
-                            .map(|r| r.size())
-                            .unwrap_or(egui::Vec2::ZERO)
+                            .map_or(egui::Vec2::ZERO, |r| r.size())
                     });
 
                     let mut render_tab_content = |ui: &mut egui::Ui, current_tab: RightTab| {

@@ -23,11 +23,11 @@ pub(crate) fn render_service_dialog(app: &mut PMonNTApp, ctx: &egui::Context) {
     };
 
     // Clear old results after a short time so the dialog doesn't accumulate messages.
-    if let Some(t) = state.last_result_time {
-        if t.elapsed().as_secs() >= 5 {
-            state.last_result = None;
-            state.last_result_time = None;
-        }
+    if let Some(t) = state.last_result_time
+        && t.elapsed().as_secs() >= 5
+    {
+        state.last_result = None;
+        state.last_result_time = None;
     }
 
     let mut open = true;
@@ -257,38 +257,38 @@ pub(crate) fn render_service_dialog(app: &mut PMonNTApp, ctx: &egui::Context) {
 
                 ui.add_space(8.0);
 
-                if let Some(idx) = state.selected_service {
-                    if let Some(svc) = state.services.get(idx) {
-                        ui.separator();
-                        ui.collapsing("Details", |ui| {
-                            egui::Grid::new("service_details_grid")
-                                .num_columns(2)
-                                .show(ui, |ui| {
-                                    ui.label("Name:");
-                                    ui.label(&svc.name);
-                                    ui.end_row();
+                if let Some(idx) = state.selected_service
+                    && let Some(svc) = state.services.get(idx)
+                {
+                    ui.separator();
+                    ui.collapsing("Details", |ui| {
+                        egui::Grid::new("service_details_grid")
+                            .num_columns(2)
+                            .show(ui, |ui| {
+                                ui.label("Name:");
+                                ui.label(&svc.name);
+                                ui.end_row();
 
-                                    ui.label("Display Name:");
-                                    ui.label(&svc.display_name);
-                                    ui.end_row();
+                                ui.label("Display Name:");
+                                ui.label(&svc.display_name);
+                                ui.end_row();
 
-                                    ui.label("Status:");
-                                    let (t, c) = status_display(svc.status);
-                                    ui.colored_label(c, t);
-                                    ui.end_row();
+                                ui.label("Status:");
+                                let (t, c) = status_display(svc.status);
+                                ui.colored_label(c, t);
+                                ui.end_row();
 
-                                    ui.label("Start Type:");
-                                    ui.label(start_type_label(svc.start_type));
-                                    ui.end_row();
+                                ui.label("Start Type:");
+                                ui.label(start_type_label(svc.start_type));
+                                ui.end_row();
 
-                                    if let Some(desc) = svc.description.as_deref() {
-                                        ui.label("Description:");
-                                        ui.label(desc);
-                                        ui.end_row();
-                                    }
-                                });
-                        });
-                    }
+                                if let Some(desc) = svc.description.as_deref() {
+                                    ui.label("Description:");
+                                    ui.label(desc);
+                                    ui.end_row();
+                                }
+                            });
+                    });
                 }
             }
 

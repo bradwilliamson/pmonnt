@@ -33,7 +33,7 @@ mod windows_smoke {
     }
 
     #[test]
-    #[ignore] // Opt-in smoke test
+    #[ignore = "opt-in smoke test against live Windows APIs; run with --ignored"]
     fn module_enumeration_returns_valid_data() {
         if env::var("PMONNT_RUN_SMOKE_TESTS").ok().as_deref() != Some("1") {
             return;
@@ -56,7 +56,7 @@ mod windows_smoke {
     }
 
     #[test]
-    #[ignore] // Opt-in smoke test
+    #[ignore = "opt-in smoke test against live Windows APIs; run with --ignored"]
     fn signature_verification_succeeds() {
         if env::var("PMONNT_RUN_SMOKE_TESTS").ok().as_deref() != Some("1") {
             return;
@@ -76,7 +76,7 @@ mod windows_smoke {
     }
 
     #[test]
-    #[ignore] // Opt-in smoke test
+    #[ignore = "opt-in smoke test against live Windows APIs; run with --ignored"]
     fn thread_enumeration_returns_data() {
         if env::var("PMONNT_RUN_SMOKE_TESTS").ok().as_deref() != Some("1") {
             return;
@@ -99,7 +99,7 @@ mod windows_smoke {
     }
 
     #[test]
-    #[ignore] // Opt-in smoke test
+    #[ignore = "opt-in smoke test against live Windows APIs; run with --ignored"]
     fn network_connections_query_succeeds() {
         if env::var("PMONNT_RUN_SMOKE_TESTS").ok().as_deref() != Some("1") {
             return;
@@ -113,7 +113,7 @@ mod windows_smoke {
     }
 
     #[test]
-    #[ignore] // Opt-in smoke test  
+    #[ignore = "opt-in smoke test against live Windows APIs; run with --ignored"]
     fn token_info_readable_for_current_process() {
         if env::var("PMONNT_RUN_SMOKE_TESTS").ok().as_deref() != Some("1") {
             return;
@@ -134,7 +134,7 @@ mod windows_smoke {
     }
 
     #[test]
-    #[ignore] // Opt-in smoke test
+    #[ignore = "opt-in smoke test against live Windows APIs; run with --ignored"]
     fn handle_query_succeeds() {
         if env::var("PMONNT_RUN_SMOKE_TESTS").ok().as_deref() != Some("1") {
             return;

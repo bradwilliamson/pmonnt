@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::fmt::Write as _;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -62,10 +63,10 @@ fn get_ui_layout_path() -> std::path::PathBuf {
         let path = std::path::Path::new(&local_appdata)
             .join("PMonNT")
             .join("pmonnt_ui_layout.ini");
-        if let Some(parent) = path.parent() {
-            if std::fs::create_dir_all(parent).is_ok() {
-                return path;
-            }
+        if let Some(parent) = path.parent()
+            && std::fs::create_dir_all(parent).is_ok()
+        {
+            return path;
         }
     }
 
@@ -190,8 +191,9 @@ pub fn serialize_ui_layout_config(cfg: &UiLayoutConfig) -> String {
 
     let mut out = String::new();
     out.push_str("# PMonNT UI layout\n# Auto-generated; safe to delete\n");
-    out.push_str(&format!(
-        "left_panel_width={}\nright_panel_width={}\ndetails_panel_visible={}\ndensity={}\ntheme={}\nperf_window_width={}\nperf_window_height={}\n",
+    let _ = writeln!(
+        out,
+        "left_panel_width={}\nright_panel_width={}\ndetails_panel_visible={}\ndensity={}\ntheme={}\nperf_window_width={}\nperf_window_height={}",
         cfg.left_panel_width,
         cfg.right_panel_width,
         cfg.details_panel_visible,
@@ -199,7 +201,7 @@ pub fn serialize_ui_layout_config(cfg: &UiLayoutConfig) -> String {
         cfg.theme.as_key(),
         cfg.perf_window_width,
         cfg.perf_window_height,
-    ));
+    );
 
     out.push_str("process_columns_order=");
     for (i, col) in cfg.process_columns_order.iter().enumerate() {
@@ -224,9 +226,8 @@ pub fn serialize_ui_layout_config(cfg: &UiLayoutConfig) -> String {
 
 fn load_ui_layout_config() -> (UiLayoutConfig, bool) {
     let path = get_ui_layout_path();
-    let s = match std::fs::read_to_string(&path) {
-        Ok(s) => s,
-        Err(_) => return (UiLayoutConfig::default(), false),
+    let Ok(s) = std::fs::read_to_string(&path) else {
+        return (UiLayoutConfig::default(), false);
     };
 
     // Determine whether the perf-window size was explicitly persisted.
@@ -261,10 +262,10 @@ fn get_config_path() -> std::path::PathBuf {
             .join("PMonNT")
             .join("pmonnt_handle_leak_config.json");
         // Test writability by attempting to create parent dir
-        if let Some(parent) = path.parent() {
-            if std::fs::create_dir_all(parent).is_ok() {
-                return path;
-            }
+        if let Some(parent) = path.parent()
+            && std::fs::create_dir_all(parent).is_ok()
+        {
+            return path;
         }
     }
 
@@ -333,7 +334,7 @@ pub(super) fn try_build_app() -> anyhow::Result<PMonNTApp> {
 
     // Spawn parallel worker pool (4-8 threads based on CPU count)
     let num_workers = num_cpus::get().clamp(4, 8);
-    log::info!("Spawning {} thread fetch workers", num_workers);
+    log::info!("Spawning {num_workers} thread fetch workers");
 
     for worker_id in 0..num_workers {
         let rx = thread_request_rx.clone();
@@ -346,12 +347,12 @@ pub(super) fn try_build_app() -> anyhow::Result<PMonNTApp> {
                 // Fetch threads
                 let result = match win_thread::list_threads(pid) {
                     Ok(threads) => Ok(threads),
-                    Err(e) => Err(format!("Thread fetch error: {}", e)),
+                    Err(e) => Err(format!("Thread fetch error: {e}")),
                 };
 
                 let elapsed = start.elapsed().as_millis();
                 if elapsed > 200 {
-                    log::debug!("Worker {} fetched PID {} in {}ms", worker_id, pid, elapsed);
+                    log::debug!("Worker {worker_id} fetched PID {pid} in {elapsed}ms");
                 }
 
                 // Send result back
@@ -455,11 +456,11 @@ pub(super) fn try_build_app() -> anyhow::Result<PMonNTApp> {
         network_sort: super::network_sort::NetworkSortState::default(),
         vt_api_key: api_keys.vt.clone().unwrap_or_default(),
         mb_api_key: api_keys.mb.clone().unwrap_or_default(),
-        tf_api_key: api_keys.tf.clone().unwrap_or_default(),
+        tf_api_key: api_keys.tf.unwrap_or_default(),
         vt_enabled: vt_has_key,
         mb_enabled: mb_has_key,
         tf_enabled: tf_has_key,
-        vt_provider: vt_provider.clone(),
+        vt_provider,
         vt_ui_state: VtUiState {
             querying_vt_pid: None,
             querying_vt_sha: None,
@@ -478,7 +479,7 @@ pub(super) fn try_build_app() -> anyhow::Result<PMonNTApp> {
         yara_state: {
             let cache_dir = std::env::current_exe()
                 .ok()
-                .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+                .and_then(|p| p.parent().map(std::path::Path::to_path_buf))
                 .unwrap_or_else(|| std::path::PathBuf::from("."))
                 .join("yara_cache");
             let mut rule_manager = pmonnt_core::yara::rules::RuleManager::new(cache_dir.clone());
@@ -532,7 +533,7 @@ pub(super) fn try_build_app() -> anyhow::Result<PMonNTApp> {
                         Some(Arc::new(engine))
                     }
                     Err(e) => {
-                        log::error!("YARA engine compilation failed: {}", e);
+                        log::error!("YARA engine compilation failed: {e}");
                         // Log first 500 chars of combined source for debugging
                         let src = rule_manager.combined_source();
                         log::error!("Combined source preview: {}", &src[..src.len().min(500)]);

@@ -33,10 +33,9 @@ impl ProcessDiff {
         for &pid in &old_pids {
             if let (Some(old_proc), Some(new_proc)) =
                 (old_snapshot.get_process(pid), new_snapshot.get_process(pid))
+                && (old_proc.name != new_proc.name || old_proc.ppid != new_proc.ppid)
             {
-                if old_proc.name != new_proc.name || old_proc.ppid != new_proc.ppid {
-                    changed_pids.insert(pid);
-                }
+                changed_pids.insert(pid);
             }
         }
 
@@ -275,7 +274,7 @@ mod tests {
         let process = create_test_process(123, "test", Some(1));
         let exited_at = Instant::now();
 
-        buffer.add_exited(process.clone(), exited_at);
+        buffer.add_exited(process, exited_at);
 
         // Should be recent
         let recent = buffer.recent_exited(Instant::now());

@@ -152,9 +152,9 @@ fn query_process_basic_information(handle: HANDLE) -> Result<PROCESS_BASIC_INFOR
         NtQueryInformationProcess(
             handle,
             PROCESS_BASIC_INFORMATION_CLASS,
-            &mut pbi as *mut _ as *mut c_void,
+            (&raw mut pbi).cast::<c_void>(),
             mem::size_of::<PROCESS_BASIC_INFORMATION>() as u32,
-            &mut ret_len,
+            &raw mut ret_len,
         )
     };
     if !nt_success(status) {
@@ -175,9 +175,9 @@ fn query_wow64_peb_address(handle: HANDLE) -> Result<Option<u32>> {
         NtQueryInformationProcess(
             handle,
             PROCESS_WOW64_INFORMATION_CLASS,
-            &mut peb32 as *mut _ as *mut c_void,
+            (&raw mut peb32).cast::<c_void>(),
             mem::size_of::<usize>() as u32,
-            &mut ret_len,
+            &raw mut ret_len,
         )
     };
     if !nt_success(status) {
@@ -207,9 +207,9 @@ fn read_process_memory_exact(
         let ok = ReadProcessMemory(
             process_handle,
             address as *const _,
-            buffer.as_mut_ptr() as *mut _,
+            buffer.as_mut_ptr().cast(),
             size,
-            Some(&mut bytes_read),
+            Some(&raw mut bytes_read),
         );
         if ok.is_err() {
             return Err(anyhow!("ReadProcessMemory failed at 0x{address:x}"));
@@ -226,7 +226,7 @@ fn read_process_memory_exact(
 fn read_process_memory<T: Copy>(process_handle: HANDLE, address: usize) -> Result<T> {
     let bytes = read_process_memory_exact(process_handle, address, mem::size_of::<T>())?;
     // SAFETY: `bytes` is exactly size_of::<T>() and `T: Copy`.
-    Ok(unsafe { std::ptr::read_unaligned(bytes.as_ptr() as *const T) })
+    Ok(unsafe { std::ptr::read_unaligned(bytes.as_ptr().cast::<T>()) })
 }
 
 fn decode_utf16_bytes(bytes: &[u8]) -> Result<String> {
@@ -237,7 +237,7 @@ fn decode_utf16_bytes(bytes: &[u8]) -> Result<String> {
         return Err(anyhow!("UTF-16 buffer length is not even"));
     }
     let mut u16s = Vec::with_capacity(bytes.len() / 2);
-    for chunk in bytes.chunks_exact(2) {
+    for chunk in bytes.as_chunks::<2>().0 {
         u16s.push(u16::from_le_bytes([chunk[0], chunk[1]]));
     }
     Ok(String::from_utf16_lossy(&u16s))
@@ -335,9 +335,9 @@ fn read_environment_block_u16(
             let ok = ReadProcessMemory(
                 handle,
                 (env_ptr + offset) as *const _,
-                buffer.as_mut_ptr() as *mut _,
+                buffer.as_mut_ptr().cast(),
                 to_read,
-                Some(&mut bytes_read),
+                Some(&raw mut bytes_read),
             );
             if ok.is_err() {
                 return Err(anyhow!(
@@ -366,7 +366,7 @@ fn read_environment_block_u16(
                     bytes.truncate(i + 4);
                     // Convert to u16s.
                     let mut u16s = Vec::with_capacity(bytes.len() / 2);
-                    for pair in bytes.chunks_exact(2) {
+                    for pair in bytes.as_chunks::<2>().0 {
                         u16s.push(u16::from_le_bytes([pair[0], pair[1]]));
                     }
                     return Ok(u16s);
@@ -383,7 +383,7 @@ fn read_environment_block_u16(
 
     // Convert what we got.
     let mut u16s = Vec::with_capacity(bytes.len() / 2);
-    for pair in bytes.chunks_exact(2) {
+    for pair in bytes.as_chunks::<2>().0 {
         u16s.push(u16::from_le_bytes([pair[0], pair[1]]));
     }
     Ok(u16s)
@@ -502,8 +502,11 @@ mod tests {
         block.push(0);
 
         let env = parse_environment_block_utf16(&block);
-        assert_eq!(env.get("FOO").map(|s| s.as_str()), Some("bar"));
-        assert_eq!(env.get("PATH").map(|s| s.as_str()), Some("C\\Windows"));
+        assert_eq!(env.get("FOO").map(std::string::String::as_str), Some("bar"));
+        assert_eq!(
+            env.get("PATH").map(std::string::String::as_str),
+            Some("C\\Windows")
+        );
     }
 
     #[test]
@@ -514,7 +517,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "spawns a 32-bit process; run with --ignored"]
     fn get_process_details_wow64_child_process_smoke() {
         // Best-effort WoW64 smoke test: spawn 32-bit cmd.exe if present and query its details.
         // Ignored by default because it depends on the OS image and can be flaky in CI.

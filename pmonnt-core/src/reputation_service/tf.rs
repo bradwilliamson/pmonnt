@@ -17,21 +17,27 @@ impl ReputationService {
             .map_err(|e| ReputationRequestError::Hash { source: e })?;
 
         {
-            let cache = self.tf_cache.read().unwrap_or_else(|p| p.into_inner());
+            let cache = self
+                .tf_cache
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if cache.contains_key(&sha) {
                 return Ok(sha);
             }
         }
 
         {
-            let mut in_f = self.tf_in_flight.lock().unwrap_or_else(|p| p.into_inner());
+            let mut in_f = self
+                .tf_in_flight
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if in_f.contains(&sha) {
                 return Ok(sha);
             }
             in_f.insert(sha.clone());
         }
 
-        log::info!("Requesting ThreatFox lookup for pid {} sha {}", pid, sha);
+        log::info!("Requesting ThreatFox lookup for pid {pid} sha {sha}");
 
         if self
             .job_tx
@@ -40,7 +46,10 @@ impl ReputationService {
             })
             .is_err()
         {
-            let mut in_f = self.tf_in_flight.lock().unwrap_or_else(|p| p.into_inner());
+            let mut in_f = self
+                .tf_in_flight
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             in_f.remove(&sha);
             return Err(ReputationRequestError::WorkerUnavailable);
         }
@@ -57,25 +66,27 @@ impl ReputationService {
         let sha = sha.to_string();
 
         if !force {
-            let cache = self.tf_cache.read().unwrap_or_else(|p| p.into_inner());
+            let cache = self
+                .tf_cache
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if cache.contains_key(&sha) {
                 return false;
             }
         }
 
         {
-            let mut in_f = self.tf_in_flight.lock().unwrap_or_else(|p| p.into_inner());
+            let mut in_f = self
+                .tf_in_flight
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if in_f.contains(&sha) {
                 return false;
             }
             in_f.insert(sha.clone());
         }
 
-        log::info!(
-            "Requesting ThreatFox lookup for hash {} (force={})",
-            sha,
-            force
-        );
+        log::info!("Requesting ThreatFox lookup for hash {sha} (force={force})");
 
         if self
             .job_tx
@@ -84,7 +95,10 @@ impl ReputationService {
             })
             .is_err()
         {
-            let mut in_f = self.tf_in_flight.lock().unwrap_or_else(|p| p.into_inner());
+            let mut in_f = self
+                .tf_in_flight
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             in_f.remove(&sha);
             return false;
         }
@@ -96,7 +110,10 @@ impl ReputationService {
         &self,
         sha: &str,
     ) -> Option<(Vec<crate::providers::TfIoc>, crate::providers::TfQueryMeta)> {
-        let guard = self.tf_cache.read().unwrap_or_else(|p| p.into_inner());
+        let guard = self
+            .tf_cache
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         guard
             .get(sha)
             .and_then(|(opt, meta)| opt.clone().map(|iocs| (iocs, meta.clone())))
@@ -109,7 +126,10 @@ impl ReputationService {
         Option<crate::providers::TfResult>,
         crate::providers::TfQueryMeta,
     )> {
-        let guard = self.tf_cache.read().unwrap_or_else(|p| p.into_inner());
+        let guard = self
+            .tf_cache
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         guard.get(sha).cloned()
     }
 }

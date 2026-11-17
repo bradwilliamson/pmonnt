@@ -190,7 +190,7 @@ fn leader_for_group(app: &PMonNTApp, group: &GroupedRow) -> Option<(u32, String,
 
     for &pid in &group.member_pids {
         let value = match sort_metric {
-            GroupSort::CPU => app.cpu_memory_data.get(&pid).map(|(v, _)| *v as f64),
+            GroupSort::CPU => app.cpu_memory_data.get(&pid).map(|(v, _)| f64::from(*v)),
             GroupSort::Memory => app
                 .cpu_memory_data
                 .get(&pid)
@@ -199,20 +199,16 @@ fn leader_for_group(app: &PMonNTApp, group: &GroupedRow) -> Option<(u32, String,
                 .io_rate_by_pid
                 .get(&pid)
                 .map(|r| r.read_bytes_per_sec + r.write_bytes_per_sec),
-            GroupSort::GPU => app.gpu_data.get(&pid).map(|(pct, _, _, _)| *pct as f64),
+            GroupSort::GPU => app.gpu_data.get(&pid).map(|(pct, _, _, _)| f64::from(*pct)),
             GroupSort::GPUMemory => app.gpu_data.get(&pid).map(|(_, _, _, total)| *total as f64),
-            GroupSort::Handles => app.handle_cache.get(pid).map(|h| h.total as f64),
+            GroupSort::Handles => app.handle_cache.get(pid).map(|h| f64::from(h.total)),
             GroupSort::Threads => app.global_thread_counts.get(&pid).map(|c| *c as f64),
-            GroupSort::PID => Some(pid as f64),
+            GroupSort::PID => Some(f64::from(pid)),
             GroupSort::Name | GroupSort::VerifiedSigner => None,
         }?;
 
         let display = format_leader_value(sort_metric, pid, app)?;
-        if best
-            .as_ref()
-            .map(|(best_v, _, _)| value > *best_v)
-            .unwrap_or(true)
-        {
+        if best.as_ref().is_none_or(|(best_v, _, _)| value > *best_v) {
             best = Some((value, pid, display));
         }
     }
@@ -256,8 +252,7 @@ pub(super) fn render_rows(
                 group.is_selected
                     || app
                         .selected_pid
-                        .map(|p| group.member_pids.contains(&p))
-                        .unwrap_or(false)
+                        .is_some_and(|p| group.member_pids.contains(&p))
             }
             DisplayRow::Child { pid, .. } => app.selected_pid == Some(*pid),
         };
@@ -594,8 +589,7 @@ pub(super) fn render_rows(
                                         Some(pid) => app
                                             .gpu_data
                                             .get(&pid)
-                                            .map(|(pct, _, _, _)| *pct)
-                                            .unwrap_or(0.0),
+                                            .map_or(0.0, |(pct, _, _, _)| *pct),
                                     };
 
                                     if value > 0.0 {
@@ -622,8 +616,7 @@ pub(super) fn render_rows(
                                         Some(pid) => app
                                             .gpu_data
                                             .get(&pid)
-                                            .map(|(_, ded, _, _)| *ded)
-                                            .unwrap_or(0),
+                                            .map_or(0, |(_, ded, _, _)| *ded),
                                     };
                                     if bytes > 0 {
                                         ui.label(
@@ -649,8 +642,7 @@ pub(super) fn render_rows(
                                         Some(pid) => app
                                             .gpu_data
                                             .get(&pid)
-                                            .map(|(_, _, shr, _)| *shr)
-                                            .unwrap_or(0),
+                                            .map_or(0, |(_, _, shr, _)| *shr),
                                     };
                                     if bytes > 0 {
                                         ui.label(
@@ -676,8 +668,7 @@ pub(super) fn render_rows(
                                         Some(pid) => app
                                             .gpu_data
                                             .get(&pid)
-                                            .map(|(_, _, _, total)| *total)
-                                            .unwrap_or(0),
+                                            .map_or(0, |(_, _, _, total)| *total),
                                     };
                                     if bytes > 0 {
                                         ui.label(
@@ -711,7 +702,7 @@ pub(super) fn render_rows(
                                                     app.right_tab = RightTab::Handles;
                                                 }
                                             } else {
-                                                let text = format!("{} (partial)", formatted);
+                                                let text = format!("{formatted} (partial)");
                                                 let response = ui.selectable_label(
                                                     false,
                                                     egui::RichText::new(text)
@@ -980,8 +971,7 @@ pub(super) fn render_rows(
                     !(*is_expanded
                         && app
                             .selected_pid
-                            .map(|p| group.member_pids.contains(&p))
-                            .unwrap_or(false))
+                            .is_some_and(|p| group.member_pids.contains(&p)))
                 } else {
                     false
                 }

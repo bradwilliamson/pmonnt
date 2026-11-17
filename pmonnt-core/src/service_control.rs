@@ -96,7 +96,7 @@ pub fn start_service(service_name: &str) -> Result<ServiceControlResult, Service
     if status.dwCurrentState != SERVICE_STOPPED {
         return Err(ServiceControlError::InvalidStateTransition {
             action: "start",
-            current_state: format!("{:?}", previous_state),
+            current_state: format!("{previous_state:?}"),
         });
     }
 
@@ -130,14 +130,8 @@ pub fn stop_service(service_name: &str) -> Result<ServiceControlResult, ServiceC
     let mut new_status = SERVICE_STATUS_PROCESS::default();
     // SAFETY: `service` is a valid service handle opened with `SERVICE_STOP` access.
     // `new_status` is a valid writable out-parameter for the duration of the call.
-    if unsafe {
-        ControlService(
-            service,
-            SERVICE_CONTROL_STOP,
-            &mut new_status as *mut _ as *mut _,
-        )
-    }
-    .is_err()
+    if unsafe { ControlService(service, SERVICE_CONTROL_STOP, (&raw mut new_status).cast()) }
+        .is_err()
     {
         return Err(map_last_error(service_name));
     }
@@ -166,14 +160,8 @@ pub fn restart_service(service_name: &str) -> Result<ServiceControlResult, Servi
         let mut new_status = SERVICE_STATUS_PROCESS::default();
         // SAFETY: `service` is a valid service handle opened with `SERVICE_STOP` access.
         // `new_status` is a valid writable out-parameter for the duration of the call.
-        if unsafe {
-            ControlService(
-                service,
-                SERVICE_CONTROL_STOP,
-                &mut new_status as *mut _ as *mut _,
-            )
-        }
-        .is_err()
+        if unsafe { ControlService(service, SERVICE_CONTROL_STOP, (&raw mut new_status).cast()) }
+            .is_err()
         {
             return Err(map_last_error(service_name));
         }
@@ -210,7 +198,7 @@ pub fn pause_service(service_name: &str) -> Result<ServiceControlResult, Service
     if status.dwCurrentState != SERVICE_RUNNING {
         return Err(ServiceControlError::InvalidStateTransition {
             action: "pause",
-            current_state: format!("{:?}", previous_state),
+            current_state: format!("{previous_state:?}"),
         });
     }
 
@@ -224,14 +212,8 @@ pub fn pause_service(service_name: &str) -> Result<ServiceControlResult, Service
     let mut new_status = SERVICE_STATUS_PROCESS::default();
     // SAFETY: `service` is a valid service handle opened with `SERVICE_PAUSE_CONTINUE` access.
     // `new_status` is a valid writable out-parameter for the duration of the call.
-    if unsafe {
-        ControlService(
-            service,
-            SERVICE_CONTROL_PAUSE,
-            &mut new_status as *mut _ as *mut _,
-        )
-    }
-    .is_err()
+    if unsafe { ControlService(service, SERVICE_CONTROL_PAUSE, (&raw mut new_status).cast()) }
+        .is_err()
     {
         return Err(map_last_error(service_name));
     }
@@ -257,7 +239,7 @@ pub fn resume_service(service_name: &str) -> Result<ServiceControlResult, Servic
     if status.dwCurrentState != SERVICE_PAUSED {
         return Err(ServiceControlError::InvalidStateTransition {
             action: "resume",
-            current_state: format!("{:?}", previous_state),
+            current_state: format!("{previous_state:?}"),
         });
     }
 
@@ -268,7 +250,7 @@ pub fn resume_service(service_name: &str) -> Result<ServiceControlResult, Servic
         ControlService(
             service,
             SERVICE_CONTROL_CONTINUE,
-            &mut new_status as *mut _ as *mut _,
+            (&raw mut new_status).cast(),
         )
     }
     .is_err()
@@ -344,10 +326,10 @@ fn query_service_status(service: SC_HANDLE) -> Result<SERVICE_STATUS_PROCESS, Se
             service,
             SC_STATUS_PROCESS_INFO,
             Some(std::slice::from_raw_parts_mut(
-                &mut status as *mut _ as *mut u8,
+                (&raw mut status).cast::<u8>(),
                 std::mem::size_of::<SERVICE_STATUS_PROCESS>(),
             )),
-            &mut bytes_needed,
+            &raw mut bytes_needed,
         )
     };
 

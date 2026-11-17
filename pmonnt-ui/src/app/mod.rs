@@ -356,8 +356,7 @@ impl PMonNTApp {
         let name = self
             .current_snapshot
             .get_process(pid)
-            .map(|p| p.name.clone())
-            .unwrap_or_else(|| format!("PID {}", pid));
+            .map_or_else(|| format!("PID {pid}"), |p| p.name.clone());
 
         match pmonnt_core::services::get_services_for_process(pid) {
             Ok(mut services) => {
@@ -437,9 +436,11 @@ impl PMonNTApp {
                 let cmd = self
                     .pid_to_command_line
                     .get(&pid)
-                    .map(|s| s.as_str())
-                    .unwrap_or("");
-                let cwd = self.pid_to_current_directory.get(&pid).map(|s| s.as_str());
+                    .map_or("", std::string::String::as_str);
+                let cwd = self
+                    .pid_to_current_directory
+                    .get(&pid)
+                    .map(std::string::String::as_str);
                 if cmd.is_empty() {
                     Err(
                         pmonnt_core::win::process_control::ProcessControlError::SpawnError(
@@ -454,7 +455,7 @@ impl PMonNTApp {
         };
 
         if let Err(e) = result {
-            eprintln!("Failed to {}: {}", action, e);
+            eprintln!("Failed to {action}: {e}");
             // TODO: Show in UI
         }
     }
@@ -472,8 +473,7 @@ impl PMonNTApp {
         let name = self
             .current_snapshot
             .get_process(pid)
-            .map(|p| p.name.clone())
-            .unwrap_or_else(|| format!("PID {}", pid));
+            .map_or_else(|| format!("PID {pid}"), |p| p.name.clone());
 
         match pmonnt_core::win::get_priority_class(pid) {
             Ok(priority) => {
@@ -510,8 +510,7 @@ impl PMonNTApp {
         let name = self
             .current_snapshot
             .get_process(pid)
-            .map(|p| p.name.clone())
-            .unwrap_or_else(|| format!("PID {}", pid));
+            .map_or_else(|| format!("PID {pid}"), |p| p.name.clone());
 
         match pmonnt_core::win::get_affinity(pid) {
             Ok(info) => {
@@ -548,8 +547,7 @@ impl PMonNTApp {
         let name = self
             .current_snapshot
             .get_process(pid)
-            .map(|p| p.name.clone())
-            .unwrap_or_else(|| "<unknown>".to_string());
+            .map_or_else(|| "<unknown>".to_string(), |p| p.name.clone());
 
         self.kill_dialog = Some(KillDialogState {
             pid,
@@ -580,10 +578,10 @@ impl PMonNTApp {
 
             let mut children: HashMap<u32, Vec<u32>> = HashMap::new();
             for p in processes {
-                if let Some(ppid) = p.ppid {
-                    if ppid != 0 {
-                        children.entry(ppid).or_default().push(p.pid);
-                    }
+                if let Some(ppid) = p.ppid
+                    && ppid != 0
+                {
+                    children.entry(ppid).or_default().push(p.pid);
                 }
             }
 
@@ -654,15 +652,15 @@ impl PMonNTApp {
         let is_group = state.group_pids.is_some();
 
         // Compute child-first kill order.
-        let roots: Vec<u32> = state.group_pids.clone().unwrap_or_else(|| vec![pid]);
+        let roots: Vec<u32> = state.group_pids.unwrap_or_else(|| vec![pid]);
         let kill_list = if kill_tree {
             // Build parent -> children map
             let mut children: HashMap<u32, Vec<u32>> = HashMap::new();
             for p in &processes {
-                if let Some(ppid) = p.ppid {
-                    if ppid != 0 {
-                        children.entry(ppid).or_default().push(p.pid);
-                    }
+                if let Some(ppid) = p.ppid
+                    && ppid != 0
+                {
+                    children.entry(ppid).or_default().push(p.pid);
                 }
             }
 
@@ -724,13 +722,12 @@ impl PMonNTApp {
     ) {
         self.kill_action_in_flight = None;
 
-        if let Some(state) = self.kill_dialog.as_mut() {
-            if state.pid == pid
-                && state.kill_tree == kill_tree
-                && state.group_pids.is_some() == is_group
-            {
-                state.step = KillDialogStep::Done(result);
-            }
+        if let Some(state) = self.kill_dialog.as_mut()
+            && state.pid == pid
+            && state.kill_tree == kill_tree
+            && state.group_pids.is_some() == is_group
+        {
+            state.step = KillDialogStep::Done(result);
         }
     }
 
@@ -755,18 +752,18 @@ impl PMonNTApp {
     }
 
     pub(crate) fn move_process_column_up(&mut self, col: ProcessColumnId) {
-        if let Some(idx) = self.process_columns_order.iter().position(|c| *c == col) {
-            if idx > 0 {
-                self.process_columns_order.swap(idx - 1, idx);
-            }
+        if let Some(idx) = self.process_columns_order.iter().position(|c| *c == col)
+            && idx > 0
+        {
+            self.process_columns_order.swap(idx - 1, idx);
         }
     }
 
     pub(crate) fn move_process_column_down(&mut self, col: ProcessColumnId) {
-        if let Some(idx) = self.process_columns_order.iter().position(|c| *c == col) {
-            if idx + 1 < self.process_columns_order.len() {
-                self.process_columns_order.swap(idx, idx + 1);
-            }
+        if let Some(idx) = self.process_columns_order.iter().position(|c| *c == col)
+            && idx + 1 < self.process_columns_order.len()
+        {
+            self.process_columns_order.swap(idx, idx + 1);
         }
     }
 

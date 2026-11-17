@@ -68,7 +68,7 @@ pub(crate) fn render_priority_dialog(app: &mut PMonNTApp, ctx: &egui::Context) {
                         ui.label("Priority changed successfully.");
                     }
                     Err(e) => {
-                        ui.label(format!("Error: {}", e));
+                        ui.label(format!("Error: {e}"));
                     }
                 };
                 ui.add_space(6.0);

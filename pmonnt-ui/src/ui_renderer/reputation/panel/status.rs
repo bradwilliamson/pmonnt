@@ -79,7 +79,7 @@ pub(super) fn render_lookup_status_row(
                     egui::Color32::RED
                 };
 
-                ui.colored_label(color, format!("VT: {}/{} detections", detections, total));
+                ui.colored_label(color, format!("VT: {detections}/{total} detections"));
 
                 // Show breakdown
                 if detections > 0 {
@@ -93,7 +93,7 @@ pub(super) fn render_lookup_status_row(
                 ui.colored_label(egui::Color32::GRAY, "Not found in reputation databases");
             }
             LookupState::Error(e) => {
-                ui.colored_label(egui::Color32::RED, format!("Error: {}", e));
+                ui.colored_label(egui::Color32::RED, format!("Error: {e}"));
                 // Show retry button
                 if params.sha256.is_some() && !params.in_flight && ui.button("🔄 Retry").clicked()
                 {
@@ -118,12 +118,11 @@ pub(super) fn render_lookup_status_row(
                 );
 
                 // If clicked and we have a primary link, open it
-                if summary_response.clicked() {
-                    if let Some(link) = &agg.primary_link {
-                        if let Err(e) = open::that(link) {
-                            log::error!("Failed to open link {}: {}", link, e);
-                        }
-                    }
+                if summary_response.clicked()
+                    && let Some(link) = &agg.primary_link
+                    && let Err(e) = open::that(link)
+                {
+                    log::error!("Failed to open link {link}: {e}");
                 }
 
                 // Always show all provider statuses in tooltip
@@ -145,13 +144,13 @@ pub(super) fn render_lookup_status_row(
                         };
                         let details = match (&f.family, f.confidence) {
                             (Some(family), Some(conf)) => {
-                                format!(" ({}, {}% confidence)", family, conf)
+                                format!(" ({family}, {conf}% confidence)")
                             }
-                            (Some(family), None) => format!(" ({})", family),
-                            (None, Some(conf)) => format!(" ({}% confidence)", conf),
-                            (None, None) => "".to_string(),
+                            (Some(family), None) => format!(" ({family})"),
+                            (None, Some(conf)) => format!(" ({conf}% confidence)"),
+                            (None, None) => String::new(),
                         };
-                        provider_statuses.push(format!("• {}: {}{}", prov, verdict_str, details));
+                        provider_statuses.push(format!("• {prov}: {verdict_str}{details}"));
                     } else {
                         // Not present in findings, so must be Not configured or Error
                         let status = match prov {
@@ -188,7 +187,7 @@ pub(super) fn render_lookup_status_row(
                             }
                             _ => "Not configured".to_string(),
                         };
-                        provider_statuses.push(format!("• {}: {}", prov, status));
+                        provider_statuses.push(format!("• {prov}: {status}"));
                     }
                 }
 

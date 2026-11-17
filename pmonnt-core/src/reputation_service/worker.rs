@@ -67,14 +67,14 @@ fn handle_hash_and_lookup_job(
     let sha256 = match hash_computer.compute_sha256(&image_path) {
         Ok(hash) => hash,
         Err(e) => {
-            log::warn!("Hash computation failed for {}: {}", image_path, e);
+            log::warn!("Hash computation failed for {image_path}: {e}");
             let mut results = write_or_recover(results);
             results.insert(
                 image_path.clone(),
                 ReputationResult {
                     image_path: image_path.clone(),
                     sha256: None,
-                    state: LookupState::Error(format!("Hash error: {}", e)),
+                    state: LookupState::Error(format!("Hash error: {e}")),
                 },
             );
             lock_or_recover(in_flight).remove(&image_path);
@@ -130,11 +130,8 @@ impl ReputationService {
         let vt_provider_for_thread = vt_provider.clone();
 
         // Create aggregator with all providers
-        let providers: Vec<Arc<dyn crate::reputation::ReputationProvider>> = vec![
-            vt_provider.clone(),
-            mb_provider.clone(),
-            tf_provider.clone(),
-        ];
+        let providers: Vec<Arc<dyn crate::reputation::ReputationProvider>> =
+            vec![vt_provider, mb_provider.clone(), tf_provider.clone()];
 
         let aggregator = Arc::new(AggregatorProvider::new(providers));
 
@@ -220,7 +217,7 @@ impl ReputationService {
                             Ok((sample_opt, meta)) => {
                                 let mut guard = mb_cache_for_thread
                                     .write()
-                                    .unwrap_or_else(|p| p.into_inner());
+                                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                                 guard.insert(sha256, (sample_opt, meta));
                             }
                             Err(e) => {
@@ -229,11 +226,11 @@ impl ReputationService {
                                     last_http_status: None,
                                     last_query_status: None,
                                     last_result_count: None,
-                                    last_error_message: Some(format!("{}", e)),
+                                    last_error_message: Some(format!("{e}")),
                                 };
                                 let mut guard = mb_cache_for_thread
                                     .write()
-                                    .unwrap_or_else(|p| p.into_inner());
+                                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                                 guard.insert(sha256, (None, meta));
                             }
                         }
@@ -261,7 +258,7 @@ impl ReputationService {
                             Ok((iocs, meta)) => {
                                 let mut guard = tf_cache_for_thread
                                     .write()
-                                    .unwrap_or_else(|p| p.into_inner());
+                                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                                 guard.insert(sha256, (Some(iocs), meta));
                             }
                             Err(e) => {
@@ -270,11 +267,11 @@ impl ReputationService {
                                     last_http_status: None,
                                     last_query_status: None,
                                     last_result_count: None,
-                                    last_error_message: Some(e.to_string()),
+                                    last_error_message: Some(e.clone()),
                                 };
                                 let mut guard = tf_cache_for_thread
                                     .write()
-                                    .unwrap_or_else(|p| p.into_inner());
+                                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                                 guard.insert(sha256, (None, meta));
                             }
                         }
@@ -369,7 +366,7 @@ impl ReputationService {
 
                         let mut guard = vt_cache_for_thread
                             .write()
-                            .unwrap_or_else(|p| p.into_inner());
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
                         guard.insert(sha256, (stats_opt, meta));
                     }
 
@@ -658,7 +655,7 @@ mod tests {
 
         let path = "C:/fake/image.exe".to_string();
         assert!(service.request_lookup(path.clone(), true));
-        assert!(!service.request_lookup(path.clone(), true));
+        assert!(!service.request_lookup(path, true));
 
         let queued = job_rx.try_iter().count();
         assert_eq!(queued, 1);

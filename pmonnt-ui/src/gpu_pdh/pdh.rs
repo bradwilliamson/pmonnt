@@ -39,12 +39,10 @@ pub(super) fn expand_paths(path: &str) -> Result<Vec<String>> {
     // First call to get required buffer size
     // SAFETY: PdhExpandWildCardPathW reads the input PCWSTR and writes the required size to
     // `required`. The output buffer is null for this size-query call by design.
-    let status = unsafe { PdhExpandWildCardPathW(None, path_w.as_pwstr(), None, &mut required, 0) };
+    let status =
+        unsafe { PdhExpandWildCardPathW(None, path_w.as_pwstr(), None, &raw mut required, 0) };
     log::trace!(
-        "[GPU PDH] PdhExpandWildCardPathW(size query) for '{}': status=0x{:08X}, required={}",
-        path,
-        status,
-        required
+        "[GPU PDH] PdhExpandWildCardPathW(size query) for '{path}': status=0x{status:08X}, required={required}"
     );
 
     // PDH_MORE_DATA (0x800007D2) indicates we need to allocate a buffer
@@ -58,14 +56,11 @@ pub(super) fn expand_paths(path: &str) -> Result<Vec<String>> {
                 None,
                 path_w.as_pwstr(),
                 Some(PWSTR(buf.as_mut_ptr())),
-                &mut required,
+                &raw mut required,
                 0,
             )
         };
-        log::trace!(
-            "[GPU PDH] PdhExpandWildCardPathW(get data): status=0x{:08X}",
-            status2
-        );
+        log::trace!("[GPU PDH] PdhExpandWildCardPathW(get data): status=0x{status2:08X}");
 
         if pdh_ok(status2) {
             let paths = parse_multi_sz(&buf);
@@ -79,17 +74,12 @@ pub(super) fn expand_paths(path: &str) -> Result<Vec<String>> {
 
     // If required == 0, there are no matching counters
     if required == 0 {
-        log::debug!(
-            "[GPU PDH] No counters found matching '{}' (status=0x{:08X})",
-            path,
-            status
-        );
+        log::debug!("[GPU PDH] No counters found matching '{path}' (status=0x{status:08X})");
         return Ok(Vec::new());
     }
 
     Err(anyhow::anyhow!(
-        "PdhExpandWildCardPathW failed for '{}': status=0x{status:08X}",
-        path
+        "PdhExpandWildCardPathW failed for '{path}': status=0x{status:08X}"
     ))
 }
 
@@ -114,11 +104,11 @@ pub(super) fn extract_pid(path: &str) -> Option<u32> {
     // Look for "pid_1234" in the instance path
     if let Some(idx) = path.find("pid_") {
         let tail = &path[idx + 4..];
-        let digits: String = tail.chars().take_while(|c| c.is_ascii_digit()).collect();
-        if !digits.is_empty() {
-            if let Ok(pid) = digits.parse::<u32>() {
-                return Some(pid);
-            }
+        let digits: String = tail.chars().take_while(char::is_ascii_digit).collect();
+        if !digits.is_empty()
+            && let Ok(pid) = digits.parse::<u32>()
+        {
+            return Some(pid);
         }
     }
     None

@@ -17,10 +17,7 @@ pub fn get_image_path(pid: u32) -> Option<String> {
         let h = match OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
             Ok(handle) => HandleGuard::new(handle),
             Err(_) => {
-                log::debug!(
-                    "[ProcessInfo] OpenProcess failed for PID {}: access denied",
-                    pid
-                );
+                log::debug!("[ProcessInfo] OpenProcess failed for PID {pid}: access denied");
                 return None;
             }
         };
@@ -32,7 +29,7 @@ pub fn get_image_path(pid: u32) -> Option<String> {
             h.raw(),
             PROCESS_NAME_WIN32,
             PWSTR(buf.as_mut_ptr()),
-            &mut size,
+            &raw mut size,
         )
         .is_ok()
         {
@@ -46,7 +43,7 @@ pub fn get_image_path(pid: u32) -> Option<String> {
             return Some(String::from_utf16_lossy(&buf2[..size2 as usize]));
         }
 
-        log::debug!("[ProcessInfo] Failed to get image path for PID {}", pid);
+        log::debug!("[ProcessInfo] Failed to get image path for PID {pid}");
         None
     }
 }
@@ -56,11 +53,7 @@ pub fn get_command_line(pid: u32) -> Option<String> {
     match pmonnt_core::win::process_details::get_command_line(pid) {
         Ok(s) => Some(s),
         Err(e) => {
-            log::debug!(
-                "[ProcessInfo] Failed to get command line for PID {}: {}",
-                pid,
-                e
-            );
+            log::debug!("[ProcessInfo] Failed to get command line for PID {pid}: {e}");
             None
         }
     }
@@ -71,11 +64,7 @@ pub fn get_current_directory(pid: u32) -> Option<String> {
     match pmonnt_core::win::process_details::get_process_details(pid, false) {
         Ok(d) => d.current_directory,
         Err(e) => {
-            log::debug!(
-                "[ProcessInfo] Failed to get current directory for PID {}: {}",
-                pid,
-                e
-            );
+            log::debug!("[ProcessInfo] Failed to get current directory for PID {pid}: {e}");
             None
         }
     }
@@ -96,35 +85,38 @@ pub fn get_integrity_level(pid: u32) -> Option<String> {
         let h = match OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
             Ok(handle) => HandleGuard::new(handle),
             Err(_) => {
-                log::debug!(
-                    "[ProcessInfo] OpenProcess failed for PID {}: access denied",
-                    pid
-                );
+                log::debug!("[ProcessInfo] OpenProcess failed for PID {pid}: access denied");
                 return None;
             }
         };
 
         let mut token = HANDLE::default();
-        if OpenProcessToken(h.raw(), TOKEN_QUERY, &mut token).is_err() {
-            log::debug!("[ProcessInfo] OpenProcessToken failed for PID {}", pid);
+        if OpenProcessToken(h.raw(), TOKEN_QUERY, &raw mut token).is_err() {
+            log::debug!("[ProcessInfo] OpenProcessToken failed for PID {pid}");
             return None;
         }
 
         let token = HandleGuard::new(token);
 
         let mut info_size = 0u32;
-        let _ = GetTokenInformation(token.raw(), TokenIntegrityLevel, None, 0, &mut info_size);
+        let _ = GetTokenInformation(
+            token.raw(),
+            TokenIntegrityLevel,
+            None,
+            0,
+            &raw mut info_size,
+        );
         if info_size == 0 {
             return None;
         }
 
-        let mut buf = vec![0u8; info_size as usize];
+        let mut buf = pmonnt_core::aligned_buf::AlignedBuf::new(info_size as usize);
         if GetTokenInformation(
             token.raw(),
             TokenIntegrityLevel,
-            Some(buf.as_mut_ptr() as *mut _),
+            Some(buf.as_mut_ptr().cast()),
             info_size,
-            &mut info_size,
+            &raw mut info_size,
         )
         .is_err()
         {
@@ -133,7 +125,7 @@ pub fn get_integrity_level(pid: u32) -> Option<String> {
 
         // Parse TOKEN_MANDATORY_LABEL
         if (info_size as usize) >= std::mem::size_of::<TOKEN_MANDATORY_LABEL>() {
-            let label = &*(buf.as_ptr() as *const TOKEN_MANDATORY_LABEL);
+            let label = &*buf.ptr_at::<TOKEN_MANDATORY_LABEL>(0);
             let sid_ptr = label.Label.Sid;
             // SID S-1-16-X where X is integrity level
             let sid = std::ptr::read(sid_ptr.0.cast::<SID>());
@@ -164,35 +156,32 @@ pub fn get_user(pid: u32) -> Option<String> {
         let h = match OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
             Ok(handle) => HandleGuard::new(handle),
             Err(_) => {
-                log::debug!(
-                    "[ProcessInfo] OpenProcess failed for PID {}: access denied",
-                    pid
-                );
+                log::debug!("[ProcessInfo] OpenProcess failed for PID {pid}: access denied");
                 return None;
             }
         };
 
         let mut token = HANDLE::default();
-        if OpenProcessToken(h.raw(), TOKEN_QUERY, &mut token).is_err() {
-            log::debug!("[ProcessInfo] OpenProcessToken failed for PID {}", pid);
+        if OpenProcessToken(h.raw(), TOKEN_QUERY, &raw mut token).is_err() {
+            log::debug!("[ProcessInfo] OpenProcessToken failed for PID {pid}");
             return None;
         }
 
         let token = HandleGuard::new(token);
 
         let mut info_size = 0u32;
-        let _ = GetTokenInformation(token.raw(), TokenUser, None, 0, &mut info_size);
+        let _ = GetTokenInformation(token.raw(), TokenUser, None, 0, &raw mut info_size);
         if info_size == 0 {
             return None;
         }
 
-        let mut buf = vec![0u8; info_size as usize];
+        let mut buf = pmonnt_core::aligned_buf::AlignedBuf::new(info_size as usize);
         if GetTokenInformation(
             token.raw(),
             TokenUser,
-            Some(buf.as_mut_ptr() as *mut _),
+            Some(buf.as_mut_ptr().cast()),
             info_size,
-            &mut info_size,
+            &raw mut info_size,
         )
         .is_err()
         {
@@ -201,7 +190,7 @@ pub fn get_user(pid: u32) -> Option<String> {
 
         // Parse TOKEN_USER
         if (info_size as usize) >= std::mem::size_of::<TOKEN_USER>() {
-            let user = &*(buf.as_ptr() as *const TOKEN_USER);
+            let user = &*buf.ptr_at::<TOKEN_USER>(0);
             let sid_ptr = user.User.Sid;
             // Convert SID to name
             let mut name = [0u16; 256];
@@ -214,16 +203,16 @@ pub fn get_user(pid: u32) -> Option<String> {
                 PCWSTR(std::ptr::null()),
                 sid_ptr,
                 Some(PWSTR(name.as_mut_ptr())),
-                &mut name_len,
+                &raw mut name_len,
                 Some(PWSTR(domain.as_mut_ptr())),
-                &mut domain_len,
-                &mut use_type,
+                &raw mut domain_len,
+                &raw mut use_type,
             )
             .is_ok()
             {
                 let name_str = String::from_utf16_lossy(&name[..name_len as usize]);
                 let domain_str = String::from_utf16_lossy(&domain[..domain_len as usize]);
-                return Some(format!("{}\\{}", domain_str, name_str));
+                return Some(format!("{domain_str}\\{name_str}"));
             }
         }
 
@@ -243,7 +232,7 @@ pub fn get_session_id(pid: u32) -> Option<u32> {
         }
 
         let mut session: u32 = 0;
-        let ok = ProcessIdToSessionId(pid, &mut session as *mut u32);
+        let ok = ProcessIdToSessionId(pid, &raw mut session);
         if ok != 0 { Some(session) } else { None }
     }
 }

@@ -1,4 +1,5 @@
 use std::ffi::c_void;
+use std::fmt::Write as _;
 use std::mem;
 use std::sync::{Mutex, OnceLock};
 
@@ -63,6 +64,10 @@ fn hint_for_win32(code: u32) -> String {
 fn map_last_error(context: &'static str, pid: u32, tid: u32) -> ThreadStackError {
     // SAFETY: GetLastError retrieves the thread-local error code, which is always safe
     let code = unsafe { GetLastError() }.0;
+    map_win32_code(context, code, pid, tid)
+}
+
+fn map_win32_code(context: &'static str, code: u32, pid: u32, tid: u32) -> ThreadStackError {
     match WIN32_ERROR(code) {
         ERROR_ACCESS_DENIED => ThreadStackError::AccessDenied,
         ERROR_INVALID_PARAMETER => {
@@ -93,7 +98,7 @@ fn is_wow64_process(process: HANDLE) -> Result<bool, ThreadStackError> {
         NtQueryInformationProcess(
             process,
             PROCESS_WOW64_INFORMATION_CLASS,
-            &mut peb32 as *mut usize as *mut c_void,
+            (&raw mut peb32).cast::<c_void>(),
             mem::size_of::<usize>() as u32,
             std::ptr::null_mut(),
         )
@@ -174,9 +179,9 @@ pub fn thread_stack_trace(
     ];
 
     let mut thread_guard = None;
-    let mut _last_open_error = None;
+    let mut last_open_error = None;
 
-    for desired in access_attempts.iter() {
+    for desired in &access_attempts {
         // SAFETY: OpenThread is called with valid TID and access rights; error handling checks result
         let thread = unsafe { OpenThread(*desired, false, tid) };
         if let Ok(handle) = thread {
@@ -184,12 +189,16 @@ pub fn thread_stack_trace(
             break;
         } else {
             // SAFETY: GetLastError retrieves the thread-local error code, which is always safe
-            _last_open_error = Some(unsafe { GetLastError() }.0);
+            last_open_error = Some(unsafe { GetLastError() }.0);
         }
     }
 
     let Some(thread_guard) = thread_guard else {
-        return Err(map_last_error("OpenThread", pid, tid));
+        // Report the error from the last OpenThread attempt, not whatever GetLastError holds now.
+        return Err(match last_open_error {
+            Some(code) => map_win32_code("OpenThread", code, pid, tid),
+            None => map_last_error("OpenThread", pid, tid),
+        });
     };
 
     // Best-effort suspend. Some protected processes may deny this, but we can try
@@ -225,7 +234,7 @@ pub fn thread_stack_trace(
         context = unsafe { mem::zeroed() };
         context.ContextFlags = CONTEXT_FLAGS(flags);
         // SAFETY: GetThreadContext is called with a valid thread handle and properly initialized context structure
-        if unsafe { GetThreadContext(thread_guard.raw(), &mut context) }.is_ok() {
+        if unsafe { GetThreadContext(thread_guard.raw(), &raw mut context) }.is_ok() {
             got_context = true;
             break;
         }
@@ -292,8 +301,8 @@ pub fn thread_stack_trace(
                     machine,
                     process_guard.raw(),
                     thread_guard.raw(),
-                    &mut frame,
-                    &mut context as *mut _ as *mut c_void,
+                    &raw mut frame,
+                    (&raw mut context).cast::<c_void>(),
                     None,
                     Some(function_table_access),
                     Some(get_module_base),
@@ -312,7 +321,7 @@ pub fn thread_stack_trace(
 
             // SAFETY: format_frame is called with a valid process handle and instruction pointer from stack walk
             let line = unsafe { format_frame(process_guard.raw(), ip) };
-            out.push_str(&format!("#{idx:02} {line}\n"));
+            let _ = writeln!(out, "#{idx:02} {line}");
         }
     }
 
@@ -359,7 +368,7 @@ unsafe fn format_frame(process: HANDLE, addr: u64) -> String {
     let name = unsafe {
         (*sym).SizeOfStruct = mem::size_of::<SYMBOL_INFO>() as u32;
         (*sym).MaxNameLen = MAX_NAME as u32;
-        if SymFromAddr(process, addr, Some(&mut disp), sym).is_err() {
+        if SymFromAddr(process, addr, Some(&raw mut disp), sym).is_err() {
             return format!("0x{addr:x}");
         }
         // SYMBOL_INFO::Name is a C char buffer. windows-rs exposes it as a [u8; 1] tail.

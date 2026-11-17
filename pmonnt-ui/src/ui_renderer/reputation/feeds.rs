@@ -18,7 +18,7 @@ pub fn render_threat_intel_feeds(
 
     // Get current process hash for MB lookup
     let current_hash = if let Some(result) = reputation_service.get_result("") {
-        result.sha256.clone()
+        result.sha256
     } else {
         None
     };
@@ -52,7 +52,7 @@ pub fn render_threat_intel_feeds(
                     ctx.request_repaint();
                 }
                 Err(e) => {
-                    log::error!("Failed to fetch recent additions: {}", e);
+                    log::error!("Failed to fetch recent additions: {e}");
                 }
             });
         }
@@ -62,11 +62,11 @@ pub fn render_threat_intel_feeds(
     });
 
     // Drain pending recent additions into visible state
-    if let Ok(mut guard) = mb_state.recent_additions_pending.lock() {
-        if let Some(results) = guard.take() {
-            mb_state.recent_additions = results;
-            mb_state.recent_additions_fetch_in_progress = false;
-        }
+    if let Ok(mut guard) = mb_state.recent_additions_pending.lock()
+        && let Some(results) = guard.take()
+    {
+        mb_state.recent_additions = results;
+        mb_state.recent_additions_fetch_in_progress = false;
     }
 
     if !mb_state.recent_additions.is_empty() {
@@ -74,7 +74,7 @@ pub fn render_threat_intel_feeds(
         let mut view = mb_state.recent_additions.clone();
         view.sort_by(|a, b| b.first_seen.cmp(&a.first_seen));
         let total = view.len();
-        ui.label(format!("Found {} recent additions", total));
+        ui.label(format!("Found {total} recent additions"));
         let per_page = mb_state.recent_additions_per_page.max(1);
         let page = if total == 0 {
             0
@@ -123,7 +123,7 @@ pub fn render_threat_intel_feeds(
                     }
                     ctx.request_repaint();
                 }
-                Err(e) => log::error!("Failed to fetch CSCB: {}", e),
+                Err(e) => log::error!("Failed to fetch CSCB: {e}"),
             });
         }
         if mb_state.cscb_fetch_in_progress {
@@ -131,11 +131,11 @@ pub fn render_threat_intel_feeds(
         }
     });
     // Drain pending CSCB results into visible state
-    if let Ok(mut guard) = mb_state.cscb_pending.lock() {
-        if let Some(entries) = guard.take() {
-            mb_state.cscb_entries = entries;
-            mb_state.cscb_fetch_in_progress = false;
-        }
+    if let Ok(mut guard) = mb_state.cscb_pending.lock()
+        && let Some(entries) = guard.take()
+    {
+        mb_state.cscb_entries = entries;
+        mb_state.cscb_fetch_in_progress = false;
     }
 
     if !mb_state.cscb_entries.is_empty() {
@@ -143,7 +143,7 @@ pub fn render_threat_intel_feeds(
         let mut view = mb_state.cscb_entries.clone();
         view.sort_by(|a, b| b.valid_to.cmp(&a.valid_to));
         let total = view.len();
-        ui.label(format!("Found {} CSCB entries", total));
+        ui.label(format!("Found {total} CSCB entries"));
         let per_page = mb_state.cscb_per_page.max(1);
         let page = if total == 0 {
             0
@@ -179,106 +179,106 @@ pub fn render_threat_intel_feeds(
 
     if let Some(_hash) = &current_hash {
         // Display MB-specific data if available
-        if let Some(result) = reputation_service.get_result("") {
-            if let LookupState::Aggregated(_agg) = &result.state {
-                // Prefer the cached sample from the provider for rich UI panels
-                if let Some(sample) = reputation_service.mb_get_last_sample() {
-                    ui.horizontal(|ui| {
-                        ui.label("Signature:");
-                        ui.label(sample.signature.clone().unwrap_or_else(|| "—".to_string()));
-                    });
+        if let Some(result) = reputation_service.get_result("")
+            && let LookupState::Aggregated(_agg) = &result.state
+        {
+            // Prefer the cached sample from the provider for rich UI panels
+            if let Some(sample) = reputation_service.mb_get_last_sample() {
+                ui.horizontal(|ui| {
+                    ui.label("Signature:");
+                    ui.label(sample.signature.clone().unwrap_or_else(|| "—".to_string()));
+                });
 
-                    // Download button
-                    ui.horizontal(|ui| {
-                        if ui.button("📥 Download sample (zip)").clicked()
-                            && !mb_state.download_in_progress
-                        {
-                            mb_state.download_in_progress = true;
-                            mb_state.download_error = None;
+                // Download button
+                ui.horizontal(|ui| {
+                    if ui.button("📥 Download sample (zip)").clicked()
+                        && !mb_state.download_in_progress
+                    {
+                        mb_state.download_in_progress = true;
+                        mb_state.download_error = None;
 
-                            let hash_clone = sample.sha256.clone();
-                            let reputation_service_clone = reputation_service.clone();
-                            bg_worker.spawn(move || {
-                                let temp_dir = std::env::temp_dir();
-                                match reputation_service_clone
-                                    .mb_download_sample(&hash_clone, &temp_dir)
-                                {
-                                    Ok(result) => {
-                                        log::info!("Download complete: {:?}", result);
-                                    }
-                                    Err(e) => {
-                                        log::error!("Download failed: {}", e);
-                                    }
+                        let hash_clone = sample.sha256.clone();
+                        let reputation_service_clone = reputation_service.clone();
+                        bg_worker.spawn(move || {
+                            let temp_dir = std::env::temp_dir();
+                            match reputation_service_clone
+                                .mb_download_sample(&hash_clone, &temp_dir)
+                            {
+                                Ok(result) => {
+                                    log::info!("Download complete: {result:?}");
                                 }
-                            });
-                        }
-
-                        if mb_state.download_in_progress {
-                            ui.spinner();
-                            ui.label("Downloading...");
-                        } else if let Some(error) = &mb_state.download_error {
-                            ui.colored_label(egui::Color32::RED, format!("Error: {}", error));
-                        } else if let Some(path) = &mb_state.last_download_path {
-                            ui.colored_label(egui::Color32::GREEN, format!("Downloaded: {}", path));
-                        }
-                    });
-
-                    // Vendor Intelligence
-                    ui.collapsing("Vendor Intelligence", |ui| {
-                        if let Some(v) = &sample.vendor_intel {
-                            match serde_json::to_string_pretty(v) {
-                                Ok(s) => {
-                                    ui.monospace(s);
-                                }
-                                Err(_) => {
-                                    ui.label("(unrenderable vendor intel)");
+                                Err(e) => {
+                                    log::error!("Download failed: {e}");
                                 }
                             }
-                        } else {
-                            ui.label("No vendor intelligence available.");
-                        }
-                    });
+                        });
+                    }
 
-                    // YARA Rules
-                    ui.collapsing("YARA Rules", |ui| {
-                        if let Some(y) = &sample.yara_rules {
-                            match serde_json::to_string_pretty(y) {
-                                Ok(s) => {
-                                    ui.monospace(s);
-                                }
-                                Err(_) => {
-                                    ui.label("(unrenderable YARA data)");
-                                }
-                            }
-                        } else {
-                            ui.label("No YARA rules available.");
-                        }
-                    });
+                    if mb_state.download_in_progress {
+                        ui.spinner();
+                        ui.label("Downloading...");
+                    } else if let Some(error) = &mb_state.download_error {
+                        ui.colored_label(egui::Color32::RED, format!("Error: {error}"));
+                    } else if let Some(path) = &mb_state.last_download_path {
+                        ui.colored_label(egui::Color32::GREEN, format!("Downloaded: {path}"));
+                    }
+                });
 
-                    // Comments
-                    ui.collapsing("Comments", |ui| {
-                        if let Some(comments) = &sample.comments {
-                            if comments.is_empty() {
-                                ui.label("No comments.");
-                            } else {
-                                for c in comments.iter() {
-                                    ui.horizontal(|ui| {
-                                        let meta = format!(
-                                            "{} - {}",
-                                            c.date.clone().unwrap_or_default(),
-                                            c.author.clone().unwrap_or_default()
-                                        );
-                                        ui.label(meta);
-                                    });
-                                    ui.label(c.comment.clone().unwrap_or_default());
-                                    ui.separator();
-                                }
+                // Vendor Intelligence
+                ui.collapsing("Vendor Intelligence", |ui| {
+                    if let Some(v) = &sample.vendor_intel {
+                        match serde_json::to_string_pretty(v) {
+                            Ok(s) => {
+                                ui.monospace(s);
                             }
-                        } else {
-                            ui.label("No comments available.");
+                            Err(_) => {
+                                ui.label("(unrenderable vendor intel)");
+                            }
                         }
-                    });
-                }
+                    } else {
+                        ui.label("No vendor intelligence available.");
+                    }
+                });
+
+                // YARA Rules
+                ui.collapsing("YARA Rules", |ui| {
+                    if let Some(y) = &sample.yara_rules {
+                        match serde_json::to_string_pretty(y) {
+                            Ok(s) => {
+                                ui.monospace(s);
+                            }
+                            Err(_) => {
+                                ui.label("(unrenderable YARA data)");
+                            }
+                        }
+                    } else {
+                        ui.label("No YARA rules available.");
+                    }
+                });
+
+                // Comments
+                ui.collapsing("Comments", |ui| {
+                    if let Some(comments) = &sample.comments {
+                        if comments.is_empty() {
+                            ui.label("No comments.");
+                        } else {
+                            for c in comments {
+                                ui.horizontal(|ui| {
+                                    let meta = format!(
+                                        "{} - {}",
+                                        c.date.clone().unwrap_or_default(),
+                                        c.author.clone().unwrap_or_default()
+                                    );
+                                    ui.label(meta);
+                                });
+                                ui.label(c.comment.clone().unwrap_or_default());
+                                ui.separator();
+                            }
+                        }
+                    } else {
+                        ui.label("No comments available.");
+                    }
+                });
             }
         }
     }
@@ -307,7 +307,7 @@ pub fn render_threat_intel_feeds(
                         log::info!("Fetched {} recent detections", detections.len());
                     }
                     Err(e) => {
-                        log::error!("Recent detections failed: {}", e);
+                        log::error!("Recent detections failed: {e}");
                     }
                 }
             });
@@ -319,7 +319,7 @@ pub fn render_threat_intel_feeds(
     });
 
     if let Some(error) = &mb_state.recent_error {
-        ui.colored_label(egui::Color32::RED, format!("Error: {}", error));
+        ui.colored_label(egui::Color32::RED, format!("Error: {error}"));
     } else if !mb_state.recent_detections.is_empty() {
         ui.label(format!(
             "Found {} recent detections",
@@ -362,7 +362,7 @@ pub fn render_threat_intel_feeds(
                         log::info!("Found {} samples with tag '{}'", samples.len(), tag);
                     }
                     Err(e) => {
-                        log::error!("Tag search failed: {}", e);
+                        log::error!("Tag search failed: {e}");
                     }
                 }
             });
@@ -374,7 +374,7 @@ pub fn render_threat_intel_feeds(
     });
 
     if let Some(error) = &mb_state.tag_search_error {
-        ui.colored_label(egui::Color32::RED, format!("Error: {}", error));
+        ui.colored_label(egui::Color32::RED, format!("Error: {error}"));
     } else if !mb_state.tag_search_results.is_empty() {
         ui.label(format!(
             "Found {} samples with tag '{}'",

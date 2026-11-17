@@ -23,7 +23,7 @@ fn test_thread_cache_insert_and_cleanup() {
         state: None,
         ideal_processor: None,
     }];
-    cache.insert(42, threads.clone());
+    cache.insert(42, threads);
     assert_eq!(cache.get(42).unwrap().len(), 1);
     // Simulate time passing
     std::thread::sleep(Duration::from_secs(3));

@@ -596,7 +596,7 @@ mod grouped_sort_tests {
             Theme::HighContrast,
         ] {
             let r = catch_unwind(AssertUnwindSafe(|| apply_theme(&ctx, t)));
-            assert!(r.is_ok(), "apply_theme panicked for {:?}", t);
+            assert!(r.is_ok(), "apply_theme panicked for {t:?}");
         }
     }
 

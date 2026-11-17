@@ -111,7 +111,7 @@ pub fn list_threads(pid: u32) -> Result<Vec<ThreadInfo>, PmonntError> {
             dwSize: std::mem::size_of::<THREADENTRY32>() as u32,
             ..Default::default()
         };
-        let mut ok = Thread32First(snapshot, &mut entry) != 0;
+        let mut ok = Thread32First(snapshot, &raw mut entry) != 0;
         while ok {
             if entry.th32OwnerProcessID == pid {
                 let mut info = ThreadInfo {
@@ -148,10 +148,10 @@ pub fn list_threads(pid: u32) -> Result<Vec<ThreadInfo>, PmonntError> {
                     let mut user = std::mem::zeroed();
                     if GetThreadTimes(
                         thread_handle,
-                        &mut create,
-                        &mut exit,
-                        &mut kernel,
-                        &mut user,
+                        &raw mut create,
+                        &raw mut exit,
+                        &raw mut kernel,
+                        &raw mut user,
                     ) != 0
                     {
                         info.kernel_time_100ns = filetime_to_u64(kernel);
@@ -166,15 +166,15 @@ pub fn list_threads(pid: u32) -> Result<Vec<ThreadInfo>, PmonntError> {
                     }
                     // GetThreadDescription (optional) - use bounded length to avoid OOB reads
                     let mut desc = std::ptr::null_mut();
-                    if GetThreadDescription(thread_handle, &mut desc) >= 0 && !desc.is_null() {
+                    if GetThreadDescription(thread_handle, &raw mut desc) >= 0 && !desc.is_null() {
                         // Bound the maximum wide-string length to avoid walking into invalid memory
                         const MAX_WSTR_LEN: usize = 32 * 1024; // 32k characters
                         // SAFETY: desc is non-null and points to a null-terminated wide string allocated by Windows.
-                        let len = fn_strlen_wide_bounded(desc as *const u16, MAX_WSTR_LEN);
-                        let slice = std::slice::from_raw_parts(desc as *const u16, len);
+                        let len = fn_strlen_wide_bounded(desc.cast_const(), MAX_WSTR_LEN);
+                        let slice = std::slice::from_raw_parts(desc.cast_const(), len);
                         info.name = Some(OsString::from_wide(slice).to_string_lossy().into_owned());
                         // Free the buffer allocated by GetThreadDescription
-                        LocalFree(desc as *mut std::ffi::c_void);
+                        LocalFree(desc.cast::<std::ffi::c_void>());
                     }
 
                     // Query thread start address using NtQueryInformationThread
@@ -185,9 +185,9 @@ pub fn list_threads(pid: u32) -> Result<Vec<ThreadInfo>, PmonntError> {
                     let status = NtQueryInformationThread(
                         handle_guard.raw(),
                         THREAD_QUERY_SET_WIN32_START_ADDRESS,
-                        &mut start_addr as *mut usize as *mut std::ffi::c_void,
+                        (&raw mut start_addr).cast::<std::ffi::c_void>(),
                         std::mem::size_of::<usize>() as u32,
-                        &mut ret_len,
+                        &raw mut ret_len,
                     );
 
                     // NT_SUCCESS macro: (status >= 0)
@@ -201,9 +201,9 @@ pub fn list_threads(pid: u32) -> Result<Vec<ThreadInfo>, PmonntError> {
                     let status = NtQueryInformationThread(
                         handle_guard.raw(),
                         THREAD_BASIC_INFORMATION,
-                        &mut basic_info as *mut _ as *mut std::ffi::c_void,
+                        (&raw mut basic_info).cast::<std::ffi::c_void>(),
                         std::mem::size_of::<THREAD_BASIC_INFO>() as u32,
-                        &mut ret_len,
+                        &raw mut ret_len,
                     );
                     if status >= 0 {
                         // Priority from basic info is more reliable
@@ -216,9 +216,9 @@ pub fn list_threads(pid: u32) -> Result<Vec<ThreadInfo>, PmonntError> {
                     let status = NtQueryInformationThread(
                         handle_guard.raw(),
                         THREAD_CYCLE_TIME,
-                        &mut cycle_info as *mut _ as *mut std::ffi::c_void,
+                        (&raw mut cycle_info).cast::<std::ffi::c_void>(),
                         std::mem::size_of::<THREAD_CYCLE_TIME_INFO>() as u32,
-                        &mut ret_len,
+                        &raw mut ret_len,
                     );
                     if status >= 0 {
                         info.cycle_time = Some(cycle_info.AccumulatedCycles);
@@ -229,9 +229,9 @@ pub fn list_threads(pid: u32) -> Result<Vec<ThreadInfo>, PmonntError> {
                     let status = NtQueryInformationThread(
                         handle_guard.raw(),
                         THREAD_SUSPEND_COUNT,
-                        &mut suspend_count as *mut _ as *mut std::ffi::c_void,
+                        (&raw mut suspend_count).cast::<std::ffi::c_void>(),
                         std::mem::size_of::<u32>() as u32,
-                        &mut ret_len,
+                        &raw mut ret_len,
                     );
                     if status >= 0 {
                         info.suspend_count = Some(suspend_count);
@@ -244,7 +244,7 @@ pub fn list_threads(pid: u32) -> Result<Vec<ThreadInfo>, PmonntError> {
                 }
                 threads.push(info);
             }
-            ok = Thread32Next(snapshot, &mut entry) != 0;
+            ok = Thread32Next(snapshot, &raw mut entry) != 0;
         }
         drop(HandleGuard::new(sys_handle_to_win_handle(snapshot)));
     }
@@ -252,7 +252,7 @@ pub fn list_threads(pid: u32) -> Result<Vec<ThreadInfo>, PmonntError> {
 }
 
 fn filetime_to_u64(ft: FILETIME) -> u64 {
-    ((ft.dwHighDateTime as u64) << 32) | (ft.dwLowDateTime as u64)
+    (u64::from(ft.dwHighDateTime) << 32) | u64::from(ft.dwLowDateTime)
 }
 fn filetime_to_systemtime(ft: FILETIME) -> SystemTime {
     // FILETIME is 100ns ticks since 1601-01-01.
@@ -292,10 +292,10 @@ pub fn count_threads_global() -> Result<std::collections::HashMap<u32, usize>, P
             ..Default::default()
         };
 
-        let mut ok = Thread32First(snapshot, &mut entry) != 0;
+        let mut ok = Thread32First(snapshot, &raw mut entry) != 0;
         while ok {
             *counts.entry(entry.th32OwnerProcessID).or_insert(0) += 1;
-            ok = Thread32Next(snapshot, &mut entry) != 0;
+            ok = Thread32Next(snapshot, &raw mut entry) != 0;
         }
 
         drop(crate::win::HandleGuard::new(sys_handle_to_win_handle(

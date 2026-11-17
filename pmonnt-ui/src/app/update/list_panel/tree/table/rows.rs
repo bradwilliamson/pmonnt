@@ -105,17 +105,16 @@ pub(super) fn render_rows(
                         if response.hovered() {
                             if app.hover_pid == Some(item_pid) {
                                 // Already tracking this PID
-                                if let Some(start) = app.hover_start {
-                                    if start.elapsed().as_millis() > 400 {
-                                        // Pre-fetch threads if not cached and not in-flight
-                                        if app.thread_cache.peek(item_pid).is_none()
-                                            && !app.thread_fetch_in_flight.contains(&item_pid)
-                                        {
-                                            app.thread_fetch_in_flight.insert(item_pid);
-                                            app.thread_fetch_started
-                                                .insert(item_pid, Instant::now());
-                                            let _ = app.thread_fetch_tx.send(item_pid);
-                                        }
+                                if let Some(start) = app.hover_start
+                                    && start.elapsed().as_millis() > 400
+                                {
+                                    // Pre-fetch threads if not cached and not in-flight
+                                    if app.thread_cache.peek(item_pid).is_none()
+                                        && !app.thread_fetch_in_flight.contains(&item_pid)
+                                    {
+                                        app.thread_fetch_in_flight.insert(item_pid);
+                                        app.thread_fetch_started.insert(item_pid, Instant::now());
+                                        let _ = app.thread_fetch_tx.send(item_pid);
                                     }
                                 }
                             } else {
@@ -191,9 +190,7 @@ pub(super) fn render_rows(
                                 if *cpu > 0.0 {
                                     // Paint inline usage bar
                                     crate::util::paint_inline_usage_bar(ui, *cpu);
-                                    ui.label(
-                                        egui::RichText::new(format!("{:.1}%", cpu)).monospace(),
-                                    );
+                                    ui.label(egui::RichText::new(format!("{cpu:.1}%")).monospace());
                                 } else {
                                     ui.label(egui::RichText::new("—").monospace());
                                 }
@@ -245,8 +242,7 @@ pub(super) fn render_rows(
                             let bytes_per_sec = app
                                 .io_rate_by_pid
                                 .get(&item.pid)
-                                .map(|r| r.read_bytes_per_sec + r.write_bytes_per_sec)
-                                .unwrap_or(0.0);
+                                .map_or(0.0, |r| r.read_bytes_per_sec + r.write_bytes_per_sec);
                             if bytes_per_sec > 0.0 {
                                 ui.label(
                                     egui::RichText::new(format_bytes_per_sec(bytes_per_sec))
@@ -265,9 +261,7 @@ pub(super) fn render_rows(
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if let Some((pct, _ded, _shr, _total)) = app.gpu_data.get(&item.pid) {
                                 if *pct > 0.0 {
-                                    ui.label(
-                                        egui::RichText::new(format!("{:.1}%", pct)).monospace(),
-                                    );
+                                    ui.label(egui::RichText::new(format!("{pct:.1}%")).monospace());
                                 } else {
                                     ui.label(egui::RichText::new("—").monospace());
                                 }
@@ -356,7 +350,7 @@ pub(super) fn render_rows(
                         apply_selected_text_color(ui);
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if let Some(&count) = app.global_thread_counts.get(&item.pid) {
-                                ui.label(egui::RichText::new(format!("{}", count)).monospace());
+                                ui.label(egui::RichText::new(format!("{count}")).monospace());
                             } else {
                                 ui.label(egui::RichText::new("—").monospace());
                             }

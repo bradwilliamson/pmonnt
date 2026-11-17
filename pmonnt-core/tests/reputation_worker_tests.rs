@@ -19,7 +19,7 @@ fn test_service_construction_and_initialization() {
     let temp_dir = tempdir().expect("failed to create temp dir");
     let cache_path = temp_dir.path().join("test_cache.json");
 
-    let local_cache = Arc::new(LocalCacheProvider::new(cache_path.clone()));
+    let local_cache = Arc::new(LocalCacheProvider::new(cache_path));
     let vt_provider = Arc::new(VirusTotalProvider::new(local_cache.clone()));
 
     let service = ReputationService::new(
@@ -67,14 +67,10 @@ fn test_hash_error_produces_error_state() {
                 // Error should mention hash computation failure
                 assert!(
                     msg.to_lowercase().contains("hash"),
-                    "error message should mention hash: {}",
-                    msg
+                    "error message should mention hash: {msg}"
                 );
             }
-            other => panic!(
-                "Expected Error state for nonexistent file, got: {:?}",
-                other
-            ),
+            other => panic!("Expected Error state for nonexistent file, got: {other:?}"),
         }
     }
 }
@@ -118,10 +114,7 @@ fn test_lookup_disabled_returns_disabled_state() {
                     "SHA256 should be computed even when lookup disabled"
                 );
             }
-            other => panic!(
-                "Expected Disabled state when lookup disabled, got: {:?}",
-                other
-            ),
+            other => panic!("Expected Disabled state when lookup disabled, got: {other:?}"),
         }
     }
 }
@@ -164,8 +157,7 @@ fn test_successful_hash_computation() {
             // Verify it's valid hex
             assert!(
                 hash.chars().all(|c| c.is_ascii_hexdigit()),
-                "hash should contain only hex characters: {}",
-                hash
+                "hash should contain only hex characters: {hash}"
             );
         }
     }
@@ -189,8 +181,8 @@ fn test_multiple_concurrent_lookups() {
     // Create multiple test files
     let mut test_paths = vec![];
     for i in 0..5 {
-        let test_file = temp_dir.path().join(format!("test_{}.txt", i));
-        std::fs::write(&test_file, format!("content {}", i).as_bytes())
+        let test_file = temp_dir.path().join(format!("test_{i}.txt"));
+        std::fs::write(&test_file, format!("content {i}").as_bytes())
             .expect("failed to write test file");
         test_paths.push(test_file.to_string_lossy().to_string());
     }
@@ -210,7 +202,7 @@ fn test_multiple_concurrent_lookups() {
     // Verify all results are available
     for path in test_paths {
         let result = service.get_result(&path);
-        assert!(result.is_some(), "result should exist for path: {}", path);
+        assert!(result.is_some(), "result should exist for path: {path}");
         if let Some(res) = result {
             assert!(res.sha256.is_some(), "hash should be computed");
             if let Some(hash) = res.sha256 {

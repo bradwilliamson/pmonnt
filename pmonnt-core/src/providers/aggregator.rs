@@ -82,8 +82,7 @@ impl ReputationProvider for AggregatorProvider {
                     let provider_name = provider.name();
                     let link = if provider_name == "VT" {
                         Some(format!(
-                            "https://www.virustotal.com/gui/file/{}/detection",
-                            sha256
+                            "https://www.virustotal.com/gui/file/{sha256}/detection"
                         ))
                     } else {
                         None // Non-VT providers shouldn't use VT link

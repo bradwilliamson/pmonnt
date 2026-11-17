@@ -7,7 +7,7 @@ use pmonnt_core::yara::scanner::{ProcessScanner, ScanError, ScanOptions};
 use tokio_util::sync::CancellationToken;
 
 #[test]
-#[ignore]
+#[ignore = "scans live process memory; run with --ignored"]
 fn yara_scan_can_be_cancelled_via_token() {
     // Integration-style test: scans process memory and verifies cancellation path.
     // Ignored by default because it depends on OS state + may be slow.

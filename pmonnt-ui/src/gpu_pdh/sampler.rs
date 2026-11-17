@@ -29,7 +29,7 @@ impl GpuPdhSampler {
         let mut query: PdhQueryHandle = Default::default();
         // SAFETY: PdhOpenQueryW writes a query handle into `query` on success.
         let status =
-            unsafe { windows::Win32::System::Performance::PdhOpenQueryW(None, 0, &mut query) };
+            unsafe { windows::Win32::System::Performance::PdhOpenQueryW(None, 0, &raw mut query) };
         if !pdh_ok(status) {
             return Err(anyhow::anyhow!("PdhOpenQueryW failed: {status:?}"));
         }
@@ -103,7 +103,7 @@ impl GpuPdhSampler {
         let mut query: PdhQueryHandle = Default::default();
         // SAFETY: PdhOpenQueryW writes a query handle into `query` on success.
         let status =
-            unsafe { windows::Win32::System::Performance::PdhOpenQueryW(None, 0, &mut query) };
+            unsafe { windows::Win32::System::Performance::PdhOpenQueryW(None, 0, &raw mut query) };
         if !pdh_ok(status) {
             if should_warn() {
                 log::warn!("[GPU PDH] PdhOpenQueryW failed: status=0x{status:08X}");
@@ -116,13 +116,13 @@ impl GpuPdhSampler {
         self.shared_counters.clear();
         self.first_sample_done = false;
 
-        log::debug!("[GPU PDH] Expanding wildcard: {}", ENGINE_PATH);
+        log::debug!("[GPU PDH] Expanding wildcard: {ENGINE_PATH}");
         let usage_paths = match expand_paths(ENGINE_PATH) {
             Ok(paths) => {
                 log::debug!("[GPU PDH] Expanded {} GPU Engine paths", paths.len());
                 if !paths.is_empty() {
                     for (i, p) in paths.iter().enumerate().take(3) {
-                        log::trace!("[GPU PDH]   Example usage path {}: {}", i, p);
+                        log::trace!("[GPU PDH]   Example usage path {i}: {p}");
                     }
                 }
                 paths
@@ -142,8 +142,9 @@ impl GpuPdhSampler {
                 let wide = wstring(&path);
                 // SAFETY: `wide` is NUL-terminated UTF-16 and lives for the duration of the call.
                 // PDH writes a counter handle into `counter` on success.
-                let status =
-                    unsafe { PdhAddEnglishCounterW(self.query, wide.as_pwstr(), 0, &mut counter) };
+                let status = unsafe {
+                    PdhAddEnglishCounterW(self.query, wide.as_pwstr(), 0, &raw mut counter)
+                };
                 if !pdh_ok(status) {
                     log::trace!(
                         "[GPU PDH] Failed to add usage counter for PID {pid}: status=0x{status:08X}"
@@ -153,12 +154,12 @@ impl GpuPdhSampler {
                 self.usage_counters.push((counter, pid));
                 usage_added += 1;
             } else {
-                log::trace!("[GPU PDH] Could not extract PID from path: {}", path);
+                log::trace!("[GPU PDH] Could not extract PID from path: {path}");
             }
         }
-        log::debug!("[GPU PDH] Added {} GPU usage counters", usage_added);
+        log::debug!("[GPU PDH] Added {usage_added} GPU usage counters");
 
-        log::debug!("[GPU PDH] Expanding wildcard: {}", PROCESS_MEM_PATH);
+        log::debug!("[GPU PDH] Expanding wildcard: {PROCESS_MEM_PATH}");
         let mem_paths = match expand_paths(PROCESS_MEM_PATH) {
             Ok(paths) => {
                 log::debug!(
@@ -167,7 +168,7 @@ impl GpuPdhSampler {
                 );
                 if !paths.is_empty() {
                     for (i, p) in paths.iter().enumerate().take(3) {
-                        log::trace!("[GPU PDH]   Example path {}: {}", i, p);
+                        log::trace!("[GPU PDH]   Example path {i}: {p}");
                     }
                 }
                 paths
@@ -185,8 +186,9 @@ impl GpuPdhSampler {
                 let wide = wstring(&path);
                 // SAFETY: `wide` is NUL-terminated UTF-16 and lives for the duration of the call.
                 // PDH writes a counter handle into `counter` on success.
-                let status =
-                    unsafe { PdhAddEnglishCounterW(self.query, wide.as_pwstr(), 0, &mut counter) };
+                let status = unsafe {
+                    PdhAddEnglishCounterW(self.query, wide.as_pwstr(), 0, &raw mut counter)
+                };
                 if !pdh_ok(status) {
                     log::trace!(
                         "[GPU PDH] Failed to add mem counter for PID {pid}: status=0x{status:08X}"
@@ -195,7 +197,7 @@ impl GpuPdhSampler {
                 }
                 self.mem_counters.push((counter, pid));
             } else {
-                log::trace!("[GPU PDH] Could not extract PID from mem path: {}", path);
+                log::trace!("[GPU PDH] Could not extract PID from mem path: {path}");
             }
         }
         log::debug!(
@@ -203,13 +205,13 @@ impl GpuPdhSampler {
             self.mem_counters.len()
         );
 
-        log::debug!("[GPU PDH] Expanding wildcard: {}", SHARED_MEM_PATH);
+        log::debug!("[GPU PDH] Expanding wildcard: {SHARED_MEM_PATH}");
         let shared_paths = match expand_paths(SHARED_MEM_PATH) {
             Ok(paths) => {
                 log::debug!("[GPU PDH] Expanded {} GPU Shared Memory paths", paths.len());
                 if !paths.is_empty() {
                     for (i, p) in paths.iter().enumerate().take(3) {
-                        log::trace!("[GPU PDH]   Example shared path {}: {}", i, p);
+                        log::trace!("[GPU PDH]   Example shared path {i}: {p}");
                     }
                 }
                 paths
@@ -227,8 +229,9 @@ impl GpuPdhSampler {
                 let wide = wstring(&path);
                 // SAFETY: `wide` is NUL-terminated UTF-16 and lives for the duration of the call.
                 // PDH writes a counter handle into `counter` on success.
-                let status =
-                    unsafe { PdhAddEnglishCounterW(self.query, wide.as_pwstr(), 0, &mut counter) };
+                let status = unsafe {
+                    PdhAddEnglishCounterW(self.query, wide.as_pwstr(), 0, &raw mut counter)
+                };
                 if !pdh_ok(status) {
                     log::trace!(
                         "[GPU PDH] Failed to add shared counter for PID {pid}: status=0x{status:08X}"
@@ -237,7 +240,7 @@ impl GpuPdhSampler {
                 }
                 self.shared_counters.push((counter, pid));
             } else {
-                log::trace!("[GPU PDH] Could not extract PID from shared path: {}", path);
+                log::trace!("[GPU PDH] Could not extract PID from shared path: {path}");
             }
         }
         log::debug!(
@@ -275,8 +278,9 @@ impl GpuPdhSampler {
             // SAFETY: PDH_FMT_COUNTERVALUE is a plain-old-data struct; zero init is valid.
             let mut value: PDH_FMT_COUNTERVALUE = unsafe { mem::zeroed() };
             // SAFETY: PdhGetFormattedCounterValue reads from a valid counter handle and writes to `value`.
-            let status =
-                unsafe { PdhGetFormattedCounterValue(*counter, PDH_FMT_DOUBLE, None, &mut value) };
+            let status = unsafe {
+                PdhGetFormattedCounterValue(*counter, PDH_FMT_DOUBLE, None, &raw mut value)
+            };
             if pdh_ok(status) && value.CStatus == 0 {
                 // SAFETY: On success, PDH initializes the union field for the requested format.
                 let val = unsafe { value.Anonymous.doubleValue } as f32;
@@ -293,8 +297,9 @@ impl GpuPdhSampler {
             // SAFETY: PDH_FMT_COUNTERVALUE is a plain-old-data struct; zero init is valid.
             let mut value: PDH_FMT_COUNTERVALUE = unsafe { mem::zeroed() };
             // SAFETY: PdhGetFormattedCounterValue reads from a valid counter handle and writes to `value`.
-            let status =
-                unsafe { PdhGetFormattedCounterValue(*counter, PDH_FMT_LARGE, None, &mut value) };
+            let status = unsafe {
+                PdhGetFormattedCounterValue(*counter, PDH_FMT_LARGE, None, &raw mut value)
+            };
             if pdh_ok(status) && value.CStatus == 0 {
                 // SAFETY: On success, PDH initializes the union field for the requested format.
                 let val = unsafe { value.Anonymous.largeValue };
@@ -309,8 +314,9 @@ impl GpuPdhSampler {
             // SAFETY: PDH_FMT_COUNTERVALUE is a plain-old-data struct; zero init is valid.
             let mut value: PDH_FMT_COUNTERVALUE = unsafe { mem::zeroed() };
             // SAFETY: PdhGetFormattedCounterValue reads from a valid counter handle and writes to `value`.
-            let status =
-                unsafe { PdhGetFormattedCounterValue(*counter, PDH_FMT_LARGE, None, &mut value) };
+            let status = unsafe {
+                PdhGetFormattedCounterValue(*counter, PDH_FMT_LARGE, None, &raw mut value)
+            };
             if pdh_ok(status) && value.CStatus == 0 {
                 // SAFETY: On success, PDH initializes the union field for the requested format.
                 let val = unsafe { value.Anonymous.largeValue };

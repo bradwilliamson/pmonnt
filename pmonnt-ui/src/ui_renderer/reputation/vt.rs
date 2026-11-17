@@ -35,24 +35,23 @@ pub fn render_virustotal_section(
                 egui::Button::new("Check this process in VirusTotal"),
             )
             .clicked()
+            && let Some(pid) = pid
         {
-            if let Some(pid) = pid {
-                match reputation_service.request_vt_lookup_for_process(pid) {
-                    Ok(sha) => {
-                        vt_state.current_process_sha = Some(sha.clone());
-                        vt_state.querying_vt_sha = Some(sha);
-                        vt_state.querying_vt_pid = Some(pid);
-                        vt_state.querying_started_at = Some(std::time::Instant::now());
-                    }
-                    Err(e) => {
-                        vt_state.last_query_meta = Some(pmonnt_core::vt::VtQueryMeta {
-                            last_query: Some("request".to_string()),
-                            last_http_status: None,
-                            last_query_status: Some("error".to_string()),
-                            last_result_count: None,
-                            last_error_message: Some(e),
-                        });
-                    }
+            match reputation_service.request_vt_lookup_for_process(pid) {
+                Ok(sha) => {
+                    vt_state.current_process_sha = Some(sha.clone());
+                    vt_state.querying_vt_sha = Some(sha);
+                    vt_state.querying_vt_pid = Some(pid);
+                    vt_state.querying_started_at = Some(std::time::Instant::now());
+                }
+                Err(e) => {
+                    vt_state.last_query_meta = Some(pmonnt_core::vt::VtQueryMeta {
+                        last_query: Some("request".to_string()),
+                        last_http_status: None,
+                        last_query_status: Some("error".to_string()),
+                        last_result_count: None,
+                        last_error_message: Some(e),
+                    });
                 }
             }
         }
@@ -79,13 +78,11 @@ pub fn render_virustotal_section(
             .current_process_sha
             .as_ref()
             .or(vt_state.querying_vt_sha.as_ref())
+            && vt_state.querying_vt_pid == pid
+            && reputation_service.get_vt_sample_for_hash(sha).is_none()
         {
-            if vt_state.querying_vt_pid == pid
-                && reputation_service.get_vt_sample_for_hash(sha).is_none()
-            {
-                ui.spinner();
-                ui.label("Querying VirusTotal...");
-            }
+            ui.spinner();
+            ui.label("Querying VirusTotal...");
         }
     });
 
@@ -99,10 +96,10 @@ pub fn render_virustotal_section(
     }
 
     // Drain pending sha
-    if let Ok(mut guard) = vt_state.current_process_sha_pending.lock() {
-        if let Some(sha) = guard.take() {
-            vt_state.current_process_sha = Some(sha);
-        }
+    if let Ok(mut guard) = vt_state.current_process_sha_pending.lock()
+        && let Some(sha) = guard.take()
+    {
+        vt_state.current_process_sha = Some(sha);
     }
 
     let sha_to_show = vt_state
@@ -111,27 +108,27 @@ pub fn render_virustotal_section(
         .or(vt_state.querying_vt_sha.as_ref());
 
     // Stuck protection
-    if let Some(started) = vt_state.querying_started_at {
-        if started.elapsed() > std::time::Duration::from_secs(VT_QUERY_TIMEOUT_SECS) {
-            vt_state.querying_vt_pid = None;
-            vt_state.querying_started_at = None;
-        }
+    if let Some(started) = vt_state.querying_started_at
+        && started.elapsed() > std::time::Duration::from_secs(VT_QUERY_TIMEOUT_SECS)
+    {
+        vt_state.querying_vt_pid = None;
+        vt_state.querying_started_at = None;
     }
 
     if let Some(sha) = sha_to_show {
-        if let Some(pid) = pid {
-            if let Some(path) = pid_to_image_path.get(&pid) {
-                let filename = std::path::Path::new(path)
-                    .file_name()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("");
-                ui.horizontal(|ui| {
-                    ui.label(format!("Process: {}", filename));
-                });
-                ui.horizontal(|ui| {
-                    ui.label(format!("Path:    {}", path));
-                });
-            }
+        if let Some(pid) = pid
+            && let Some(path) = pid_to_image_path.get(&pid)
+        {
+            let filename = std::path::Path::new(path)
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("");
+            ui.horizontal(|ui| {
+                ui.label(format!("Process: {filename}"));
+            });
+            ui.horizontal(|ui| {
+                ui.label(format!("Path:    {path}"));
+            });
         }
         ui.horizontal(|ui| {
             ui.label("SHA-256:");
@@ -161,10 +158,7 @@ pub fn render_virustotal_section(
                             } else {
                                 egui::Color32::RED
                             };
-                            ui.colored_label(
-                                color,
-                                format!("VT: {}/{} detections", detections, total),
-                            );
+                            ui.colored_label(color, format!("VT: {detections}/{total} detections"));
                         } else {
                             ui.colored_label(
                                 egui::Color32::GRAY,

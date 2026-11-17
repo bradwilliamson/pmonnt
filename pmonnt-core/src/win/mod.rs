@@ -79,7 +79,7 @@ pub fn enable_debug_privilege() -> windows::core::Result<()> {
         if OpenProcessToken(
             GetCurrentProcess(),
             TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY,
-            &mut token_handle,
+            &raw mut token_handle,
         )
         .is_err()
         {
@@ -96,7 +96,7 @@ pub fn enable_debug_privilege() -> windows::core::Result<()> {
         if LookupPrivilegeValueW(
             PCWSTR::null(),
             PCWSTR::from_raw(se_debug_name.as_ptr()),
-            &mut luid,
+            &raw mut luid,
         )
         .is_err()
         {
@@ -112,7 +112,7 @@ pub fn enable_debug_privilege() -> windows::core::Result<()> {
             }],
         };
 
-        if AdjustTokenPrivileges(token_handle, false, Some(&tp), 0, None, None).is_err() {
+        if AdjustTokenPrivileges(token_handle, false, Some(&raw const tp), 0, None, None).is_err() {
             let err = GetLastError();
             return Err(windows::core::Error::from(err));
         }
@@ -166,9 +166,9 @@ pub fn get_process_protection(pid: u32) -> (bool, Option<String>) {
         NtQueryInformationProcess(
             handle_guard.raw(),
             PROCESS_PROTECTION_INFORMATION,
-            &mut protection as *mut _ as *mut std::ffi::c_void,
+            (&raw mut protection).cast::<std::ffi::c_void>(),
             std::mem::size_of::<PS_PROTECTION>() as u32,
-            &mut ret_len,
+            &raw mut ret_len,
         )
     };
 
@@ -189,7 +189,7 @@ pub fn get_process_protection(pid: u32) -> (bool, Option<String>) {
             6 => "WinTcb",
             _ => "Unknown",
         };
-        (true, Some(format!("{} ({})", level_str, signer)))
+        (true, Some(format!("{level_str} ({signer})")))
     } else {
         (false, None)
     }

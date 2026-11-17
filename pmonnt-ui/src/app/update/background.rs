@@ -72,15 +72,15 @@ impl PMonNTApp {
     pub(super) fn service_background_work(&mut self) {
         // Promote any completed SHA-256 computations (selection-driven) into UI state.
         // This keeps SHA available even if the reputation panels are not currently rendered.
-        if let Ok(mut guard) = self.mb_ui_state.current_process_sha_pending.lock() {
-            if let Some(sha) = guard.take() {
-                self.mb_ui_state.current_process_sha = Some(sha);
-            }
+        if let Ok(mut guard) = self.mb_ui_state.current_process_sha_pending.lock()
+            && let Some(sha) = guard.take()
+        {
+            self.mb_ui_state.current_process_sha = Some(sha);
         }
-        if let Ok(mut guard) = self.vt_ui_state.current_process_sha_pending.lock() {
-            if let Some(sha) = guard.take() {
-                self.vt_ui_state.current_process_sha = Some(sha);
-            }
+        if let Ok(mut guard) = self.vt_ui_state.current_process_sha_pending.lock()
+            && let Some(sha) = guard.take()
+        {
+            self.vt_ui_state.current_process_sha = Some(sha);
         }
 
         drain_signature_results(
@@ -101,15 +101,15 @@ impl PMonNTApp {
             });
 
             // If the modal is open for this PID, show result + refresh its list.
-            if let Some(dialog) = self.service_dialog.as_mut() {
-                if dialog.pid == pid {
-                    dialog.last_result =
-                        Some(self.last_service_action_message.clone().unwrap_or_default());
-                    dialog.last_result_time = Some(Instant::now());
-                    if let Ok(mut services) = pmonnt_core::services::get_services_for_process(pid) {
-                        services.sort_by(|a, b| a.name.cmp(&b.name));
-                        dialog.services = services;
-                    }
+            if let Some(dialog) = self.service_dialog.as_mut()
+                && dialog.pid == pid
+            {
+                dialog.last_result =
+                    Some(self.last_service_action_message.clone().unwrap_or_default());
+                dialog.last_result_time = Some(Instant::now());
+                if let Ok(mut services) = pmonnt_core::services::get_services_for_process(pid) {
+                    services.sort_by(|a, b| a.name.cmp(&b.name));
+                    dialog.services = services;
                 }
             }
 
@@ -224,7 +224,7 @@ impl PMonNTApp {
                 .yara_state
                 .rule_manager
                 .lock()
-                .unwrap_or_else(|e| e.into_inner());
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             log::info!("Rebuilding YARA engine with {} rules", rm.rules().len());
             match pmonnt_core::yara::engine::YaraEngine::from_rule_manager(&rm) {
                 Ok(engine) => {
@@ -233,9 +233,9 @@ impl PMonNTApp {
                     self.yara_state.error = None;
                 }
                 Err(e) => {
-                    log::error!("YARA engine rebuild failed: {}", e);
+                    log::error!("YARA engine rebuild failed: {e}");
                     self.yara_state.yara_engine = None;
-                    self.yara_state.error = Some(format!("Engine compile failed: {}", e));
+                    self.yara_state.error = Some(format!("Engine compile failed: {e}"));
                 }
             }
         }

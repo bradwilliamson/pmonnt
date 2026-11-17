@@ -36,7 +36,7 @@ pub fn enumerate_processes() -> Result<Vec<Process>> {
 
     // SAFETY: Process32First enumerates the first process in the snapshot.
     // The process_entry structure is properly initialized with dwSize.
-    let success = unsafe { Process32First(snapshot, &mut process_entry) };
+    let success = unsafe { Process32First(snapshot, &raw mut process_entry) };
 
     if success.is_err() {
         // SAFETY: Close the snapshot handle even on failure
@@ -64,7 +64,7 @@ pub fn enumerate_processes() -> Result<Vec<Process>> {
 
         // SAFETY: Process32Next enumerates the next process in the snapshot.
         // The process_entry structure remains valid for reuse.
-        let success = unsafe { Process32Next(snapshot, &mut process_entry) };
+        let success = unsafe { Process32Next(snapshot, &raw mut process_entry) };
 
         if success.is_err() {
             break;

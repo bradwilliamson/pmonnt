@@ -34,10 +34,10 @@ pub fn render_threads_panel<F: FnMut(ThreadActionRequest)>(
     mut on_action: F,
 ) {
     // Drop selection if the selected thread no longer exists.
-    if let Some(tid) = *selected_tid {
-        if !threads.iter().any(|t| t.tid == tid) {
-            *selected_tid = None;
-        }
+    if let Some(tid) = *selected_tid
+        && !threads.iter().any(|t| t.tid == tid)
+    {
+        *selected_tid = None;
     }
 
     ui.heading("Threads");
@@ -66,7 +66,7 @@ pub fn render_threads_panel<F: FnMut(ThreadActionRequest)>(
                 .filter(|t| !prev_tids.contains(&t.tid))
                 .count();
             if new_count > 0 {
-                ui.colored_label(egui::Color32::LIGHT_GREEN, format!("+{} new", new_count));
+                ui.colored_label(egui::Color32::LIGHT_GREEN, format!("+{new_count} new"));
             }
         }
     });
@@ -162,7 +162,7 @@ pub fn render_threads_panel<F: FnMut(ThreadActionRequest)>(
                             if cpu_ms == 0 {
                                 ui.label(egui::RichText::new("< 0.01").color(egui::Color32::GRAY));
                             } else {
-                                ui.label(format!("{}", cpu_ms));
+                                ui.label(format!("{cpu_ms}"));
                             }
                         });
 
@@ -192,7 +192,7 @@ pub fn render_threads_panel<F: FnMut(ThreadActionRequest)>(
                             if let Some(suspend) = t.suspend_count {
                                 if suspend > 0 {
                                     ui.label(
-                                        egui::RichText::new(format!("{}", suspend))
+                                        egui::RichText::new(format!("{suspend}"))
                                             .color(egui::Color32::YELLOW),
                                     );
                                 } else {
@@ -231,15 +231,15 @@ pub fn render_threads_panel<F: FnMut(ThreadActionRequest)>(
                                 }
 
                                 // Show thread name if available
-                                if let Some(thread_name) = &t.name {
-                                    if !thread_name.is_empty() {
-                                        ui.label(
-                                            egui::RichText::new(thread_name)
-                                                .small()
-                                                .italics()
-                                                .color(ui.visuals().weak_text_color()),
-                                        );
-                                    }
+                                if let Some(thread_name) = &t.name
+                                    && !thread_name.is_empty()
+                                {
+                                    ui.label(
+                                        egui::RichText::new(thread_name)
+                                            .small()
+                                            .italics()
+                                            .color(ui.visuals().weak_text_color()),
+                                    );
                                 }
                             });
                         });
@@ -257,212 +257,198 @@ pub fn render_threads_panel<F: FnMut(ThreadActionRequest)>(
     *selected_tid = next_selected_tid;
 
     // Bottom detail panel
-    if let Some(tid) = *selected_tid {
-        if let Some(t) = threads.iter().find(|t| t.tid == tid) {
-            ui.add_space(6.0);
-            ui.separator();
+    if let Some(tid) = *selected_tid
+        && let Some(t) = threads.iter().find(|t| t.tid == tid)
+    {
+        ui.add_space(6.0);
+        ui.separator();
 
-            egui::Frame::group(ui.style())
-                .inner_margin(egui::Margin::same(8))
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.heading(format!("Thread {tid}"));
-                        ui.add_space(8.0);
-                        if let Some(name) = t.name.as_deref().filter(|s| !s.is_empty()) {
-                            ui.label(
-                                egui::RichText::new(name)
-                                    .italics()
-                                    .color(ui.visuals().weak_text_color()),
-                            );
-                        }
-                    });
+        egui::Frame::group(ui.style())
+            .inner_margin(egui::Margin::same(8))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.heading(format!("Thread {tid}"));
+                    ui.add_space(8.0);
+                    if let Some(name) = t.name.as_deref().filter(|s| !s.is_empty()) {
+                        ui.label(
+                            egui::RichText::new(name)
+                                .italics()
+                                .color(ui.visuals().weak_text_color()),
+                        );
+                    }
+                });
 
-                    let module_map = map_address_to_module(t.start_address, modules);
+                let module_map = map_address_to_module(t.start_address, modules);
 
-                    egui::Grid::new(("thread_detail_grid", pid, tid))
-                        .num_columns(2)
-                        .spacing([10.0, 4.0])
-                        .show(ui, |ui| {
-                            ui.label("Start address:");
-                            match (t.start_address, module_map.as_ref()) {
-                                (_, Some((name, off))) => {
-                                    ui.label(format!("{} + 0x{off:x}", name));
-                                }
-                                (Some(addr), None) => {
-                                    ui.label(format!("0x{addr:x}"));
-                                }
-                                (None, None) => {
-                                    ui.label(
-                                        egui::RichText::new("<unknown>").color(egui::Color32::GRAY),
-                                    );
-                                }
+                egui::Grid::new(("thread_detail_grid", pid, tid))
+                    .num_columns(2)
+                    .spacing([10.0, 4.0])
+                    .show(ui, |ui| {
+                        ui.label("Start address:");
+                        match (t.start_address, module_map.as_ref()) {
+                            (_, Some((name, off))) => {
+                                ui.label(format!("{name} + 0x{off:x}"));
                             }
-                            ui.end_row();
-
-                            ui.label("Priority:");
-                            ui.label(
-                                t.priority
-                                    .map(|p| p.to_string())
-                                    .unwrap_or_else(|| "-".to_string()),
-                            );
-                            ui.end_row();
-
-                            ui.label("Base priority:");
-                            ui.label(format!("{}", t.base_priority));
-                            ui.end_row();
-
-                            ui.label("Suspend count:");
-                            ui.label(
-                                t.suspend_count
-                                    .map(|v| v.to_string())
-                                    .unwrap_or_else(|| "-".to_string()),
-                            );
-                            ui.end_row();
-
-                            ui.label("Context switches:");
-                            ui.label(
-                                t.context_switches
-                                    .map(|v| v.to_string())
-                                    .unwrap_or_else(|| "-".to_string()),
-                            );
-                            ui.end_row();
-
-                            ui.label("Cycle time:");
-                            ui.label(
-                                t.cycle_time
-                                    .map(format_cycles)
-                                    .unwrap_or_else(|| "-".to_string()),
-                            );
-                            ui.end_row();
-
-                            ui.label("State / wait reason:");
-                            let state = t
-                                .state
-                                .map(|v| v.to_string())
-                                .unwrap_or_else(|| "-".to_string());
-                            let wait = t
-                                .wait_reason
-                                .map(|v| v.to_string())
-                                .unwrap_or_else(|| "-".to_string());
-                            ui.label(format!("{} / {}", state, wait));
-                            ui.end_row();
-
-                            ui.label("Ideal processor:");
-                            ui.label(
-                                t.ideal_processor
-                                    .map(|v| v.to_string())
-                                    .unwrap_or_else(|| "-".to_string()),
-                            );
-                            ui.end_row();
-                        });
-
-                    if let Some(detail) = &detail_ui {
-                        if let Some((msg, at)) = detail.message {
-                            if at.elapsed().as_secs() <= 10 {
-                                ui.add_space(6.0);
+                            (Some(addr), None) => {
+                                ui.label(format!("0x{addr:x}"));
+                            }
+                            (None, None) => {
                                 ui.label(
-                                    egui::RichText::new(msg).color(ui.visuals().weak_text_color()),
+                                    egui::RichText::new("<unknown>").color(egui::Color32::GRAY),
                                 );
                             }
                         }
+                        ui.end_row();
 
-                        if let Some((_, perms)) = detail.permissions {
-                            ui.add_space(6.0);
-                            ui.label(egui::RichText::new("Permissions (SDDL):").strong());
-                            match perms {
-                                Ok(sddl) => {
-                                    let mut sddl_show = sddl.clone();
-                                    ui.add_enabled(
-                                        false,
-                                        egui::TextEdit::multiline(&mut sddl_show)
-                                            .desired_rows(3)
-                                            .font(egui::TextStyle::Monospace),
-                                    );
-                                }
-                                Err(e) => {
-                                    ui.colored_label(egui::Color32::LIGHT_RED, e);
-                                }
+                        ui.label("Priority:");
+                        ui.label(
+                            t.priority
+                                .map_or_else(|| "-".to_string(), |p| p.to_string()),
+                        );
+                        ui.end_row();
+
+                        ui.label("Base priority:");
+                        ui.label(format!("{}", t.base_priority));
+                        ui.end_row();
+
+                        ui.label("Suspend count:");
+                        ui.label(
+                            t.suspend_count
+                                .map_or_else(|| "-".to_string(), |v| v.to_string()),
+                        );
+                        ui.end_row();
+
+                        ui.label("Context switches:");
+                        ui.label(
+                            t.context_switches
+                                .map_or_else(|| "-".to_string(), |v| v.to_string()),
+                        );
+                        ui.end_row();
+
+                        ui.label("Cycle time:");
+                        ui.label(t.cycle_time.map_or_else(|| "-".to_string(), format_cycles));
+                        ui.end_row();
+
+                        ui.label("State / wait reason:");
+                        let state = t.state.map_or_else(|| "-".to_string(), |v| v.to_string());
+                        let wait = t
+                            .wait_reason
+                            .map_or_else(|| "-".to_string(), |v| v.to_string());
+                        ui.label(format!("{state} / {wait}"));
+                        ui.end_row();
+
+                        ui.label("Ideal processor:");
+                        ui.label(
+                            t.ideal_processor
+                                .map_or_else(|| "-".to_string(), |v| v.to_string()),
+                        );
+                        ui.end_row();
+                    });
+
+                if let Some(detail) = &detail_ui {
+                    if let Some((msg, at)) = detail.message
+                        && at.elapsed().as_secs() <= 10
+                    {
+                        ui.add_space(6.0);
+                        ui.label(egui::RichText::new(msg).color(ui.visuals().weak_text_color()));
+                    }
+
+                    if let Some((_, perms)) = detail.permissions {
+                        ui.add_space(6.0);
+                        ui.label(egui::RichText::new("Permissions (SDDL):").strong());
+                        match perms {
+                            Ok(sddl) => {
+                                let mut sddl_show = sddl.clone();
+                                ui.add_enabled(
+                                    false,
+                                    egui::TextEdit::multiline(&mut sddl_show)
+                                        .desired_rows(3)
+                                        .font(egui::TextStyle::Monospace),
+                                );
                             }
-                        }
-
-                        if let Some((_, stack)) = detail.stack {
-                            ui.add_space(6.0);
-                            ui.label(egui::RichText::new("Stack:").strong());
-                            match stack {
-                                Ok(text) => {
-                                    let mut show = text.clone();
-                                    ui.add_enabled(
-                                        false,
-                                        egui::TextEdit::multiline(&mut show)
-                                            .desired_rows(8)
-                                            .font(egui::TextStyle::Monospace),
-                                    );
-                                }
-                                Err(e) => {
-                                    ui.colored_label(egui::Color32::LIGHT_RED, e);
-                                }
+                            Err(e) => {
+                                ui.colored_label(egui::Color32::LIGHT_RED, e);
                             }
-                        }
-
-                        if detail.actions_enabled {
-                            ui.add_space(6.0);
-                            ui.horizontal(|ui| {
-                                let key = |label: &str| format!("{pid}:{tid}:{label}");
-
-                                let stack_key = key("Stack");
-                                let stack_busy = detail.in_flight.contains(&stack_key);
-                                if ui
-                                    .add_enabled(!stack_busy, egui::Button::new("Stack"))
-                                    .clicked()
-                                {
-                                    on_action(ThreadActionRequest::Stack { pid, tid });
-                                }
-
-                                if ui.button("Module").clicked() {
-                                    on_action(ThreadActionRequest::Module { pid, tid });
-                                }
-
-                                let perms_key = key("Permissions");
-                                let perms_busy = detail.in_flight.contains(&perms_key);
-                                if ui
-                                    .add_enabled(!perms_busy, egui::Button::new("Permissions"))
-                                    .clicked()
-                                {
-                                    on_action(ThreadActionRequest::Permissions { pid, tid });
-                                }
-
-                                let suspended = t.suspend_count.unwrap_or(0) > 0;
-                                let sr_label = if suspended { "Resume" } else { "Suspend" };
-                                let sr_key = key(sr_label);
-                                let sr_busy = detail.in_flight.contains(&sr_key);
-                                if ui
-                                    .add_enabled(!sr_busy, egui::Button::new(sr_label))
-                                    .clicked()
-                                {
-                                    if suspended {
-                                        on_action(ThreadActionRequest::Resume { pid, tid });
-                                    } else {
-                                        on_action(ThreadActionRequest::Suspend { pid, tid });
-                                    }
-                                }
-
-                                let kill_key = key("Kill");
-                                let kill_busy = detail.in_flight.contains(&kill_key);
-                                if ui
-                                    .add_enabled(!kill_busy, egui::Button::new("Kill"))
-                                    .clicked()
-                                {
-                                    on_action(ThreadActionRequest::Kill {
-                                        pid,
-                                        tid,
-                                        exit_code: 1,
-                                    });
-                                }
-                            });
                         }
                     }
-                });
-        }
+
+                    if let Some((_, stack)) = detail.stack {
+                        ui.add_space(6.0);
+                        ui.label(egui::RichText::new("Stack:").strong());
+                        match stack {
+                            Ok(text) => {
+                                let mut show = text.clone();
+                                ui.add_enabled(
+                                    false,
+                                    egui::TextEdit::multiline(&mut show)
+                                        .desired_rows(8)
+                                        .font(egui::TextStyle::Monospace),
+                                );
+                            }
+                            Err(e) => {
+                                ui.colored_label(egui::Color32::LIGHT_RED, e);
+                            }
+                        }
+                    }
+
+                    if detail.actions_enabled {
+                        ui.add_space(6.0);
+                        ui.horizontal(|ui| {
+                            let key = |label: &str| format!("{pid}:{tid}:{label}");
+
+                            let stack_key = key("Stack");
+                            let stack_busy = detail.in_flight.contains(&stack_key);
+                            if ui
+                                .add_enabled(!stack_busy, egui::Button::new("Stack"))
+                                .clicked()
+                            {
+                                on_action(ThreadActionRequest::Stack { pid, tid });
+                            }
+
+                            if ui.button("Module").clicked() {
+                                on_action(ThreadActionRequest::Module { pid, tid });
+                            }
+
+                            let perms_key = key("Permissions");
+                            let perms_busy = detail.in_flight.contains(&perms_key);
+                            if ui
+                                .add_enabled(!perms_busy, egui::Button::new("Permissions"))
+                                .clicked()
+                            {
+                                on_action(ThreadActionRequest::Permissions { pid, tid });
+                            }
+
+                            let suspended = t.suspend_count.unwrap_or(0) > 0;
+                            let sr_label = if suspended { "Resume" } else { "Suspend" };
+                            let sr_key = key(sr_label);
+                            let sr_busy = detail.in_flight.contains(&sr_key);
+                            if ui
+                                .add_enabled(!sr_busy, egui::Button::new(sr_label))
+                                .clicked()
+                            {
+                                if suspended {
+                                    on_action(ThreadActionRequest::Resume { pid, tid });
+                                } else {
+                                    on_action(ThreadActionRequest::Suspend { pid, tid });
+                                }
+                            }
+
+                            let kill_key = key("Kill");
+                            let kill_busy = detail.in_flight.contains(&kill_key);
+                            if ui
+                                .add_enabled(!kill_busy, egui::Button::new("Kill"))
+                                .clicked()
+                            {
+                                on_action(ThreadActionRequest::Kill {
+                                    pid,
+                                    tid,
+                                    exit_code: 1,
+                                });
+                            }
+                        });
+                    }
+                }
+            });
     }
 }
 

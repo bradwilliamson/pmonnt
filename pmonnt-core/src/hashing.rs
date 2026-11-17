@@ -31,10 +31,10 @@ impl FileOps for StdFileOps {
 
     fn metadata(&self, path: &str) -> Result<FileMeta> {
         let metadata = fs::metadata(path)
-            .with_context(|| format!("Cannot read file metadata for '{}'", path))?;
+            .with_context(|| format!("Cannot read file metadata for '{path}'"))?;
         let modified = metadata
             .modified()
-            .map_err(|e| anyhow!("Cannot get file modification time: {}", e))?;
+            .map_err(|e| anyhow!("Cannot get file modification time: {e}"))?;
         Ok(FileMeta {
             modified,
             len: metadata.len(),
@@ -42,7 +42,7 @@ impl FileOps for StdFileOps {
     }
 
     fn open(&self, path: &str) -> Result<Box<dyn Read + Send>> {
-        let file = File::open(path).with_context(|| format!("Cannot open file '{}'", path))?;
+        let file = File::open(path).with_context(|| format!("Cannot open file '{path}'"))?;
         Ok(Box::new(file))
     }
 }
@@ -105,11 +105,15 @@ impl HashComputer {
 
         // Check cache first
         {
-            let cache = self.cache.lock().unwrap_or_else(|p| p.into_inner());
-            if let Some(entry) = cache.get(&cache_key) {
-                if entry.modified_time == modified_time && entry.file_size == file_size {
-                    return Ok(entry.sha256.clone());
-                }
+            let cache = self
+                .cache
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(entry) = cache.get(&cache_key)
+                && entry.modified_time == modified_time
+                && entry.file_size == file_size
+            {
+                return Ok(entry.sha256.clone());
             }
         }
 
@@ -119,7 +123,10 @@ impl HashComputer {
 
         // Update cache
         {
-            let mut cache = self.cache.lock().unwrap_or_else(|p| p.into_inner());
+            let mut cache = self
+                .cache
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             cache.insert(
                 cache_key,
                 HashCacheEntry {
@@ -160,7 +167,7 @@ pub fn sha256_hex_from_reader<R: Read>(mut reader: R) -> Result<String> {
             Ok(0) => break,
             Ok(n) => n,
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-            Err(e) => return Err(anyhow!("Cannot read file: {}", e)),
+            Err(e) => return Err(anyhow!("Cannot read file: {e}")),
         };
         hasher.update(&buffer[..bytes_read]);
     }

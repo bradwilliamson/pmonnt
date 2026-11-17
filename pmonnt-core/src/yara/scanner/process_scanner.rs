@@ -114,7 +114,7 @@ impl ProcessScanner {
                 Err(e) => {
                     // In Quick mode we expect some failures; keep it quiet.
                     // We still count this region as attempted.
-                    log::debug!("Skipped chunk at 0x{:x}: {}", addr, e);
+                    log::debug!("Skipped chunk at 0x{addr:x}: {e}");
                     failed_reads += 1;
                     if failed_reads >= MAX_FAILED_READS_PER_REGION {
                         break;
@@ -133,8 +133,7 @@ impl ProcessScanner {
             match self.engine.scan_buffer(&data) {
                 Ok(region_matches) => {
                     for m in region_matches {
-                        let matched_offset =
-                            m.matched_strings.first().map(|ms| ms.offset).unwrap_or(0);
+                        let matched_offset = m.matched_strings.first().map_or(0, |ms| ms.offset);
                         let memory_address = addr.saturating_add(matched_offset);
                         let rule_hash = Self::rule_name_hash(&m.rule_name);
                         if !sink.seen.insert((memory_address, rule_hash)) {
@@ -159,7 +158,7 @@ impl ProcessScanner {
                 }
                 Err(e) => {
                     sink.errors
-                        .push(format!("Scan error in chunk {:#x}: {}", addr, e));
+                        .push(format!("Scan error in chunk {addr:#x}: {e}"));
                 }
             }
 
@@ -207,7 +206,7 @@ impl ProcessScanner {
                     .file_name()
                     .map(|s| s.to_string_lossy().to_string())
             })
-            .unwrap_or_else(|| format!("pid {}", pid));
+            .unwrap_or_else(|| format!("pid {pid}"));
 
         let _ = progress_tx
             .send(ScanProgress::Starting {
@@ -297,10 +296,7 @@ impl ProcessScanner {
         let dur = start.elapsed().as_millis() as u64;
         if regions_skipped > 0 {
             log::info!(
-                "Memory scan complete: {} regions scanned ({} bytes), {} regions skipped (protected/inaccessible)",
-                regions_scanned,
-                bytes_scanned,
-                regions_skipped
+                "Memory scan complete: {regions_scanned} regions scanned ({bytes_scanned} bytes), {regions_skipped} regions skipped (protected/inaccessible)"
             );
         }
         let result = ScanResult {
@@ -356,7 +352,7 @@ impl ProcessScanner {
                     .file_name()
                     .map(|s| s.to_string_lossy().to_string())
             })
-            .unwrap_or_else(|| format!("pid {}", pid));
+            .unwrap_or_else(|| format!("pid {pid}"));
         let _ = progress_tx.send(ScanProgress::Starting {
             pid,
             process_name: process_name.clone(),
@@ -431,10 +427,7 @@ impl ProcessScanner {
         let dur = start.elapsed().as_millis() as u64;
         if regions_skipped > 0 {
             log::info!(
-                "Memory scan complete: {} regions scanned ({} bytes), {} regions skipped (protected/inaccessible)",
-                regions_scanned,
-                bytes_scanned,
-                regions_skipped
+                "Memory scan complete: {regions_scanned} regions scanned ({bytes_scanned} bytes), {regions_skipped} regions skipped (protected/inaccessible)"
             );
         }
         let result = ScanResult {

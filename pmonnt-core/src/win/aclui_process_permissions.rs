@@ -154,7 +154,7 @@ impl ISecurityInformation_Impl for ProcessSecurityInformation_Impl {
                 dwFlags: flags,
                 hInstance: Default::default(),
                 pszServerName: PWSTR::null(),
-                pszObjectName: PWSTR(self.this.object_name_w.as_ptr() as *mut _),
+                pszObjectName: PWSTR(self.this.object_name_w.as_ptr().cast_mut()),
                 pszPageTitle: PWSTR::null(),
                 guidObjectType: Default::default(),
             };
@@ -184,7 +184,7 @@ impl ISecurityInformation_Impl for ProcessSecurityInformation_Impl {
                 None,
                 None,
                 None,
-                Some(&mut sd),
+                Some(&raw mut sd),
             );
 
             if status.0 != 0 {
@@ -219,9 +219,9 @@ impl ISecurityInformation_Impl for ProcessSecurityInformation_Impl {
             let mut dacl: *mut ACL = std::ptr::null_mut();
             GetSecurityDescriptorDacl(
                 psecuritydescriptor,
-                &mut present,
-                &mut dacl,
-                &mut defaulted,
+                &raw mut present,
+                &raw mut dacl,
+                &raw mut defaulted,
             )?;
 
             let status = SetSecurityInfo(
@@ -263,7 +263,7 @@ impl ISecurityInformation_Impl for ProcessSecurityInformation_Impl {
                 return Err(WinError::from_thread());
             }
 
-            let access_slice = std::slice::from_raw_parts_mut(mem as *mut SI_ACCESS, count);
+            let access_slice = std::slice::from_raw_parts_mut(mem.cast::<SI_ACCESS>(), count);
             for (idx, (name_w, mask)) in self.this.access_rights.iter().enumerate() {
                 access_slice[idx] = SI_ACCESS {
                     pguid: std::ptr::null(),
@@ -273,7 +273,7 @@ impl ISecurityInformation_Impl for ProcessSecurityInformation_Impl {
                 };
             }
 
-            *ppaccess = mem as *mut SI_ACCESS;
+            *ppaccess = mem.cast::<SI_ACCESS>();
             *pcaccesses = count as u32;
             *pidefaultaccess = 0;
             Ok(())
@@ -299,7 +299,7 @@ impl ISecurityInformation_Impl for ProcessSecurityInformation_Impl {
                 GenericAll: 0x001F0FFF,
             };
 
-            MapGenericMask(pmask, &mapping);
+            MapGenericMask(pmask, &raw const mapping);
             Ok(())
         }
     }

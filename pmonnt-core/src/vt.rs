@@ -102,12 +102,11 @@ impl VirusTotalProvider {
 
     /// Check if rate limited
     fn is_rate_limited(&self) -> bool {
-        if let Ok(rate_limit) = self.rate_limit_until.lock() {
-            if let Some(until) = *rate_limit {
-                if Instant::now() < until {
-                    return true;
-                }
-            }
+        if let Ok(rate_limit) = self.rate_limit_until.lock()
+            && let Some(until) = *rate_limit
+            && Instant::now() < until
+        {
+            return true;
         }
         false
     }
@@ -145,12 +144,11 @@ impl VirusTotalProvider {
 
         // Build request
         let url = format!("{}/files/{}", self.base_url, sha256);
-        let client = match crate::http::client_builder()
+        let Ok(client) = crate::http::client_builder()
             .timeout(Duration::from_secs(10))
             .build()
-        {
-            Ok(c) => c,
-            Err(_) => return LookupState::Offline,
+        else {
+            return LookupState::Offline;
         };
 
         let start = Instant::now();
@@ -177,8 +175,7 @@ impl VirusTotalProvider {
                     .and_then(|h| h.to_str().ok())
                     .unwrap_or("");
                 debug!(
-                    "VT headers: x-rate-limit-remaining={} x-rate-limit-limit={}",
-                    rate_rem, rate_limit
+                    "VT headers: x-rate-limit-remaining={rate_rem} x-rate-limit-limit={rate_limit}"
                 );
 
                 if status == 404 {
@@ -209,7 +206,7 @@ impl VirusTotalProvider {
                         elapsed_ms,
                         body.chars().take(1024).collect::<String>()
                     );
-                    return LookupState::Error(format!("HTTP {}", status));
+                    return LookupState::Error(format!("HTTP {status}"));
                 }
 
                 // Parse response
@@ -233,7 +230,7 @@ impl VirusTotalProvider {
 
                         LookupState::Hit(stats)
                     }
-                    Err(e) => LookupState::Error(format!("Parse error: {}", e)),
+                    Err(e) => LookupState::Error(format!("Parse error: {e}")),
                 }
             }
             Err(e) => {
@@ -241,7 +238,7 @@ impl VirusTotalProvider {
                 if e.is_timeout() || e.is_connect() || e.is_request() {
                     LookupState::Offline
                 } else {
-                    LookupState::Error(format!("Request error: {}", e))
+                    LookupState::Error(format!("Request error: {e}"))
                 }
             }
         }
@@ -285,12 +282,11 @@ impl VirusTotalProvider {
 
         // Build blocking request
         let url = format!("{}/files/{}", self.base_url, sha256);
-        let client = match crate::http::blocking_client_builder()
+        let Ok(client) = crate::http::blocking_client_builder()
             .timeout(Duration::from_secs(10))
             .build()
-        {
-            Ok(c) => c,
-            Err(_) => return LookupState::Offline,
+        else {
+            return LookupState::Offline;
         };
 
         let start = Instant::now();
@@ -316,8 +312,7 @@ impl VirusTotalProvider {
                     .and_then(|h| h.to_str().ok())
                     .unwrap_or("");
                 debug!(
-                    "VT sync headers: x-rate-limit-remaining={} x-rate-limit-limit={}",
-                    rate_rem, rate_limit
+                    "VT sync headers: x-rate-limit-remaining={rate_rem} x-rate-limit-limit={rate_limit}"
                 );
 
                 if status == reqwest::StatusCode::NOT_FOUND {
@@ -348,7 +343,7 @@ impl VirusTotalProvider {
                         elapsed_ms,
                         body.chars().take(1024).collect::<String>()
                     );
-                    return LookupState::Error(format!("HTTP {}", status));
+                    return LookupState::Error(format!("HTTP {status}"));
                 }
 
                 // Parse response
@@ -372,7 +367,7 @@ impl VirusTotalProvider {
 
                         LookupState::Hit(stats)
                     }
-                    Err(e) => LookupState::Error(format!("Parse error: {}", e)),
+                    Err(e) => LookupState::Error(format!("Parse error: {e}")),
                 }
             }
             Err(e) => {
@@ -380,7 +375,7 @@ impl VirusTotalProvider {
                 if e.is_timeout() || e.is_connect() || e.is_request() {
                     LookupState::Offline
                 } else {
-                    LookupState::Error(format!("Request error: {}", e))
+                    LookupState::Error(format!("Request error: {e}"))
                 }
             }
         }

@@ -159,7 +159,10 @@ pub(crate) struct YaraScanState {
 
 impl YaraScanState {
     pub(crate) fn rule_count(&self) -> usize {
-        let rm = self.rule_manager.lock().unwrap_or_else(|e| e.into_inner());
+        let rm = self
+            .rule_manager
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         rm.rules().len()
     }
 
@@ -202,7 +205,7 @@ impl YaraScanState {
                     );
                 }
                 Err(e) => {
-                    log::error!("YARA scan failed: {}", e);
+                    log::error!("YARA scan failed: {e}");
                 }
             }
         });
@@ -214,16 +217,19 @@ impl YaraScanState {
     }
 
     pub(crate) fn load_local_file(&mut self, path: std::path::PathBuf) {
-        let mut rm = self.rule_manager.lock().unwrap_or_else(|e| e.into_inner());
+        let mut rm = self
+            .rule_manager
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         match rm.load_local_file(path.clone()) {
             Ok(count) => {
-                log::info!("Loaded {} rule(s) from {:?}", count, path);
+                log::info!("Loaded {count} rule(s) from {path:?}");
                 self.needs_engine_rebuild.store(true, Ordering::Release);
                 self.error = None;
             }
             Err(e) => {
-                log::error!("Failed to load rule file: {}", e);
-                self.error = Some(format!("Failed to load: {}", e));
+                log::error!("Failed to load rule file: {e}");
+                self.error = Some(format!("Failed to load: {e}"));
             }
         }
     }
@@ -236,18 +242,22 @@ impl YaraScanState {
 
         rt_handle.spawn(async move {
             let ctx = {
-                let rm = rule_manager.lock().unwrap_or_else(|e| e.into_inner());
+                let rm = rule_manager
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 rm.yaraify_refresh_context()
             };
 
             match pmonnt_core::yara::rules::RuleManager::fetch_yaraify(ctx).await {
                 Ok(result) => {
-                    let mut rm = rule_manager.lock().unwrap_or_else(|e| e.into_inner());
+                    let mut rm = rule_manager
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
                     let count = rm.apply_yaraify_refresh(result);
-                    log::info!("YARAify: loaded {} rules", count);
+                    log::info!("YARAify: loaded {count} rules");
                     needs_engine_rebuild.store(true, Ordering::Release);
                 }
-                Err(e) => log::error!("YARAify failed: {}", e),
+                Err(e) => log::error!("YARAify failed: {e}"),
             }
         });
     }
@@ -260,7 +270,9 @@ impl YaraScanState {
 
         rt_handle.spawn(async move {
             let cache_dir = {
-                let rm = rule_manager.lock().unwrap_or_else(|e| e.into_inner());
+                let rm = rule_manager
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 rm.cache_dir.clone()
             };
 
@@ -271,18 +283,23 @@ impl YaraScanState {
             .await
             {
                 Ok(rules) => {
-                    let mut rm = rule_manager.lock().unwrap_or_else(|e| e.into_inner());
+                    let mut rm = rule_manager
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
                     let count = rm.apply_threatfox_rules(rules);
-                    log::info!("ThreatFox: generated {} rules", count);
+                    log::info!("ThreatFox: generated {count} rules");
                     needs_engine_rebuild.store(true, Ordering::Release);
                 }
-                Err(e) => log::error!("ThreatFox failed: {}", e),
+                Err(e) => log::error!("ThreatFox failed: {e}"),
             }
         });
     }
 
     pub(crate) fn rule_source_counts(&self) -> (usize, usize, usize) {
-        let rm = self.rule_manager.lock().unwrap_or_else(|e| e.into_inner());
+        let rm = self
+            .rule_manager
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut yaraify = 0;
         let mut threatfox = 0;
         let mut local = 0;

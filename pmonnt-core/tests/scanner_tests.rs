@@ -83,7 +83,7 @@ rule test_rule {
     let scanner = ProcessScanner::new(engine);
 
     // ProcessScanner implements Clone
-    let _scanner2 = scanner.clone();
+    let _scanner2 = scanner;
 }
 
 #[test]

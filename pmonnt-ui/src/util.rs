@@ -35,7 +35,7 @@ pub(crate) fn format_number_u64(n: u64) -> String {
 }
 
 pub(crate) fn format_number_u32(n: u32) -> String {
-    format_number_u64(n as u64)
+    format_number_u64(u64::from(n))
 }
 
 pub(crate) fn format_number_usize(n: usize) -> String {
@@ -60,10 +60,10 @@ pub(crate) fn format_memory_bytes(bytes: u64) -> String {
         format!("{} KB", format_number_u64(kb))
     } else if bytes < GB {
         let mb = bytes as f64 / MB as f64;
-        format!("{:.1} MB", mb)
+        format!("{mb:.1} MB")
     } else {
         let gb = bytes as f64 / GB as f64;
-        format!("{:.1} GB", gb)
+        format!("{gb:.1} GB")
     }
 }
 
@@ -122,7 +122,7 @@ pub(crate) fn query_physical_memory_used_total() -> Option<(u64, u64)> {
         ..Default::default()
     };
     // SAFETY: GlobalMemoryStatusEx writes to the provided MEMORYSTATUSEX structure with dwLength set correctly.
-    let ok = unsafe { GlobalMemoryStatusEx(&mut ms) }.is_ok();
+    let ok = unsafe { GlobalMemoryStatusEx(&raw mut ms) }.is_ok();
     if !ok {
         return None;
     }
@@ -151,9 +151,8 @@ pub(crate) fn query_gpu_memory_capacity_bytes() -> Option<(u64, u64)> {
     // If budgets aren't available, fall back to adapter-reported capacities.
     for adapter_index in 0u32.. {
         // SAFETY: EnumAdapters1 retrieves an adapter interface using a valid factory.
-        let adapter = match unsafe { factory.EnumAdapters1(adapter_index) } {
-            Ok(a) => a,
-            Err(_) => break,
+        let Ok(adapter) = (unsafe { factory.EnumAdapters1(adapter_index) }) else {
+            break;
         };
 
         // SAFETY: GetDesc1 retrieves adapter description from a valid adapter interface.
@@ -171,7 +170,11 @@ pub(crate) fn query_gpu_memory_capacity_bytes() -> Option<(u64, u64)> {
             let mut info_local = DXGI_QUERY_VIDEO_MEMORY_INFO::default();
             // SAFETY: QueryVideoMemoryInfo writes to the provided structure using a valid adapter interface.
             if unsafe {
-                adapter3.QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &mut info_local)
+                adapter3.QueryVideoMemoryInfo(
+                    0,
+                    DXGI_MEMORY_SEGMENT_GROUP_LOCAL,
+                    &raw mut info_local,
+                )
             }
             .is_ok()
             {
@@ -186,7 +189,7 @@ pub(crate) fn query_gpu_memory_capacity_bytes() -> Option<(u64, u64)> {
                 adapter3.QueryVideoMemoryInfo(
                     0,
                     DXGI_MEMORY_SEGMENT_GROUP_NON_LOCAL,
-                    &mut info_nonlocal,
+                    &raw mut info_nonlocal,
                 )
             }
             .is_ok()
@@ -282,6 +285,21 @@ pub(crate) fn truncate_path_middle(path: &str, max_width: usize) -> String {
     )
 }
 
+/// Run one headless egui pass for tests.
+///
+/// egui 0.37 debug-asserts that texture deltas are applied before a `FullOutput` is dropped;
+/// there is no renderer in tests, so discard them explicitly.
+#[cfg(test)]
+pub(crate) fn run_headless(
+    ctx: &eframe::egui::Context,
+    input: eframe::egui::RawInput,
+    run_ui: impl FnMut(&mut eframe::egui::Ui),
+) -> eframe::egui::FullOutput {
+    let mut output = ctx.run_ui(input, run_ui);
+    output.textures_delta.clear();
+    output
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -327,7 +345,7 @@ mod tests {
         assert_eq!(format_number_u32(1234), "1,234");
         assert_eq!(
             format_number_u32(u32::MAX),
-            format_number_u64(u32::MAX as u64)
+            format_number_u64(u64::from(u32::MAX))
         );
     }
 
@@ -526,7 +544,11 @@ mod tests {
         assert!(result.len() <= 20);
         assert!(result.contains("..."));
         assert!(result.starts_with("c:\\wi"));
-        assert!(result.ends_with(".exe"));
+        assert!(
+            std::path::Path::new(&result)
+                .extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("exe"))
+        );
     }
 
     #[test]
@@ -660,19 +682,4 @@ mod tests {
         assert_eq!(s, u64::MAX);
         assert_eq!(t, u64::MAX);
     }
-}
-
-/// Run one headless egui pass for tests.
-///
-/// egui 0.37 debug-asserts that texture deltas are applied before a `FullOutput` is dropped;
-/// there is no renderer in tests, so discard them explicitly.
-#[cfg(test)]
-pub(crate) fn run_headless(
-    ctx: &eframe::egui::Context,
-    input: eframe::egui::RawInput,
-    run_ui: impl FnMut(&mut eframe::egui::Ui),
-) -> eframe::egui::FullOutput {
-    let mut output = ctx.run_ui(input, run_ui);
-    output.textures_delta.clear();
-    output
 }

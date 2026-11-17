@@ -207,13 +207,13 @@ fn load_credential(name: &str) -> CredResult<String> {
             Ok(password) => Ok(password),
             Err(keyring::Error::NoEntry) => Err("No entry found".to_string()),
             Err(e) => {
-                warn!("Failed to load credential '{}': {}", name, e);
-                Err(format!("Keyring error: {}", e))
+                warn!("Failed to load credential '{name}': {e}");
+                Err(format!("Keyring error: {e}"))
             }
         },
         Err(e) => {
-            warn!("Failed to access keyring for '{}': {}", name, e);
-            Err(format!("Keyring access error: {}", e))
+            warn!("Failed to access keyring for '{name}': {e}");
+            Err(format!("Keyring access error: {e}"))
         }
     }
 }
@@ -222,18 +222,18 @@ fn load_credential(name: &str) -> CredResult<String> {
 pub fn save_credential(name: &str, value: &str) -> CredResult<()> {
     match keyring::Entry::new(KEYRING_SERVICE, name) {
         Ok(entry) => match entry.set_password(value) {
-            Ok(_) => {
-                info!("Saved credential '{}' to Windows Credential Manager", name);
+            Ok(()) => {
+                info!("Saved credential '{name}' to Windows Credential Manager");
                 Ok(())
             }
             Err(e) => {
-                error!("Failed to save credential '{}': {}", name, e);
-                Err(format!("Failed to save: {}", e))
+                error!("Failed to save credential '{name}': {e}");
+                Err(format!("Failed to save: {e}"))
             }
         },
         Err(e) => {
-            error!("Failed to create keyring entry for '{}': {}", name, e);
-            Err(format!("Keyring error: {}", e))
+            error!("Failed to create keyring entry for '{name}': {e}");
+            Err(format!("Keyring error: {e}"))
         }
     }
 }
@@ -243,11 +243,8 @@ pub fn delete_credential(name: &str) -> CredResult<()> {
     match keyring::Entry::new(KEYRING_SERVICE, name) {
         Ok(entry) => {
             match entry.delete_credential() {
-                Ok(_) => {
-                    info!(
-                        "Deleted credential '{}' from Windows Credential Manager",
-                        name
-                    );
+                Ok(()) => {
+                    info!("Deleted credential '{name}' from Windows Credential Manager");
                     Ok(())
                 }
                 Err(keyring::Error::NoEntry) => {
@@ -255,14 +252,14 @@ pub fn delete_credential(name: &str) -> CredResult<()> {
                     Ok(())
                 }
                 Err(e) => {
-                    error!("Failed to delete credential '{}': {}", name, e);
-                    Err(format!("Failed to delete: {}", e))
+                    error!("Failed to delete credential '{name}': {e}");
+                    Err(format!("Failed to delete: {e}"))
                 }
             }
         }
         Err(e) => {
-            error!("Failed to access keyring for '{}': {}", name, e);
-            Err(format!("Keyring error: {}", e))
+            error!("Failed to access keyring for '{name}': {e}");
+            Err(format!("Keyring error: {e}"))
         }
     }
 }

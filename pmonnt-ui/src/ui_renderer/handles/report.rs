@@ -6,6 +6,7 @@ use pmonnt_core::thread::{ThreadCache, ThreadInfo};
 use pmonnt_core::token::TokenCache;
 use pmonnt_core::win::handles::get_type_name;
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::sync::Arc;
 
 pub(super) fn build_handles_report(
@@ -28,18 +29,19 @@ pub(super) fn build_handles_report(
         .processes
         .iter()
         .find(|p| p.pid == pid)
-        .map(|p| p.name.as_str())
-        .unwrap_or_else(|| {
-            pid_to_image_path
-                .get(&pid)
-                .and_then(|path| std::path::Path::new(path).file_name())
-                .and_then(|name| name.to_str())
-                .unwrap_or("—")
-        });
+        .map_or_else(
+            || {
+                pid_to_image_path
+                    .get(&pid)
+                    .and_then(|path| std::path::Path::new(path).file_name())
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("—")
+            },
+            |p| p.name.as_str(),
+        );
 
     let mut report = format!(
-        "PMonNT Handles Report\nTime: {} (Unix timestamp)\nProcess: {} (PID {})\n",
-        datetime, process_name, pid
+        "PMonNT Handles Report\nTime: {datetime} (Unix timestamp)\nProcess: {process_name} (PID {pid})\n"
     );
 
     // Handle count and delta
@@ -47,11 +49,11 @@ pub(super) fn build_handles_report(
         let delta = handle_cache.get_delta(pid);
         let delta_str = if let Some(d) = delta {
             let sign = if d > 0 { "+" } else { "" };
-            format!(" ({}{})", sign, d)
+            format!(" ({sign}{d})")
         } else {
             String::new()
         };
-        report.push_str(&format!("Handles: {}{}\n", summary.total, delta_str));
+        let _ = writeln!(report, "Handles: {}{}", summary.total, delta_str);
     } else {
         report.push_str("Handles: unavailable (access restricted)\n");
     }
@@ -62,10 +64,10 @@ pub(super) fn build_handles_report(
         report.push_str("Leak: YES");
         if let Some((samples, delta, flats_used)) = handle_cache.get_leak_explanation(pid) {
             let (_, _, flat_tol) = handle_cache.get_detector_config(pid);
-            report.push_str(&format!(
-                " — Triggered: {} samples, +{} handles, flats {}/{}",
-                samples, delta, flats_used, flat_tol
-            ));
+            let _ = write!(
+                report,
+                " — Triggered: {samples} samples, +{delta} handles, flats {flats_used}/{flat_tol}"
+            );
         }
         report.push('\n');
     } else {
@@ -75,10 +77,10 @@ pub(super) fn build_handles_report(
     // Top growing types
     let gaps = 5u64.saturating_sub(1);
     let estimated_seconds = gaps * scan_interval_secs;
-    report.push_str(&format!(
-        "Top growing types (last 5 samples ~{}s):\n",
-        estimated_seconds
-    ));
+    let _ = writeln!(
+        report,
+        "Top growing types (last 5 samples ~{estimated_seconds}s):"
+    );
 
     if let Some(growing_types) = handle_cache.get_top_growing_types(pid) {
         if growing_types.is_empty() {
@@ -86,10 +88,7 @@ pub(super) fn build_handles_report(
         } else {
             for (type_idx, delta, current_count) in growing_types {
                 let type_name = get_type_name(type_idx);
-                report.push_str(&format!(
-                    "  {} +{} (now {})\n",
-                    type_name, delta, current_count
-                ));
+                let _ = writeln!(report, "  {type_name} +{delta} (now {current_count})");
             }
         }
     } else {
@@ -122,45 +121,45 @@ pub(super) fn build_full_report(
 
     // Get process info
     let process = current_snapshot.processes.iter().find(|p| p.pid == pid);
-    let process_name = process.map(|p| p.name.as_str()).unwrap_or("—");
+    let process_name = process.map_or("—", |p| p.name.as_str());
     let ppid = process
         .and_then(|p| p.ppid)
-        .map(|p| p.to_string())
-        .unwrap_or("?".to_string());
+        .map_or_else(|| "?".to_string(), |p| p.to_string());
     let image_path = pid_to_image_path
         .get(&pid)
-        .map(|s| s.as_str())
-        .unwrap_or("unavailable");
+        .map_or("unavailable", std::string::String::as_str);
 
     let mut report = format!(
-        "PMonNT Process Report\nTime: {} (Unix timestamp)\nProcess: {} (PID {}, PPID {})\nImage: {}\n\n",
-        datetime, process_name, pid, ppid, image_path
+        "PMonNT Process Report\nTime: {datetime} (Unix timestamp)\nProcess: {process_name} (PID {pid}, PPID {ppid})\nImage: {image_path}\n\n"
     );
 
     // TOKEN section
     report.push_str("TOKEN\n");
     let token_info = token_cache.get_token_info(pid);
     if token_info.is_success() {
-        report.push_str(&format!(
-            "User: {}\n",
+        let _ = writeln!(
+            report,
+            "User: {}",
             token_info.user.as_deref().unwrap_or("—")
-        ));
-        report.push_str(&format!(
-            "Integrity: {}\n",
+        );
+        let _ = writeln!(
+            report,
+            "Integrity: {}",
             token_info.integrity.as_deref().unwrap_or("—")
-        ));
-        report.push_str(&format!(
-            "Elevation: {}\n",
+        );
+        let _ = writeln!(
+            report,
+            "Elevation: {}",
             if token_info.elevated.unwrap_or(false) {
                 "elevated"
             } else {
                 "unelevated"
             }
-        ));
+        );
 
         let enabled_privs = token_info.privileges.iter().filter(|p| p.enabled).count();
         let disabled_privs = token_info.privileges.len() - enabled_privs;
-        report.push_str(&format!("Privileges (enabled): {}  ", enabled_privs));
+        let _ = write!(report, "Privileges (enabled): {enabled_privs}  ");
 
         // List top 5 enabled privileges
         let enabled_list: Vec<_> = token_info
@@ -171,12 +170,12 @@ pub(super) fn build_full_report(
             .map(|p| p.name.as_str())
             .collect();
         if !enabled_list.is_empty() {
-            report.push_str(&format!("({})", enabled_list.join(", ")));
+            let _ = write!(report, "({})", enabled_list.join(", "));
         }
         report.push('\n');
 
         if disabled_privs > 0 {
-            report.push_str(&format!("Privileges (disabled): {}\n", disabled_privs));
+            let _ = writeln!(report, "Privileges (disabled): {disabled_privs}");
         }
     } else {
         report.push_str("Token: unavailable (access restricted)\n");
@@ -203,7 +202,7 @@ pub(super) fn build_full_report(
             }
 
             // Sort by delta descending and take top 5
-            thread_deltas.sort_by(|a, b| b.1.cmp(&a.1));
+            thread_deltas.sort_by_key(|d| std::cmp::Reverse(d.1));
             thread_deltas.truncate(5);
 
             if thread_deltas.is_empty() {
@@ -213,19 +212,21 @@ pub(super) fn build_full_report(
                 for (tid, delta_ms, start_addr) in thread_deltas {
                     // Try to attribute to module
                     let module_info = if let Some(modules_result) = module_cache.get(pid) {
-                        map_address_to_module(start_addr, &modules_result.modules)
-                            .map(|(mod_name, offset)| format!("{}+{:X}", mod_name, offset))
-                            .unwrap_or_else(|| "?".to_string())
+                        map_address_to_module(start_addr, &modules_result.modules).map_or_else(
+                            || "?".to_string(),
+                            |(mod_name, offset)| format!("{mod_name}+{offset:X}"),
+                        )
                     } else {
                         "?".to_string()
                     };
-                    report.push_str(&format!(
-                        "  TID {}: +{}ms  start={:X}  module={}\n",
+                    let _ = writeln!(
+                        report,
+                        "  TID {}: +{}ms  start={:X}  module={}",
                         tid,
                         delta_ms,
                         start_addr.unwrap_or(0),
                         module_info
-                    ));
+                    );
                 }
             }
         } else {
@@ -252,10 +253,10 @@ pub(super) fn build_full_report(
             .count();
         let unknown = total - signed - unsigned;
 
-        report.push_str(&format!(
-            "Total: {}  Signed: {}  Unsigned: {}  Unknown: {}\n",
-            total, signed, unsigned, unknown
-        ));
+        let _ = writeln!(
+            report,
+            "Total: {total}  Signed: {signed}  Unsigned: {unsigned}  Unknown: {unknown}"
+        );
 
         if unsigned > 0 {
             report.push_str("Unsigned (top 10):\n");
@@ -267,11 +268,12 @@ pub(super) fn build_full_report(
                 .collect();
 
             for module in unsigned_modules {
-                report.push_str(&format!(
-                    "  {}  {}\n",
+                let _ = writeln!(
+                    report,
+                    "  {}  {}",
                     module.name,
                     module.path.as_deref().unwrap_or("no path")
-                ));
+                );
             }
         }
     } else {
@@ -285,11 +287,11 @@ pub(super) fn build_full_report(
         let delta = handle_cache.get_delta(pid);
         let delta_str = if let Some(d) = delta {
             let sign = if d > 0 { "+" } else { "" };
-            format!(" ({}{})", sign, d)
+            format!(" ({sign}{d})")
         } else {
             String::new()
         };
-        report.push_str(&format!("Handles: {}{}\n", summary.total, delta_str));
+        let _ = writeln!(report, "Handles: {}{}", summary.total, delta_str);
     } else {
         report.push_str("Handles: unavailable (access restricted)\n");
     }
@@ -300,10 +302,10 @@ pub(super) fn build_full_report(
         report.push_str("Leak: YES");
         if let Some((samples, delta, flats_used)) = handle_cache.get_leak_explanation(pid) {
             let (_, _, flat_tol) = handle_cache.get_detector_config(pid);
-            report.push_str(&format!(
-                " — Triggered: {} samples, +{} handles, flats {}/{}",
-                samples, delta, flats_used, flat_tol
-            ));
+            let _ = write!(
+                report,
+                " — Triggered: {samples} samples, +{delta} handles, flats {flats_used}/{flat_tol}"
+            );
         }
         report.push('\n');
     } else {
@@ -313,10 +315,10 @@ pub(super) fn build_full_report(
     // Top growing types
     let gaps = 5u64.saturating_sub(1);
     let estimated_seconds = gaps * scan_interval_secs;
-    report.push_str(&format!(
-        "Top growing types (last 5 samples ~{}s):\n",
-        estimated_seconds
-    ));
+    let _ = writeln!(
+        report,
+        "Top growing types (last 5 samples ~{estimated_seconds}s):"
+    );
 
     if let Some(growing_types) = handle_cache.get_top_growing_types(pid) {
         if growing_types.is_empty() {
@@ -324,10 +326,7 @@ pub(super) fn build_full_report(
         } else {
             for (type_idx, delta, current_count) in growing_types {
                 let type_name = get_type_name(type_idx);
-                report.push_str(&format!(
-                    "  {} +{} (now {})\n",
-                    type_name, delta, current_count
-                ));
+                let _ = writeln!(report, "  {type_name} +{delta} (now {current_count})");
             }
         }
     } else {
@@ -342,11 +341,12 @@ pub(super) fn build_full_report(
         let reputation_result = reputation_service.get_result(hash);
         match reputation_result {
             Some(result) => {
-                report.push_str(&format!("VT: {}\n", result.state));
-                report.push_str(&format!(
-                    "Hash: {}\n",
+                let _ = writeln!(report, "VT: {}", result.state);
+                let _ = writeln!(
+                    report,
+                    "Hash: {}",
                     result.sha256.as_deref().unwrap_or("computing...")
-                ));
+                );
             }
             None => {
                 report.push_str("Reputation: not requested or pending\n");

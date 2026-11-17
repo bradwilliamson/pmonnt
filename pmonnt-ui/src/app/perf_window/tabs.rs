@@ -148,10 +148,10 @@ pub(super) fn render_tab(
                         };
 
                         let resp = ui.label(egui::RichText::new(label).color(color));
-                        if let Some(err) = info.error.as_deref() {
-                            if !err.trim().is_empty() {
-                                resp.on_hover_text(err);
-                            }
+                        if let Some(err) = info.error.as_deref()
+                            && !err.trim().is_empty()
+                        {
+                            resp.on_hover_text(err);
                         }
                     } else if signature_in_flight {
                         ui.label(egui::RichText::new("Checking...").color(egui::Color32::GRAY));
@@ -202,7 +202,7 @@ pub(super) fn render_tab(
 
                     ui.label("Session ID:");
                     if let Some(session) = session_id {
-                        ui.label(format!("{}", session));
+                        ui.label(format!("{session}"));
                     } else {
                         ui.label(egui::RichText::new("—").color(egui::Color32::GRAY));
                     }
@@ -281,8 +281,7 @@ pub(super) fn render_tab(
                     );
                 });
             } else {
-                if !thread_fetch_in_flight.contains(&pid) {
-                    thread_fetch_in_flight.insert(pid);
+                if thread_fetch_in_flight.insert(pid) {
                     thread_fetch_started.insert(pid, Instant::now());
                     let _ = thread_fetch_tx.send(pid);
                 }
@@ -293,7 +292,7 @@ pub(super) fn render_tab(
 
                     let elapsed = thread_fetch_started
                         .get(&pid)
-                        .map(|start| start.elapsed())
+                        .map(std::time::Instant::elapsed)
                         .unwrap_or_default();
 
                     if elapsed.as_millis() > 800 {
@@ -514,10 +513,10 @@ fn render_security_tab(
     ui.separator();
 
     // Transient hint/errors for the Permissions dialog.
-    if let Some((msg, at)) = process_permissions_hint_by_pid.get(&pid) {
-        if at.elapsed() <= Duration::from_secs(10) {
-            ui.label(egui::RichText::new(msg).color(ui.visuals().weak_text_color()));
-        }
+    if let Some((msg, at)) = process_permissions_hint_by_pid.get(&pid)
+        && at.elapsed() <= Duration::from_secs(10)
+    {
+        ui.label(egui::RichText::new(msg).color(ui.visuals().weak_text_color()));
     }
 
     // Fetch asynchronously and cache per PID.
@@ -562,7 +561,7 @@ fn render_security_tab(
     let cached = cached.unwrap();
     match &cached.result {
         Err(e) => {
-            ui.colored_label(egui::Color32::LIGHT_RED, e.to_string());
+            ui.colored_label(egui::Color32::LIGHT_RED, e.clone());
             ui.label(
                 egui::RichText::new(
                     "Tip: normal processes should work without admin; protected/system processes may deny token query.",
@@ -907,12 +906,12 @@ pub(super) fn render_performance_tab(ui: &mut egui::Ui, stats: &PerfStats, _pid:
                         stat_row(
                             ui,
                             "Page Faults",
-                            format_count_simple(stats.page_faults.map(|v| v as u64)),
+                            format_count_simple(stats.page_faults.map(u64::from)),
                         );
                         stat_row(
                             ui,
                             "Page Fault Delta",
-                            format_count_simple(stats.page_fault_delta.map(|v| v as u64)),
+                            format_count_simple(stats.page_fault_delta.map(u64::from)),
                         );
                     });
 
@@ -996,22 +995,22 @@ pub(super) fn render_performance_tab(ui: &mut egui::Ui, stats: &PerfStats, _pid:
                         stat_row(
                             ui,
                             "Handles",
-                            format_count_simple(stats.handles.map(|v| v as u64)),
+                            format_count_simple(stats.handles.map(u64::from)),
                         );
                         stat_row(
                             ui,
                             "Peak Handles",
-                            format_count_simple(stats.peak_handles.map(|v| v as u64)),
+                            format_count_simple(stats.peak_handles.map(u64::from)),
                         );
                         stat_row(
                             ui,
                             "GDI Handles",
-                            format_count_simple(stats.gdi_handles.map(|v| v as u64)),
+                            format_count_simple(stats.gdi_handles.map(u64::from)),
                         );
                         stat_row(
                             ui,
                             "USER Handles",
-                            format_count_simple(stats.user_handles.map(|v| v as u64)),
+                            format_count_simple(stats.user_handles.map(u64::from)),
                         );
                     });
                 });
@@ -1047,7 +1046,7 @@ fn format_filetime(time_opt: Option<u64>) -> String {
             let minutes = (seconds % 3600) / 60;
             let secs = seconds % 60;
             let millis = (time_100ns / 10_000) % 1000;
-            format!("{:02}:{:02}:{:02}.{:03}", hours, minutes, secs, millis)
+            format!("{hours:02}:{minutes:02}:{secs:02}.{millis:03}")
         }
         None => "—".to_string(),
     }
@@ -1079,7 +1078,7 @@ fn format_bytes_simple(val: Option<u64>) -> String {
             } else if v >= 1_024 {
                 format!("{:.1} KiB", v as f64 / 1024.0)
             } else {
-                format!("{} B", v)
+                format!("{v} B")
             }
         }
         None => "—".to_string(),
@@ -1300,7 +1299,7 @@ pub(super) fn render_performance_graph_tab(
         return;
     }
 
-    let sample_interval = super::PERF_SAMPLE_INTERVAL_SECS as f64;
+    let sample_interval = f64::from(super::PERF_SAMPLE_INTERVAL_SECS);
 
     egui::ScrollArea::vertical()
         .auto_shrink([false; 2])
@@ -1320,16 +1319,16 @@ pub(super) fn render_performance_graph_tab(
                     "CPU",
                     cpu_values.last().copied().unwrap_or(0.0),
                     100.0,
-                    |v| format!("{:.1}%", v),
+                    |v| format!("{v:.1}%"),
                 );
 
                 ui.add_space(10.0);
 
                 // Right: Graph
-                let cpu_points: PlotPoints = cpu_values
+                let cpu_points: PlotPoints<'_> = cpu_values
                     .iter()
                     .enumerate()
-                    .map(|(i, &v)| [i as f64 * sample_interval, v as f64])
+                    .map(|(i, &v)| [i as f64 * sample_interval, f64::from(v)])
                     .collect();
 
                 Plot::new("cpu_plot")
@@ -1368,7 +1367,7 @@ pub(super) fn render_performance_graph_tab(
                 ui.add_space(10.0);
 
                 // Right: Graph
-                let priv_points: PlotPoints = priv_values
+                let priv_points: PlotPoints<'_> = priv_values
                     .iter()
                     .enumerate()
                     .map(|(i, &v)| [i as f64 * sample_interval, v as f64])
@@ -1415,16 +1414,16 @@ pub(super) fn render_performance_graph_tab(
                 ui.add_space(10.0);
 
                 // Right: Graph with read and write lines
-                let read_points: PlotPoints = io_read_values
+                let read_points: PlotPoints<'_> = io_read_values
                     .iter()
                     .enumerate()
-                    .map(|(i, &v)| [i as f64 * sample_interval, v as f64])
+                    .map(|(i, &v)| [i as f64 * sample_interval, f64::from(v)])
                     .collect();
 
-                let write_points: PlotPoints = io_write_values
+                let write_points: PlotPoints<'_> = io_write_values
                     .iter()
                     .enumerate()
-                    .map(|(i, &v)| [i as f64 * sample_interval, v as f64])
+                    .map(|(i, &v)| [i as f64 * sample_interval, f64::from(v)])
                     .collect();
 
                 Plot::new("io_plot")
@@ -2340,18 +2339,20 @@ fn format_filetime_delta(delta: Option<u64>) -> String {
 }
 
 fn format_bytes(val: Option<u64>) -> String {
-    val.map(|v| {
-        if v >= 1_073_741_824 {
-            format!("{:.1} GiB", v as f64 / 1_073_741_824.0)
-        } else if v >= 1_048_576 {
-            format!("{:.1} MiB", v as f64 / 1_048_576.0)
-        } else if v >= 1_024 {
-            format!("{:.1} KiB", v as f64 / 1024.0)
-        } else {
-            format!("{} B", v)
-        }
-    })
-    .unwrap_or("Not available".to_string())
+    val.map_or_else(
+        || "Not available".to_string(),
+        |v| {
+            if v >= 1_073_741_824 {
+                format!("{:.1} GiB", v as f64 / 1_073_741_824.0)
+            } else if v >= 1_048_576 {
+                format!("{:.1} MiB", v as f64 / 1_048_576.0)
+            } else if v >= 1_024 {
+                format!("{:.1} KiB", v as f64 / 1024.0)
+            } else {
+                format!("{v} B")
+            }
+        },
+    )
 }
 
 #[cfg(feature = "dev-tools")]
@@ -2390,9 +2391,8 @@ fn render_network_tab_with_churn(
             let child_count = perf_window
                 .net_churn_monitor
                 .as_ref()
-                .map(|m| m.child_pid_count)
-                .unwrap_or(0);
-            ui.label(egui::RichText::new(format!("(+ {} children)", child_count)).weak());
+                .map_or(0, |m| m.child_pid_count);
+            ui.label(egui::RichText::new(format!("(+ {child_count} children)")).weak());
         }
     });
 
@@ -2424,7 +2424,7 @@ fn render_network_tab_with_churn(
 
     // Show error if any
     if let Some(err) = &monitor.error {
-        ui.colored_label(egui::Color32::LIGHT_RED, format!("Error: {}", err));
+        ui.colored_label(egui::Color32::LIGHT_RED, format!("Error: {err}"));
         return;
     }
 
@@ -2656,7 +2656,7 @@ fn render_network_tab_with_churn(
                                     if let (Some(ip), Some(port)) =
                                         (c.remote_address, c.remote_port)
                                     {
-                                        ui.label(format!("{}:{}", ip, port));
+                                        ui.label(format!("{ip}:{port}"));
                                     } else {
                                         ui.label(
                                             egui::RichText::new("-").color(egui::Color32::GRAY),
@@ -2665,7 +2665,7 @@ fn render_network_tab_with_churn(
                                 });
                                 row.col(|ui| {
                                     if let Some(state) = c.state {
-                                        let text = format!("{:?}", state);
+                                        let text = format!("{state:?}");
                                         let color = match state {
                                             pmonnt_core::network::TcpState::TimeWait => {
                                                 egui::Color32::from_rgb(255, 140, 0)
@@ -2693,7 +2693,7 @@ fn render_network_tab_with_churn(
         Err(e) => {
             ui.colored_label(
                 egui::Color32::LIGHT_RED,
-                format!("Failed to enumerate connections: {}", e),
+                format!("Failed to enumerate connections: {e}"),
             );
         }
     }
@@ -2706,10 +2706,10 @@ fn collect_descendants(root_pid: u32, snapshot: &ProcessSnapshot) -> Vec<u32> {
     // Build parent -> children map
     let mut children_map: HashMap<u32, Vec<u32>> = HashMap::new();
     for proc in &snapshot.processes {
-        if let Some(ppid) = proc.ppid {
-            if ppid != 0 {
-                children_map.entry(ppid).or_default().push(proc.pid);
-            }
+        if let Some(ppid) = proc.ppid
+            && ppid != 0
+        {
+            children_map.entry(ppid).or_default().push(proc.pid);
         }
     }
 

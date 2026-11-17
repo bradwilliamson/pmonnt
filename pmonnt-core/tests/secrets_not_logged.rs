@@ -1,3 +1,4 @@
+use std::fmt::Write as _;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::sync::{Mutex, OnceLock};
@@ -27,7 +28,7 @@ impl Log for BufLogger {
     fn log(&self, record: &Record<'_>) {
         let buf = LOG_BUF.get_or_init(|| Mutex::new(String::new()));
         let mut guard = buf.lock().unwrap();
-        guard.push_str(&format!("{}\n", record.args()));
+        let _ = writeln!(guard, "{}", record.args());
     }
 
     fn flush(&self) {}
@@ -107,13 +108,13 @@ fn vt_lookup_does_not_log_api_key_value() {
     let _guard = ENV_LOCK
         .get_or_init(|| Mutex::new(()))
         .lock()
-        .unwrap_or_else(|e| e.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
 
     // VT provider forms: {base_url}/files/{sha}
-    let prev_vt = set_env_var("VT_BASE_URL", format!("http://{}/api/v3", addr));
+    let prev_vt = set_env_var("VT_BASE_URL", format!("http://{addr}/api/v3"));
 
     let reply_body = include_str!("data/vt_hit_clean.json");
     let reply = format!(
@@ -157,13 +158,13 @@ fn mb_get_info_does_not_log_api_key_value() {
     let _guard = ENV_LOCK
         .get_or_init(|| Mutex::new(()))
         .lock()
-        .unwrap_or_else(|e| e.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
 
     // MalwareBazaar provider posts directly to the base endpoint.
-    let prev_mb = set_env_var("MB_BASE_URL", format!("http://{}/api/v1/", addr));
+    let prev_mb = set_env_var("MB_BASE_URL", format!("http://{addr}/api/v1/"));
 
     // Force a warning log path (401/403). Ensure body does not contain the secret.
     let reply_body = "unauthorized";
@@ -209,12 +210,12 @@ fn tf_search_hash_does_not_log_api_key_value() {
     let _guard = ENV_LOCK
         .get_or_init(|| Mutex::new(()))
         .lock()
-        .unwrap_or_else(|e| e.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
 
-    let prev_tf = set_env_var("TF_BASE_URL", format!("http://{}/api/v1/", addr));
+    let prev_tf = set_env_var("TF_BASE_URL", format!("http://{addr}/api/v1/"));
 
     // Force the non-200 log path while still returning valid JSON.
     // Ensure body does not contain the secret.

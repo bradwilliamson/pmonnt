@@ -67,10 +67,10 @@ impl GpuSampler {
     pub fn rebuild_counters(&mut self) {
         #[cfg(windows)]
         {
-            if let GpuSampler::Windows(inner) = self {
-                if let Err(err) = inner.rebuild_counters() {
-                    log::warn!("GPU PDH rebuild failed: {err}");
-                }
+            if let GpuSampler::Windows(inner) = self
+                && let Err(err) = inner.rebuild_counters()
+            {
+                log::warn!("GPU PDH rebuild failed: {err}");
             }
         }
     }

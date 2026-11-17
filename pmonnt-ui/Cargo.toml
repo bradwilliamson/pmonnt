@@ -36,3 +36,6 @@ path = "src/main.rs"
 
 [features]
 dev-tools = []
+
+[lints]
+workspace = true

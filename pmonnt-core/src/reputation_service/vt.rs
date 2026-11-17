@@ -19,7 +19,10 @@ impl ReputationService {
 
         // If cached, return sha
         {
-            let cache = self.vt_cache.read().unwrap_or_else(|p| p.into_inner());
+            let cache = self
+                .vt_cache
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if cache.contains_key(&sha) {
                 return Ok(sha);
             }
@@ -27,7 +30,10 @@ impl ReputationService {
 
         // Prevent duplicate in-flight VT queries for same sha
         {
-            let mut in_f = self.vt_in_flight.lock().unwrap_or_else(|p| p.into_inner());
+            let mut in_f = self
+                .vt_in_flight
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if in_f.contains(&sha) {
                 return Ok(sha);
             }
@@ -41,7 +47,10 @@ impl ReputationService {
             })
             .is_err()
         {
-            let mut in_f = self.vt_in_flight.lock().unwrap_or_else(|p| p.into_inner());
+            let mut in_f = self
+                .vt_in_flight
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             in_f.remove(&sha);
             return Err(ReputationRequestError::WorkerUnavailable);
         }
@@ -58,7 +67,10 @@ impl ReputationService {
         &self,
         sha: &str,
     ) -> Option<(Option<crate::reputation::VtStats>, crate::vt::VtQueryMeta)> {
-        let guard = self.vt_cache.read().unwrap_or_else(|p| p.into_inner());
+        let guard = self
+            .vt_cache
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         guard.get(sha).cloned()
     }
 }

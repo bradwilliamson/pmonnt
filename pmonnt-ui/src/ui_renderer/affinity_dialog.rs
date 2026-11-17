@@ -45,7 +45,7 @@ pub(crate) fn render_affinity_dialog(app: &mut PMonNTApp, ctx: &egui::Context) {
                 let all_selected = state.selected_mask == state.affinity_info.system_mask;
                 let mut all_checked = all_selected;
                 if ui
-                    .checkbox(&mut all_checked, format!("All CPUs ({})", cpu_count))
+                    .checkbox(&mut all_checked, format!("All CPUs ({cpu_count})"))
                     .changed()
                     && all_checked
                 {
@@ -63,7 +63,7 @@ pub(crate) fn render_affinity_dialog(app: &mut PMonNTApp, ctx: &egui::Context) {
                     .show(ui, |ui| {
                         for (i, &cpu) in available_cpus.iter().enumerate() {
                             let mut checked = (state.selected_mask & (1u64 << cpu)) != 0;
-                            let label = format!("CPU {}", cpu);
+                            let label = format!("CPU {cpu}");
 
                             if ui.checkbox(&mut checked, label).changed() {
                                 if checked {
@@ -101,7 +101,7 @@ pub(crate) fn render_affinity_dialog(app: &mut PMonNTApp, ctx: &egui::Context) {
                         ui.label("Affinity changed successfully.");
                     }
                     Err(e) => {
-                        ui.label(format!("Error: {}", e));
+                        ui.label(format!("Error: {e}"));
                     }
                 };
                 ui.add_space(6.0);

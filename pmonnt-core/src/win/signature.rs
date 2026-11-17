@@ -1,3 +1,4 @@
+use crate::aligned_buf::AlignedBuf;
 use std::ffi::c_void;
 use std::os::windows::ffi::OsStrExt;
 use std::path::Path;
@@ -165,7 +166,7 @@ fn winverifytrust_path(path: &Path) -> Result<i32> {
             dwUIChoice: WTD_UI_NONE,
             fdwRevocationChecks: WTD_REVOKE_NONE,
             dwUnionChoice: WTD_CHOICE_FILE,
-            pFile: &mut file_info,
+            pFile: &raw mut file_info,
             dwStateAction: WTD_STATEACTION_VERIFY,
             hWVTStateData: HANDLE::default(),
             pwszURLReference: std::ptr::null(),
@@ -176,10 +177,10 @@ fn winverifytrust_path(path: &Path) -> Result<i32> {
         };
 
         let action_guid = WINTRUST_ACTION_GENERIC_VERIFY_V2;
-        let result = WinVerifyTrust(HANDLE::default(), &action_guid, &mut wvt_data);
+        let result = WinVerifyTrust(HANDLE::default(), &raw const action_guid, &raw mut wvt_data);
 
         wvt_data.dwStateAction = WTD_STATEACTION_CLOSE;
-        let _ = WinVerifyTrust(HANDLE::default(), &action_guid, &mut wvt_data);
+        let _ = WinVerifyTrust(HANDLE::default(), &raw const action_guid, &raw mut wvt_data);
 
         Ok(result)
     }
@@ -204,15 +205,15 @@ fn try_extract_signer_names(path: &Path) -> Option<(String, String)> {
     let ok = unsafe {
         CryptQueryObject(
             CERT_QUERY_OBJECT_FILE,
-            PCWSTR(wide_path.as_ptr()).0 as *const c_void,
+            PCWSTR(wide_path.as_ptr()).0.cast::<c_void>(),
             CERT_QUERY_CONTENT_FLAG_PKCS7_SIGNED_EMBED,
             CERT_QUERY_FORMAT_FLAG_BINARY,
             0,
             None,
             None,
             None,
-            Some(&mut store as *mut _),
-            Some(&mut msg as *mut _),
+            Some(&raw mut store),
+            Some(&raw mut msg),
             None,
         )
     };
@@ -228,11 +229,11 @@ fn try_extract_signer_names(path: &Path) -> Option<(String, String)> {
     // - `signer_info_size` is a valid mutable reference for output
     let ok_size = unsafe {
         CryptMsgGetParam(
-            msg as *const c_void,
+            msg.cast_const(),
             CMSG_SIGNER_INFO_PARAM,
             0,
             None,
-            &mut signer_info_size,
+            &raw mut signer_info_size,
         )
     };
     if ok_size.is_err() || signer_info_size == 0 {
@@ -244,14 +245,14 @@ fn try_extract_signer_names(path: &Path) -> Option<(String, String)> {
             let _ = CryptMsgClose(if msg.is_null() {
                 None
             } else {
-                Some(msg as *const c_void)
+                Some(msg.cast_const())
             });
             let _ = CertCloseStore(Some(store), 0);
         }
         return None;
     }
 
-    let mut signer_info_buf = vec![0u8; signer_info_size as usize];
+    let mut signer_info_buf = AlignedBuf::new(signer_info_size as usize);
     // SAFETY: CryptMsgGetParam data retrieval with properly sized buffer:
     // - Buffer allocated with exact size returned by previous size query
     // - `msg` handle remains valid from CryptQueryObject
@@ -259,11 +260,11 @@ fn try_extract_signer_names(path: &Path) -> Option<(String, String)> {
     // - `signer_info_size` is updated with actual bytes written
     let ok_param = unsafe {
         CryptMsgGetParam(
-            msg as *const c_void,
+            msg.cast_const(),
             CMSG_SIGNER_INFO_PARAM,
             0,
-            Some(signer_info_buf.as_mut_ptr() as *mut c_void),
-            &mut signer_info_size,
+            Some(signer_info_buf.as_mut_ptr().cast::<c_void>()),
+            &raw mut signer_info_size,
         )
     };
     if ok_param.is_err() {
@@ -272,7 +273,7 @@ fn try_extract_signer_names(path: &Path) -> Option<(String, String)> {
             let _ = CryptMsgClose(if msg.is_null() {
                 None
             } else {
-                Some(msg as *const c_void)
+                Some(msg.cast_const())
             });
             let _ = CertCloseStore(Some(store), 0);
         }
@@ -284,7 +285,7 @@ fn try_extract_signer_names(path: &Path) -> Option<(String, String)> {
     // - Microsoft API guarantees proper structure layout and alignment
     // - Buffer size validated to be at least signer_info_size bytes
     // - Reference lifetime bound to buffer lifetime (within this function)
-    let signer_info = unsafe { &*(signer_info_buf.as_ptr() as *const CMSG_SIGNER_INFO) };
+    let signer_info = unsafe { &*signer_info_buf.ptr_at::<CMSG_SIGNER_INFO>(0) };
 
     let mut cert_info = windows::Win32::Security::Cryptography::CERT_INFO {
         Issuer: signer_info.Issuer,
@@ -304,7 +305,7 @@ fn try_extract_signer_names(path: &Path) -> Option<(String, String)> {
             X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
             0,
             CERT_FIND_SUBJECT_CERT,
-            Some(&mut cert_info as *mut _ as *const c_void),
+            Some(&raw mut cert_info as *const c_void),
             None,
         )
     };
@@ -312,7 +313,7 @@ fn try_extract_signer_names(path: &Path) -> Option<(String, String)> {
     let out = if cert.is_null() {
         None
     } else {
-        let cert_ptr = cert as *const windows::Win32::Security::Cryptography::CERT_CONTEXT;
+        let cert_ptr = cert.cast_const();
         let subject = cert_get_name_string(cert_ptr, 0);
         let issuer = cert_get_name_string(cert_ptr, CERT_NAME_ISSUER_FLAG);
         // SAFETY: Freeing certificate context obtained from CertFindCertificateInStore:
@@ -320,9 +321,7 @@ fn try_extract_signer_names(path: &Path) -> Option<(String, String)> {
         // - Certificate context was allocated by Windows and must be freed
         // - After this call, `cert` pointer must not be used
         unsafe {
-            let _ = CertFreeCertificateContext(Some(
-                cert as *const windows::Win32::Security::Cryptography::CERT_CONTEXT,
-            ));
+            let _ = CertFreeCertificateContext(Some(cert.cast_const()));
         }
         match (subject, issuer) {
             (Some(subject), Some(issuer)) => Some((subject, issuer)),
@@ -339,7 +338,7 @@ fn try_extract_signer_names(path: &Path) -> Option<(String, String)> {
         let _ = CryptMsgClose(if msg.is_null() {
             None
         } else {
-            Some(msg as *const c_void)
+            Some(msg.cast_const())
         });
         let _ = CertCloseStore(Some(store), 0);
     }
@@ -402,15 +401,15 @@ fn has_embedded_signature(path: &Path) -> bool {
     let ok = unsafe {
         CryptQueryObject(
             CERT_QUERY_OBJECT_FILE,
-            PCWSTR(wide_path.as_ptr()).0 as *const c_void,
+            PCWSTR(wide_path.as_ptr()).0.cast::<c_void>(),
             CERT_QUERY_CONTENT_FLAG_PKCS7_SIGNED_EMBED,
             CERT_QUERY_FORMAT_FLAG_BINARY,
             0,
             None,
             None,
             None,
-            Some(&mut store as *mut _),
-            Some(&mut msg as *mut _),
+            Some(&raw mut store),
+            Some(&raw mut msg),
             None,
         )
     };
@@ -424,7 +423,7 @@ fn has_embedded_signature(path: &Path) -> bool {
             let _ = CryptMsgClose(if msg.is_null() {
                 None
             } else {
-                Some(msg as *const c_void)
+                Some(msg.cast_const())
             });
             let _ = CertCloseStore(Some(store), 0);
         }

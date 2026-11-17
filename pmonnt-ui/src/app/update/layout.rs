@@ -76,7 +76,7 @@ impl PMonNTApp {
                         "RAM -".to_string()
                     };
                     let gpu_txt = format!("GPU {:>3.0}%", self.total_gpu_percent);
-                    ui.label(format!("{}   {}   {}", cpu_txt, ram_txt, gpu_txt));
+                    ui.label(format!("{cpu_txt}   {ram_txt}   {gpu_txt}"));
                 });
 
                 cols[1].with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

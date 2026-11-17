@@ -23,7 +23,10 @@ impl ReputationService {
 
         // If cached, do nothing
         {
-            let cache = self.mb_cache.read().unwrap_or_else(|p| p.into_inner());
+            let cache = self
+                .mb_cache
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if cache.contains_key(&sha) {
                 return Ok(sha);
             }
@@ -31,7 +34,10 @@ impl ReputationService {
 
         // Prevent duplicate in-flight MB queries for same sha
         {
-            let mut in_f = self.mb_in_flight.lock().unwrap_or_else(|p| p.into_inner());
+            let mut in_f = self
+                .mb_in_flight
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if in_f.contains(&sha) {
                 return Ok(sha);
             }
@@ -46,7 +52,10 @@ impl ReputationService {
             .is_err()
         {
             // Worker is gone; ensure we don't leave this sha stuck as in-flight.
-            let mut in_f = self.mb_in_flight.lock().unwrap_or_else(|p| p.into_inner());
+            let mut in_f = self
+                .mb_in_flight
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             in_f.remove(&sha);
             return Err(ReputationRequestError::WorkerUnavailable);
         }
@@ -63,13 +72,19 @@ impl ReputationService {
     pub fn request_mb_lookup_for_hash(&self, sha: &str, force: bool) -> bool {
         let sha = sha.to_string();
         if !force {
-            let cache = self.mb_cache.read().unwrap_or_else(|p| p.into_inner());
+            let cache = self
+                .mb_cache
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if cache.contains_key(&sha) {
                 return false;
             }
         }
         {
-            let mut in_f = self.mb_in_flight.lock().unwrap_or_else(|p| p.into_inner());
+            let mut in_f = self
+                .mb_in_flight
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if in_f.contains(&sha) {
                 return false;
             }
@@ -83,7 +98,10 @@ impl ReputationService {
             })
             .is_err()
         {
-            let mut in_f = self.mb_in_flight.lock().unwrap_or_else(|p| p.into_inner());
+            let mut in_f = self
+                .mb_in_flight
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             in_f.remove(&sha);
             return false;
         }
@@ -99,7 +117,10 @@ impl ReputationService {
         Option<crate::providers::MbSampleInfo>,
         crate::providers::MbQueryMeta,
     )> {
-        let guard = self.mb_cache.read().unwrap_or_else(|p| p.into_inner());
+        let guard = self
+            .mb_cache
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         guard.get(sha).cloned()
     }
 

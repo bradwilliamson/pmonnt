@@ -1,3 +1,4 @@
+use crate::aligned_buf::AlignedBuf;
 use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt;
 
@@ -119,30 +120,63 @@ fn map_last_error(context: &'static str) -> SecurityError {
     }
 }
 
-fn token_info_raw(token: HANDLE, class: TOKEN_INFORMATION_CLASS) -> Result<Vec<u8>, SecurityError> {
+fn token_info_raw(
+    token: HANDLE,
+    class: TOKEN_INFORMATION_CLASS,
+) -> Result<AlignedBuf, SecurityError> {
     let mut needed = 0u32;
     // SAFETY: `token` is expected to be a valid token handle. Passing a null buffer with size 0 is
     // the documented pattern to query the required buffer size.
-    let _ = unsafe { GetTokenInformation(token, class, None, 0, &mut needed) };
+    let _ = unsafe { GetTokenInformation(token, class, None, 0, &raw mut needed) };
     if needed == 0 {
         return Err(map_last_error("GetTokenInformation(size)"));
     }
 
-    let mut buf = vec![0u8; needed as usize];
-    // SAFETY: `buf` is a valid writable allocation of `needed` bytes. The pointer and length we
+    let mut buf = AlignedBuf::new(needed as usize);
+    // SAFETY: `buf` is a valid, 8-byte-aligned, writable allocation of `needed` bytes. The pointer and length we
     // pass match that allocation, and `needed` is a valid out-parameter.
     unsafe {
         GetTokenInformation(
             token,
             class,
-            Some(buf.as_mut_ptr() as *mut _),
+            Some(buf.as_mut_ptr().cast()),
             needed,
-            &mut needed,
+            &raw mut needed,
         )
     }
     .map_err(|e| map_open_error("GetTokenInformation(data)", e))?;
 
     Ok(buf)
+}
+
+/// Copy the fixed-size header `T` out of a token information buffer.
+///
+/// # Safety
+/// `T` must be the plain-data header type that `GetTokenInformation` wrote for this class.
+unsafe fn read_header<T: Copy>(buf: &AlignedBuf) -> Result<T, SecurityError> {
+    if !buf.fits::<T>(0) {
+        return Err(SecurityError::Win32 {
+            context: "GetTokenInformation(short buffer)",
+            code: 0,
+        });
+    }
+    // SAFETY: a whole `T` lies inside the 8-byte-aligned buffer (checked above).
+    Ok(unsafe { *buf.ptr_at::<T>(0) })
+}
+
+/// Borrow the variable-length array that follows a token information header.
+fn trailing_array<T>(buf: &AlignedBuf, offset: usize, count: usize) -> Result<&[T], SecurityError> {
+    let bytes = count.checked_mul(std::mem::size_of::<T>());
+    if bytes.is_none_or(|b| offset.checked_add(b).is_none_or(|end| end > buf.len())) {
+        return Err(SecurityError::Win32 {
+            context: "GetTokenInformation(array past end of buffer)",
+            code: 0,
+        });
+    }
+    // SAFETY: `count` elements fit inside the buffer (checked above). `offset` is the field
+    // offset of the array in its header struct, so the pointer is aligned for `T`, and the
+    // elements were written by GetTokenInformation.
+    Ok(unsafe { std::slice::from_raw_parts(buf.ptr_at::<T>(offset), count) })
 }
 
 fn wide_string_from_buf(buf: &[u16]) -> String {
@@ -160,7 +194,7 @@ fn sid_to_string(sid: PSID) -> Result<String, SecurityError> {
         let mut out_ptr: *mut u16 = std::ptr::null_mut();
         // SAFETY: `sid` must be a valid SID pointer for the duration of the call.
         // `ConvertSidToStringSidW` returns a NUL-terminated UTF-16 string allocated by the OS.
-        let ok = ConvertSidToStringSidW(sid.0, &mut out_ptr);
+        let ok = ConvertSidToStringSidW(sid.0, &raw mut out_ptr);
         if ok == 0 || out_ptr.is_null() {
             return Err(map_last_error("ConvertSidToStringSidW"));
         }
@@ -176,7 +210,7 @@ fn sid_to_string(sid: PSID) -> Result<String, SecurityError> {
         let s = OsString::from_wide(slice).to_string_lossy().into_owned();
 
         // SAFETY: Memory returned by `ConvertSidToStringSidW` must be freed with `LocalFree`.
-        let _ = LocalFree(out_ptr as _);
+        let _ = LocalFree(out_ptr.cast());
         Ok(s)
     }
 }
@@ -196,10 +230,10 @@ fn lookup_account_name(sid: PSID) -> Option<String> {
             None,
             sid,
             None,
-            &mut name_len,
+            &raw mut name_len,
             None,
-            &mut domain_len,
-            &mut use_type,
+            &raw mut domain_len,
+            &raw mut use_type,
         );
 
         if name_len == 0 {
@@ -213,10 +247,10 @@ fn lookup_account_name(sid: PSID) -> Option<String> {
             None,
             sid,
             Some(PWSTR(name_buf.as_mut_ptr())),
-            &mut name_len,
+            &raw mut name_len,
             Some(PWSTR(domain_buf.as_mut_ptr())),
-            &mut domain_len,
-            &mut use_type,
+            &raw mut domain_len,
+            &raw mut use_type,
         )
         .is_err()
         {
@@ -229,7 +263,7 @@ fn lookup_account_name(sid: PSID) -> Option<String> {
         if domain.is_empty() {
             Some(name)
         } else {
-            Some(format!("{}\\{}", domain, name))
+            Some(format!("{domain}\\{name}"))
         }
     }
 }
@@ -237,8 +271,8 @@ fn lookup_account_name(sid: PSID) -> Option<String> {
 fn integrity_from_token(token: HANDLE) -> Result<IntegrityLevel, SecurityError> {
     let buf = token_info_raw(token, TOKEN_INFORMATION_CLASS(25))?; // TokenIntegrityLevel
     // SAFETY: buf is populated by GetTokenInformation(TokenIntegrityLevel) and begins with TOKEN_MANDATORY_LABEL
-    // - Use read_unaligned because Vec<u8> does not guarantee alignment
-    let label = unsafe { std::ptr::read_unaligned(buf.as_ptr() as *const TOKEN_MANDATORY_LABEL) };
+    // - `read_header` checks the size; AlignedBuf is 8-byte aligned
+    let label = unsafe { read_header::<TOKEN_MANDATORY_LABEL>(&buf)? };
     let sid = label.Label.Sid;
 
     // SAFETY: SID from token-provided TOKEN_MANDATORY_LABEL, valid for query helpers
@@ -249,7 +283,7 @@ fn integrity_from_token(token: HANDLE) -> Result<IntegrityLevel, SecurityError> 
         if count_ptr.is_null() || *count_ptr == 0 {
             return Ok(IntegrityLevel::Unknown("<invalid sid>".to_string()));
         }
-        let rid_ptr = GetSidSubAuthority(sid, (*count_ptr - 1) as u32);
+        let rid_ptr = GetSidSubAuthority(sid, u32::from(*count_ptr - 1));
         if rid_ptr.is_null() {
             return Ok(IntegrityLevel::Unknown("<invalid sid>".to_string()));
         }
@@ -271,9 +305,8 @@ fn elevation_from_token(token: HANDLE) -> Option<String> {
     // TokenElevationType is 18. TOKEN_ELEVATION_TYPE exists and is a u32 repr.
     let buf = token_info_raw(token, TOKEN_INFORMATION_CLASS(18)).ok()?;
     // SAFETY: `buf` is populated by `GetTokenInformation(TokenElevationType)` and begins with a
-    // `TOKEN_ELEVATION_TYPE`. We use `read_unaligned` because `Vec<u8>` does not guarantee
-    // alignment for the target type.
-    let t = unsafe { std::ptr::read_unaligned(buf.as_ptr() as *const TOKEN_ELEVATION_TYPE) };
+    // `TOKEN_ELEVATION_TYPE`. `read_header` checks the size; AlignedBuf is 8-byte aligned.
+    let t = unsafe { read_header::<TOKEN_ELEVATION_TYPE>(&buf) }.ok()?;
     // TOKEN_ELEVATION_TYPE values: 1=Default,2=Full,3=Limited
     Some(match t {
         TOKEN_ELEVATION_TYPE(1) => "Default".to_string(),
@@ -288,7 +321,7 @@ fn bool_token_flag(token: HANDLE, class: TOKEN_INFORMATION_CLASS) -> Option<bool
     if buf.len() < 4 {
         return None;
     }
-    let v = u32::from_ne_bytes(buf[0..4].try_into().ok()?);
+    let v = u32::from_ne_bytes(buf.as_bytes()[0..4].try_into().ok()?);
     Some(v != 0)
 }
 
@@ -297,14 +330,14 @@ fn u32_token_value(token: HANDLE, class: TOKEN_INFORMATION_CLASS) -> Option<u32>
     if buf.len() < 4 {
         return None;
     }
-    Some(u32::from_ne_bytes(buf[0..4].try_into().ok()?))
+    Some(u32::from_ne_bytes(buf.as_bytes()[0..4].try_into().ok()?))
 }
 
 fn token_user(token: HANDLE) -> Result<(String, String), SecurityError> {
     let buf = token_info_raw(token, TOKEN_INFORMATION_CLASS(1))?; // TokenUser
     // SAFETY: `buf` is populated by `GetTokenInformation(TokenUser)` and begins with a
-    // `TOKEN_USER`. We use `read_unaligned` because `Vec<u8>` does not guarantee alignment.
-    let token_user = unsafe { std::ptr::read_unaligned(buf.as_ptr() as *const TOKEN_USER) };
+    // `TOKEN_USER`. `read_header` checks the size; AlignedBuf is 8-byte aligned.
+    let token_user = unsafe { read_header::<TOKEN_USER>(&buf)? };
     let sid = token_user.User.Sid;
 
     let sid_str = sid_to_string(sid)?;
@@ -381,19 +414,17 @@ fn privilege_attrs_to_strings(attrs: u32) -> Vec<String> {
 fn token_groups(token: HANDLE) -> Result<Vec<GroupEntry>, SecurityError> {
     let buf = token_info_raw(token, TOKEN_INFORMATION_CLASS(2))?; // TokenGroups
     // SAFETY: `buf` is populated by `GetTokenInformation(TokenGroups)` and begins with a
-    // `TOKEN_GROUPS`. We use `read_unaligned` because `Vec<u8>` does not guarantee alignment.
-    let groups = unsafe { std::ptr::read_unaligned(buf.as_ptr() as *const TOKEN_GROUPS) };
+    // `TOKEN_GROUPS`. `read_header` checks the size; AlignedBuf is 8-byte aligned.
+    let groups = unsafe { read_header::<TOKEN_GROUPS>(&buf)? };
 
     let count = groups.GroupCount as usize;
     // SAFETY: The groups array begins at the `Groups` field within the returned `TOKEN_GROUPS`
     // buffer. The OS promises the buffer is large enough for `count` entries.
-    let first = unsafe {
-        buf.as_ptr()
-            .add(std::mem::offset_of!(TOKEN_GROUPS, Groups))
-            .cast::<SID_AND_ATTRIBUTES>()
-    };
-    // SAFETY: `first` points into `buf`, and `count` comes from the OS-provided header.
-    let slice = unsafe { std::slice::from_raw_parts(first, count) };
+    let slice = trailing_array::<SID_AND_ATTRIBUTES>(
+        &buf,
+        std::mem::offset_of!(TOKEN_GROUPS, Groups),
+        count,
+    )?;
 
     let mut out = Vec::with_capacity(count);
     for g in slice {
@@ -417,14 +448,14 @@ fn luid_to_name(luid: &windows::Win32::Foundation::LUID) -> Option<String> {
         let mut len = 0u32;
         // SAFETY: `luid` is a valid pointer for the duration of the call; passing a null output
         // buffer is the documented pattern to query the required length.
-        let _ = LookupPrivilegeNameW(None, luid, None, &mut len);
+        let _ = LookupPrivilegeNameW(None, luid, None, &raw mut len);
         if len == 0 {
             return None;
         }
         let mut buf = vec![0u16; len as usize + 2];
         // SAFETY: `buf` is a writable UTF-16 buffer of `len` elements (plus spare), and `luid` is
         // valid for the call.
-        if LookupPrivilegeNameW(None, luid, Some(PWSTR(buf.as_mut_ptr())), &mut len).is_err() {
+        if LookupPrivilegeNameW(None, luid, Some(PWSTR(buf.as_mut_ptr())), &raw mut len).is_err() {
             return None;
         }
         Some(wide_string_from_buf(&buf))
@@ -446,8 +477,8 @@ fn luid_to_display(name: &str) -> Option<String> {
             PCWSTR::null(),
             PCWSTR(name_w.as_ptr()),
             None,
-            &mut len,
-            &mut lang,
+            &raw mut len,
+            &raw mut lang,
         );
         if len == 0 {
             return None;
@@ -459,8 +490,8 @@ fn luid_to_display(name: &str) -> Option<String> {
             PCWSTR::null(),
             PCWSTR(name_w.as_ptr()),
             Some(PWSTR(buf.as_mut_ptr())),
-            &mut len,
-            &mut lang,
+            &raw mut len,
+            &raw mut lang,
         )
         .is_err()
         {
@@ -473,21 +504,19 @@ fn luid_to_display(name: &str) -> Option<String> {
 fn token_privileges(token: HANDLE) -> Result<Vec<PrivEntry>, SecurityError> {
     let buf = token_info_raw(token, TOKEN_INFORMATION_CLASS(3))?; // TokenPrivileges
     // SAFETY: `buf` is populated by `GetTokenInformation(TokenPrivileges)` and begins with a
-    // `TOKEN_PRIVILEGES`. We use `read_unaligned` because `Vec<u8>` does not guarantee alignment.
-    let tp = unsafe { std::ptr::read_unaligned(buf.as_ptr() as *const TOKEN_PRIVILEGES) };
+    // `TOKEN_PRIVILEGES`. `read_header` checks the size; AlignedBuf is 8-byte aligned.
+    let tp = unsafe { read_header::<TOKEN_PRIVILEGES>(&buf)? };
     let count = tp.PrivilegeCount as usize;
 
-    log::debug!("token_privileges: found {} privilege(s)", count);
+    log::debug!("token_privileges: found {count} privilege(s)");
 
     // SAFETY: The privileges array begins at the `Privileges` field within the returned
     // `TOKEN_PRIVILEGES` buffer. The OS promises the buffer is large enough for `count` entries.
-    let first = unsafe {
-        buf.as_ptr()
-            .add(std::mem::offset_of!(TOKEN_PRIVILEGES, Privileges))
-            .cast::<LUID_AND_ATTRIBUTES>()
-    };
-    // SAFETY: `first` points into `buf`, and `count` comes from the OS-provided header.
-    let slice = unsafe { std::slice::from_raw_parts(first, count) };
+    let slice = trailing_array::<LUID_AND_ATTRIBUTES>(
+        &buf,
+        std::mem::offset_of!(TOKEN_PRIVILEGES, Privileges),
+        count,
+    )?;
 
     let mut out = Vec::with_capacity(count);
     for p in slice {
@@ -502,7 +531,7 @@ fn token_privileges(token: HANDLE) -> Result<Vec<PrivEntry>, SecurityError> {
             enabled,
             attributes: privilege_attrs_to_strings(attrs),
         });
-        log::debug!("  privilege: {} (enabled={})", name, enabled);
+        log::debug!("  privilege: {name} (enabled={enabled})");
     }
 
     out.sort_by(|a, b| a.name.cmp(&b.name));
@@ -513,8 +542,8 @@ fn token_privileges(token: HANDLE) -> Result<Vec<PrivEntry>, SecurityError> {
 fn token_statistics_logon_luid(token: HANDLE) -> Option<String> {
     let buf = token_info_raw(token, TOKEN_INFORMATION_CLASS(10)).ok()?; // TokenStatistics
     // SAFETY: `buf` is populated by `GetTokenInformation(TokenStatistics)` and begins with a
-    // `TOKEN_STATISTICS`. We use `read_unaligned` because `Vec<u8>` does not guarantee alignment.
-    let stats = unsafe { std::ptr::read_unaligned(buf.as_ptr() as *const TOKEN_STATISTICS) };
+    // `TOKEN_STATISTICS`. `read_header` checks the size; AlignedBuf is 8-byte aligned.
+    let stats = unsafe { read_header::<TOKEN_STATISTICS>(&buf) }.ok()?;
     let luid = stats.AuthenticationId;
     Some(format!(
         "0x{:08X}{:08X}",
@@ -537,7 +566,7 @@ pub fn get_process_security_info(pid: u32) -> Result<SecurityInfo, SecurityError
     let mut token = HANDLE::default();
     // SAFETY: `process_handle` is a valid handle from `OpenProcess`, and `token` is a valid
     // out-parameter for the duration of the call.
-    unsafe { OpenProcessToken(process_handle, TOKEN_QUERY, &mut token) }
+    unsafe { OpenProcessToken(process_handle, TOKEN_QUERY, &raw mut token) }
         .map_err(|e| map_open_error("OpenProcessToken", e))?;
     if token.is_invalid() {
         return Err(SecurityError::Other("invalid token handle".to_string()));
@@ -549,8 +578,8 @@ pub fn get_process_security_info(pid: u32) -> Result<SecurityInfo, SecurityError
     let session_id = u32_token_value(token, TOKEN_INFORMATION_CLASS(12)) // TokenSessionId
         .unwrap_or(0);
 
-    let integrity =
-        integrity_from_token(token).unwrap_or(IntegrityLevel::Unknown("<unavailable>".to_string()));
+    let integrity = integrity_from_token(token)
+        .unwrap_or_else(|_| IntegrityLevel::Unknown("<unavailable>".to_string()));
 
     let elevation = elevation_from_token(token);
 
@@ -595,11 +624,7 @@ pub fn get_process_security_info(pid: u32) -> Result<SecurityInfo, SecurityError
             (v, None)
         }
         Err(e) => {
-            log::warn!(
-                "get_process_security_info(pid={}): groups failed: {}",
-                pid,
-                e
-            );
+            log::warn!("get_process_security_info(pid={pid}): groups failed: {e}");
             (Vec::new(), Some(e))
         }
     };
@@ -614,11 +639,7 @@ pub fn get_process_security_info(pid: u32) -> Result<SecurityInfo, SecurityError
             (v, None)
         }
         Err(e) => {
-            log::warn!(
-                "get_process_security_info(pid={}): privileges failed: {}",
-                pid,
-                e
-            );
+            log::warn!("get_process_security_info(pid={pid}): privileges failed: {e}");
             (Vec::new(), Some(e))
         }
     };

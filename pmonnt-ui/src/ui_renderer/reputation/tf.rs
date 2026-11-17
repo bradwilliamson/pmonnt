@@ -34,23 +34,22 @@ pub fn render_threatfox_section(
                 egui::Button::new("Check this process in ThreatFox"),
             )
             .clicked()
+            && let Some(pid) = pid
         {
-            if let Some(pid) = pid {
-                match reputation_service.request_tf_lookup_for_process(pid) {
-                    Ok(sha) => {
-                        tf_state.current_process_sha = Some(sha.clone());
-                        tf_state.querying_tf_sha = Some(sha);
-                        tf_state.querying_tf_pid = Some(pid);
-                    }
-                    Err(e) => {
-                        tf_state.last_query_state = Some(TfQueryState {
-                            last_query: Some("request".to_string()),
-                            last_http_status: None,
-                            last_query_status: Some("error".to_string()),
-                            last_result_count: None,
-                            last_error_message: Some(e),
-                        });
-                    }
+            match reputation_service.request_tf_lookup_for_process(pid) {
+                Ok(sha) => {
+                    tf_state.current_process_sha = Some(sha.clone());
+                    tf_state.querying_tf_sha = Some(sha);
+                    tf_state.querying_tf_pid = Some(pid);
+                }
+                Err(e) => {
+                    tf_state.last_query_state = Some(TfQueryState {
+                        last_query: Some("request".to_string()),
+                        last_http_status: None,
+                        last_query_status: Some("error".to_string()),
+                        last_result_count: None,
+                        last_error_message: Some(e),
+                    });
                 }
             }
         }
@@ -63,24 +62,21 @@ pub fn render_threatfox_section(
                 .as_ref()
                 .or(tf_state.querying_tf_sha.as_ref())
                 .is_some()
+            && let Some(pid) = pid
         {
-            if let Some(pid) = pid {
-                let _ = reputation_service.request_tf_lookup_for_process(pid);
-                tf_state.querying_tf_pid = Some(pid);
-            }
+            let _ = reputation_service.request_tf_lookup_for_process(pid);
+            tf_state.querying_tf_pid = Some(pid);
         }
 
         if let Some(sha) = tf_state
             .current_process_sha
             .as_ref()
             .or(tf_state.querying_tf_sha.as_ref())
+            && tf_state.querying_tf_pid == pid
+            && reputation_service.get_tf_result_for_hash(sha).is_none()
         {
-            if tf_state.querying_tf_pid == pid
-                && reputation_service.get_tf_result_for_hash(sha).is_none()
-            {
-                ui.spinner();
-                ui.label("Querying ThreatFox...");
-            }
+            ui.spinner();
+            ui.label("Querying ThreatFox...");
         }
     });
 
@@ -99,19 +95,19 @@ pub fn render_threatfox_section(
         .or(tf_state.querying_tf_sha.as_ref());
 
     if let Some(sha) = sha_to_show {
-        if let Some(pid) = pid {
-            if let Some(path) = pid_to_image_path.get(&pid) {
-                let filename = std::path::Path::new(path)
-                    .file_name()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("");
-                ui.horizontal(|ui| {
-                    ui.label(format!("Process: {}", filename));
-                });
-                ui.horizontal(|ui| {
-                    ui.label(format!("Path:    {}", path));
-                });
-            }
+        if let Some(pid) = pid
+            && let Some(path) = pid_to_image_path.get(&pid)
+        {
+            let filename = std::path::Path::new(path)
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("");
+            ui.horizontal(|ui| {
+                ui.label(format!("Process: {filename}"));
+            });
+            ui.horizontal(|ui| {
+                ui.label(format!("Path:    {path}"));
+            });
         }
         ui.horizontal(|ui| {
             ui.label("SHA-256:");
@@ -156,7 +152,7 @@ pub fn render_threatfox_section(
                                                 .unwrap_or_else(|| "ioc".to_string());
                                             let val = i.ioc.clone();
                                             ui.horizontal(|ui| {
-                                                ui.label(format!("[{}] {}", typ, val));
+                                                ui.label(format!("[{typ}] {val}"));
                                                 if ui.small_button("📋").clicked() {
                                                     ui.copy_text(val.clone());
                                                 }
@@ -178,7 +174,7 @@ pub fn render_threatfox_section(
                     }
                     _ => {
                         if let Some(err) = &meta.last_error_message {
-                            ui.colored_label(egui::Color32::RED, format!("Error: {}", err));
+                            ui.colored_label(egui::Color32::RED, format!("Error: {err}"));
                         } else {
                             ui.colored_label(egui::Color32::RED, "ThreatFox request failed");
                         }

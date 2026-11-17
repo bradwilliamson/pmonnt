@@ -1,5 +1,6 @@
 //! Windows handle enumeration using NT APIs
 
+use crate::aligned_buf::AlignedBuf;
 use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 use std::mem;
@@ -91,7 +92,7 @@ pub fn get_type_name(type_index: u16) -> String {
         37 => "Key".to_string(),
         40 => "Section".to_string(),
         42 => "IoCompletion".to_string(),
-        _ => format!("TypeIndex{}", type_index),
+        _ => format!("TypeIndex{type_index}"),
     }
 }
 
@@ -101,34 +102,34 @@ pub fn get_type_name(type_index: u16) -> String {
 /// This function uses NtQuerySystemInformation which is inherently unsafe.
 /// The buffer is properly sized and the returned data is validated.
 pub fn enumerate_handles() -> Result<Vec<HandleEntry>> {
-    let mut buffer_size: u32 = 1024 * 1024; // Start with 1MB
-    let mut buffer: Vec<u8>;
-    let mut return_length: u32 = 0;
+    /// Hard ceiling on the snapshot buffer (each entry is 40 bytes, so ~2.6M handles).
+    const MAX_BUFFER_BYTES: usize = 100 * 1024 * 1024;
 
+    let mut buffer = AlignedBuf::new(1024 * 1024);
     loop {
-        buffer = vec![0u8; buffer_size as usize];
-
-        // SAFETY: NtQuerySystemInformation is called with a properly sized buffer.
-        // The buffer lifetime is managed by Rust and the function is synchronous.
+        let mut return_length: u32 = 0;
+        // SAFETY: NtQuerySystemInformation writes at most `buffer.len()` bytes into `buffer`,
+        // a valid, writable, 8-byte-aligned allocation of that size.
         let status = unsafe {
             NtQuerySystemInformation(
                 SYSTEM_EXTENDED_HANDLE_INFORMATION,
-                buffer.as_mut_ptr() as *mut std::ffi::c_void,
-                buffer_size,
-                &mut return_length,
+                buffer.as_mut_ptr().cast::<std::ffi::c_void>(),
+                buffer.len_u32(),
+                &raw mut return_length,
             )
         };
 
         if status == STATUS_SUCCESS {
             break;
         } else if status == STATUS_INFO_LENGTH_MISMATCH {
-            // Buffer too small, retry with larger size
-            buffer_size = return_length.max(buffer_size * 2);
-            if buffer_size > 100 * 1024 * 1024 {
-                // Safety limit: don't allocate more than 100MB
+            // The handle table keeps growing between calls; ask for some headroom.
+            let wanted = (return_length as usize)
+                .saturating_add(256 * 1024)
+                .max(buffer.len().saturating_mul(2));
+            if wanted > MAX_BUFFER_BYTES {
                 return Err(anyhow!("Handle enumeration requires too much memory"));
             }
-            continue;
+            buffer = AlignedBuf::new(wanted);
         } else if status == STATUS_ACCESS_DENIED {
             return Err(anyhow!(
                 "Access Denied: Run as Administrator to view handles"
@@ -138,46 +139,33 @@ pub fn enumerate_handles() -> Result<Vec<HandleEntry>> {
         }
     }
 
-    // Parse the buffer
-    // SAFETY: We've validated that the buffer contains valid data from the NT API.
-    // The structure layout matches the documented NT API structures.
-    unsafe {
-        let info = buffer.as_ptr() as *const SystemExtendedHandleInformation;
-        let number_of_handles = (*info).number_of_handles;
-
-        // Pointer to the first entry (after the header)
-        let header_size = mem::size_of::<SystemExtendedHandleInformation>();
-        let entry_size = mem::size_of::<SystemExtendedHandleTableEntryInformation>();
-        let entries_ptr = (info as *const u8).add(header_size)
-            as *const SystemExtendedHandleTableEntryInformation;
-
-        // Compute maximum number of entries that fit in the buffer to avoid OOB
-        let buf_len = buffer.len();
-        let max_entries = if buf_len > header_size {
-            (buf_len - header_size) / entry_size
-        } else {
-            0
-        };
-
-        let safe_count = std::cmp::min(number_of_handles, max_entries);
-        let safe_count = std::cmp::min(safe_count, 100_000);
-
-        let mut handles = Vec::with_capacity(safe_count);
-
-        for i in 0..safe_count {
-            let entry = entries_ptr.add(i);
-            let pid = (*entry).unique_process_id as u32;
-
-            handles.push(HandleEntry {
-                pid,
-                handle_value: (*entry).handle_value,
-                object_type_index: (*entry).object_type_index,
-                granted_access: (*entry).granted_access,
-            });
-        }
-
-        Ok(handles)
+    if !buffer.fits::<SystemExtendedHandleInformation>(0) {
+        return Ok(Vec::new());
     }
+    // SAFETY: the header fits in the buffer, which is 8-byte aligned.
+    let number_of_handles =
+        unsafe { (*buffer.ptr_at::<SystemExtendedHandleInformation>(0)).number_of_handles };
+
+    // Entries follow the header. Never read past the bytes the buffer actually holds.
+    let header_size = mem::size_of::<SystemExtendedHandleInformation>();
+    let entry_size = mem::size_of::<SystemExtendedHandleTableEntryInformation>();
+    let max_entries = buffer.len().saturating_sub(header_size) / entry_size;
+    let count = number_of_handles.min(max_entries);
+
+    let entries = buffer.ptr_at::<SystemExtendedHandleTableEntryInformation>(header_size);
+    // SAFETY: `count` entries fit after the header (checked above), the header size is a
+    // multiple of 8, and the entries were written by the kernel.
+    let entries = unsafe { std::slice::from_raw_parts(entries, count) };
+
+    Ok(entries
+        .iter()
+        .map(|e| HandleEntry {
+            pid: u32::try_from(e.unique_process_id).unwrap_or(u32::MAX),
+            handle_value: e.handle_value,
+            object_type_index: e.object_type_index,
+            granted_access: e.granted_access,
+        })
+        .collect())
 }
 
 /// Global cache for type names (type_index -> type_name)
@@ -212,9 +200,10 @@ pub fn populate_type_cache(handles: &[HandleEntry]) {
         if cache_map.contains_key(&entry.object_type_index) {
             continue;
         }
-        let name = well_known_type(entry.object_type_index)
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| format!("TypeIndex{}", entry.object_type_index));
+        let name = well_known_type(entry.object_type_index).map_or_else(
+            || format!("TypeIndex{}", entry.object_type_index),
+            std::string::ToString::to_string,
+        );
         cache_map.insert(entry.object_type_index, name);
     }
 
