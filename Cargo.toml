@@ -6,6 +6,9 @@ resolver = "2"
 version = "0.1.0"
 edition = "2024"
 authors = ["PMonNT Contributors"]
+license = "MIT"
+repository = "https://github.com/bradwilliamson/pmonnt"
+publish = false
 rust-version = "1.99"
 
 [profile.dev]

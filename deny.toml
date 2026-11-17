@@ -24,8 +24,10 @@ db-path = "$CARGO_HOME/advisory-dbs"
 db-urls = ["https://github.com/rustsec/advisory-db"]
 # Fail on anything with an advisory; unmaintained/unsound crates are reported too.
 yanked = "deny"
-# Add RUSTSEC ids here only with a comment explaining why they are accepted.
+# Add RUSTSEC ids here only with a reason explaining why they are accepted.
 ignore = [
+    { id = "RUSTSEC-2025-0141", reason = "bincode is unmaintained; only reached through yara-x's compiled-rule serialization and there is no maintained drop-in upstream yet" },
+    { id = "RUSTSEC-2023-0071", reason = "rsa Marvin timing attack needs a private-key decryption oracle; yara-x only verifies Authenticode signatures with public keys" },
 ]
 
 # ---------------------------------------------------------------------------
@@ -55,6 +57,8 @@ allow = [
     "LicenseRef-UFL-1.0",
 ]
 confidence-threshold = 0.8
+# The allow list covers licenses that may appear as dependencies change.
+unused-allowed-license = "allow"
 exceptions = [
 ]
 
@@ -74,6 +78,8 @@ ignore = true
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+# Path dependencies between the workspace crates (which are publish = false) are fine.
+allow-wildcard-paths = true
 highlight = "all"
 workspace-default-features = "allow"
 external-default-features = "allow"
