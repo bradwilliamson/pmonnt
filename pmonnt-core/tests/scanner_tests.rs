@@ -1,4 +1,5 @@
 //! Tests for process scanner memory protection functions
+#![cfg(windows)]
 
 use pmonnt_core::yara::scanner::process_scanner::ProcessScanner;
 use windows::Win32::System::Memory::{

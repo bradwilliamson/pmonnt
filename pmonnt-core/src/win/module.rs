@@ -1,6 +1,5 @@
 //! Windows module enumeration and signature verification (unsafe code confined here)
 //! Invariants: All handles are closed, all buffer reads are alignment-safe.
-//! WinVerifyTrust is called with valid file paths and proper GUID initialization.
 //!
 //! This module provides three methods for enumerating loaded modules:
 //! 1. ToolHelp32 (CreateToolhelp32Snapshot) - fastest, but blocked by sandboxes
@@ -126,70 +125,6 @@ struct UNICODE_STRING {
 }
 
 const LIST_MODULES_ALL: u32 = 0x03;
-
-// WinVerifyTrust definitions - manually define since windows-sys may not have full wintrust
-#[repr(C)]
-#[allow(non_snake_case)]
-struct WINTRUST_FILE_INFO {
-    cbStruct: u32,
-    pcwszFilePath: *const u16,
-    hFile: HANDLE,
-    pgKnownSubject: *const GUID,
-}
-
-#[repr(C)]
-#[allow(non_snake_case)]
-struct WINTRUST_DATA {
-    cbStruct: u32,
-    pPolicyCallbackData: *mut std::ffi::c_void,
-    pSIPClientData: *mut std::ffi::c_void,
-    dwUIChoice: u32,
-    fdwRevocationChecks: u32,
-    dwUnionChoice: u32,
-    pFile: *mut WINTRUST_FILE_INFO,
-    dwStateAction: u32,
-    hWVTStateData: HANDLE,
-    pwszURLReference: *const u16,
-    dwProvFlags: u32,
-    dwUIContext: u32,
-    pSignatureSettings: *mut std::ffi::c_void,
-}
-
-#[repr(C)]
-#[allow(non_snake_case)]
-#[allow(clippy::upper_case_acronyms)]
-struct GUID {
-    Data1: u32,
-    Data2: u16,
-    Data3: u16,
-    Data4: [u8; 8],
-}
-
-// WinVerifyTrust constants
-const WTD_UI_NONE: u32 = 2;
-const WTD_REVOKE_NONE: u32 = 0;
-const WTD_CHOICE_FILE: u32 = 1;
-const WTD_STATEACTION_VERIFY: u32 = 1;
-const WTD_STATEACTION_CLOSE: u32 = 2;
-
-// WINTRUST_ACTION_GENERIC_VERIFY_V2 GUID
-const WINTRUST_ACTION_GENERIC_VERIFY_V2: GUID = GUID {
-    Data1: 0x00AAC56B,
-    Data2: 0xCD44,
-    Data3: 0x11d0,
-    Data4: [0x8C, 0xC2, 0x00, 0xC0, 0x4F, 0xC2, 0x95, 0xEE],
-};
-
-// Trust error codes
-const TRUST_E_NOSIGNATURE: i32 = -0x7FF6FE00_i32; // 0x800B0100
-const TRUST_E_EXPLICIT_DISTRUST: i32 = -0x7FF6FDFC_i32; // 0x800B0104
-const TRUST_E_SUBJECT_NOT_TRUSTED: i32 = -0x7FF6FDFE_i32; // 0x800B0102
-const CRYPT_E_SECURITY_SETTINGS: i32 = -0x7FF6CFFD_i32; // 0x80092003
-
-#[link(name = "wintrust")]
-unsafe extern "system" {
-    fn WinVerifyTrust(hwnd: HANDLE, pgActionID: *const GUID, pWVTData: *mut WINTRUST_DATA) -> i32;
-}
 
 /// List modules for a process using multiple fallback methods
 /// Tries: 1) ToolHelp32, 2) PSAPI, 3) PEB walking
@@ -589,56 +524,26 @@ unsafe fn read_unicode_string(handle: isize, us: &UNICODE_STRING) -> String {
     wchar_to_string(&buffer)
 }
 
-/// Check signature status for a file path
-/// Safety: WinVerifyTrust is called with valid null-terminated UTF-16 path
+/// Check signature status for a file path (no network access).
 pub fn check_signature(path: &str) -> (Option<bool>, Option<String>) {
-    let wide_path: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
+    use crate::win::signature::{
+        CRYPT_E_SECURITY_SETTINGS, TRUST_E_EXPLICIT_DISTRUST, TRUST_E_NOSIGNATURE,
+        TRUST_E_SUBJECT_NOT_TRUSTED, winverifytrust_path,
+    };
 
-    // SAFETY: WinVerifyTrust FFI call with valid null-terminated UTF-16 path and properly initialized structures
-    unsafe {
-        let mut file_info = WINTRUST_FILE_INFO {
-            cbStruct: std::mem::size_of::<WINTRUST_FILE_INFO>() as u32,
-            pcwszFilePath: wide_path.as_ptr(),
-            hFile: HANDLE::default(),
-            pgKnownSubject: std::ptr::null(),
-        };
-
-        let mut wvt_data = WINTRUST_DATA {
-            cbStruct: std::mem::size_of::<WINTRUST_DATA>() as u32,
-            pPolicyCallbackData: std::ptr::null_mut(),
-            pSIPClientData: std::ptr::null_mut(),
-            dwUIChoice: WTD_UI_NONE,
-            fdwRevocationChecks: WTD_REVOKE_NONE,
-            dwUnionChoice: WTD_CHOICE_FILE,
-            pFile: &raw mut file_info,
-            dwStateAction: WTD_STATEACTION_VERIFY,
-            hWVTStateData: HANDLE::default(),
-            pwszURLReference: std::ptr::null(),
-            dwProvFlags: 0,
-            dwUIContext: 0,
-            pSignatureSettings: std::ptr::null_mut(),
-        };
-
-        let action_guid = WINTRUST_ACTION_GENERIC_VERIFY_V2;
-        let result = WinVerifyTrust(HANDLE::default(), &raw const action_guid, &raw mut wvt_data);
-
-        // Close the state data
-        wvt_data.dwStateAction = WTD_STATEACTION_CLOSE;
-        let _ = WinVerifyTrust(HANDLE::default(), &raw const action_guid, &raw mut wvt_data);
-
-        match result {
-            0 => (Some(true), None), // Signature is valid
-            TRUST_E_NOSIGNATURE => (Some(false), Some("Not signed".to_string())),
-            TRUST_E_EXPLICIT_DISTRUST => (Some(false), Some("Explicitly distrusted".to_string())),
-            TRUST_E_SUBJECT_NOT_TRUSTED => (Some(false), Some("Subject not trusted".to_string())),
-            CRYPT_E_SECURITY_SETTINGS => {
-                (None, Some("Security settings prevented check".to_string()))
-            }
-            e => (
-                None,
-                Some(format!("Verification error: 0x{:08X}", e as u32)),
-            ),
+    match winverifytrust_path(std::path::Path::new(path)) {
+        Ok(0) => (Some(true), None),
+        Ok(TRUST_E_NOSIGNATURE) => (Some(false), Some("Not signed".to_string())),
+        Ok(TRUST_E_EXPLICIT_DISTRUST) => (Some(false), Some("Explicitly distrusted".to_string())),
+        Ok(TRUST_E_SUBJECT_NOT_TRUSTED) => (Some(false), Some("Subject not trusted".to_string())),
+        Ok(CRYPT_E_SECURITY_SETTINGS) => {
+            (None, Some("Security settings prevented check".to_string()))
         }
+        Ok(code) => (
+            None,
+            Some(format!("Verification error: 0x{:08X}", code as u32)),
+        ),
+        Err(e) => (None, Some(format!("Verification error: {e}"))),
     }
 }
 

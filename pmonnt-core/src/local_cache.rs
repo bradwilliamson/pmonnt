@@ -60,7 +60,7 @@ impl LocalCacheProvider {
             // Filter out expired entries
             return entries
                 .into_iter()
-                .filter(|e| now - e.timestamp < ttl_secs)
+                .filter(|e| is_fresh(now, e.timestamp, ttl_secs))
                 .map(|e| (e.sha256.clone(), e))
                 .collect();
         }
@@ -86,7 +86,7 @@ impl LocalCacheProvider {
         // Filter expired entries and enforce size cap
         let mut vec: Vec<CacheEntry> = entries
             .values()
-            .filter(|e| now - e.timestamp < ttl_secs)
+            .filter(|e| is_fresh(now, e.timestamp, ttl_secs))
             .cloned()
             .collect();
 
@@ -275,7 +275,7 @@ impl LocalCacheProvider {
             let ttl_secs = CACHE_TTL_DAYS * 24 * 60 * 60;
 
             // Check if expired
-            if now - entry.timestamp >= ttl_secs {
+            if !is_fresh(now, entry.timestamp, ttl_secs) {
                 return None;
             }
 
@@ -317,5 +317,25 @@ impl Drop for LocalCacheProvider {
         // Flush any pending writes on shutdown
         // flush() is no-panic by construction (handles lock poisoning gracefully)
         self.flush();
+    }
+}
+
+/// Whether an entry written at `timestamp` is still within `ttl_secs` of `now`.
+///
+/// Timestamps in the future (clock moved back, restored VM snapshot, edited file) count as
+/// expired rather than underflowing (which panicked with overflow checks on).
+fn is_fresh(now: u64, timestamp: u64, ttl_secs: u64) -> bool {
+    now.checked_sub(timestamp).is_some_and(|age| age < ttl_secs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn future_timestamps_are_expired_not_a_panic() {
+        assert!(is_fresh(1_000, 900, 200));
+        assert!(!is_fresh(1_000, 700, 200));
+        assert!(!is_fresh(1_000, 5_000, 200));
     }
 }

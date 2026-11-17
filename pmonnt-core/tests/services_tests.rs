@@ -1,4 +1,5 @@
 //! Tests for Windows service state mapping functions
+#![cfg(windows)]
 
 use pmonnt_core::services::{
     ServiceStartType, ServiceStatus, start_type_from_values, status_from_state,

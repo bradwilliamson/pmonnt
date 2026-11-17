@@ -20,18 +20,16 @@ pub enum PmonntError {
 }
 
 pub mod aligned_buf;
-#[cfg(windows)]
 pub mod diff;
-#[cfg(windows)]
 pub mod handles;
 pub mod hashing;
 pub mod http;
 pub mod local_cache;
+pub mod metrics;
 #[cfg(windows)]
 pub mod module;
 #[cfg(windows)]
 pub mod network;
-#[cfg(windows)]
 pub mod process;
 pub mod providers;
 pub mod reputation;
@@ -41,7 +39,6 @@ pub mod reputation_service;
 pub mod service_control;
 #[cfg(windows)]
 pub mod services;
-#[cfg(windows)]
 pub mod snapshot;
 #[cfg(windows)]
 pub mod thread;
@@ -60,10 +57,12 @@ pub use win::process_metrics as win_process_metrics;
 pub use win::process_path as win_process_path;
 #[cfg(windows)]
 pub use win::thread as win_thread;
-#[cfg(windows)]
 pub mod yara;
 
-pub use win::signature::{SignatureInfo, SignatureStatus, verify_signature};
+pub mod signature;
+pub use signature::{SignatureInfo, SignatureStatus};
+#[cfg(windows)]
+pub use win::signature::verify_signature;
 
 /// Get the current tick count for display
 pub fn get_tick_count() -> u64 {

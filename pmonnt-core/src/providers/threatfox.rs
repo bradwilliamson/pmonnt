@@ -200,7 +200,7 @@ impl ThreatFoxProvider {
                 "ThreatFox non-200 response: HTTP {} for hash {}\nBody: {}",
                 status_code,
                 hash,
-                &text[..text.len().min(2048)]
+                &text[..text.floor_char_boundary(2048)]
             );
             meta.last_error_message = Some(format!("HTTP {status_code}"));
         }
@@ -338,7 +338,7 @@ impl ReputationProvider for ThreatFoxProvider {
             warn!(
                 "ThreatFox 401 Unauthorized for {}: {}",
                 sha256,
-                &body_text[..body_text.len().min(500)]
+                &body_text[..body_text.floor_char_boundary(500)]
             );
             return LookupState::NotConfigured;
         }
@@ -348,7 +348,7 @@ impl ReputationProvider for ThreatFoxProvider {
             let body_text = response.text().unwrap_or_default();
             warn!(
                 "ThreatFox 429 Rate Limited: {}",
-                &body_text[..body_text.len().min(500)]
+                &body_text[..body_text.floor_char_boundary(500)]
             );
             self.set_rate_limited();
             return LookupState::Error("Rate limited".to_string());
@@ -360,7 +360,7 @@ impl ReputationProvider for ThreatFoxProvider {
                 "ThreatFox HTTP {} for {}: {}",
                 status.as_u16(),
                 sha256,
-                &body_text[..body_text.len().min(500)]
+                &body_text[..body_text.floor_char_boundary(500)]
             );
             return LookupState::Error(format!("HTTP {status}"));
         }
@@ -376,7 +376,7 @@ impl ReputationProvider for ThreatFoxProvider {
 
         debug!(
             "ThreatFox response body (first 512 chars): {}",
-            &text[..text.len().min(512)]
+            &text[..text.floor_char_boundary(512)]
         );
 
         // Parse response flexibly - "data" can be array OR string

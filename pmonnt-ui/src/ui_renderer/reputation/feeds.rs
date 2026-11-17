@@ -100,7 +100,7 @@ pub fn render_threat_intel_feeds(
         for s in view.iter().skip(start).take(per_page) {
             ui.horizontal(|ui| {
                 ui.label(s.first_seen.clone().unwrap_or_default());
-                ui.label(&s.sha256[..8]);
+                ui.label(s.sha256.get(..8).unwrap_or(&s.sha256));
                 ui.label(s.signature.clone().unwrap_or_default());
                 ui.label(s.file_name.clone().unwrap_or_default());
             });
@@ -328,7 +328,12 @@ pub fn render_threat_intel_feeds(
         // Show first few
         for detection in mb_state.recent_detections.iter().take(5) {
             ui.horizontal(|ui| {
-                ui.label(&detection.sha256_hash[..8]);
+                ui.label(
+                    detection
+                        .sha256_hash
+                        .get(..8)
+                        .unwrap_or(&detection.sha256_hash),
+                );
                 if let Some(sig) = &detection.signature {
                     ui.label(sig);
                 }
@@ -384,7 +389,7 @@ pub fn render_threat_intel_feeds(
         // Show first few
         for sample in mb_state.tag_search_results.iter().take(5) {
             ui.horizontal(|ui| {
-                ui.label(&sample.sha256_hash[..8]);
+                ui.label(sample.sha256_hash.get(..8).unwrap_or(&sample.sha256_hash));
                 if let Some(sig) = &sample.signature {
                     ui.label(sig);
                 }

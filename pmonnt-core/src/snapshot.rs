@@ -1,7 +1,6 @@
 //! Process snapshot functionality
 
 use crate::process::Process;
-use anyhow;
 use std::collections::HashMap;
 use std::time::Instant;
 
@@ -18,16 +17,20 @@ pub struct ProcessSnapshot {
 
 impl ProcessSnapshot {
     /// Create a new snapshot from the current process enumeration
+    #[cfg(windows)]
     pub fn new() -> anyhow::Result<Self> {
         let processes = crate::process::enumerate_processes()?;
-        let taken_at = Instant::now();
-        let process_map = processes.iter().map(|p| (p.pid, p.clone())).collect();
+        Ok(Self::from_processes(processes, Instant::now()))
+    }
 
-        Ok(Self {
+    /// Build a snapshot from an already-enumerated process list.
+    pub fn from_processes(processes: Vec<Process>, taken_at: Instant) -> Self {
+        let process_map = processes.iter().map(|p| (p.pid, p.clone())).collect();
+        Self {
             taken_at,
             processes,
             process_map,
-        })
+        }
     }
 
     /// Get a process by PID
@@ -70,7 +73,44 @@ impl Default for ProcessSnapshot {
 mod tests {
     use super::*;
 
+    fn proc(pid: u32, ppid: u32, name: &str) -> Process {
+        Process {
+            pid,
+            name: name.to_string(),
+            ppid: Some(ppid),
+            cpu_percent: None,
+            memory_bytes: None,
+            gpu_percent: None,
+            gpu_memory_bytes: None,
+            path: None,
+            signature: None,
+        }
+    }
+
     #[test]
+    fn from_processes_indexes_every_pid() {
+        let snapshot = ProcessSnapshot::from_processes(
+            vec![
+                proc(4, 0, "System"),
+                proc(100, 4, "smss.exe"),
+                proc(200, 100, "csrss.exe"),
+            ],
+            Instant::now(),
+        );
+        assert_eq!(snapshot.len(), 3);
+        assert_eq!(
+            snapshot.get_process(100).map(|p| p.name.as_str()),
+            Some("smss.exe")
+        );
+        assert!(snapshot.has_pid(200));
+        assert!(!snapshot.has_pid(300));
+        let mut pids: Vec<u32> = snapshot.pids().collect();
+        pids.sort_unstable();
+        assert_eq!(pids, vec![4, 100, 200]);
+    }
+
+    #[test]
+    #[cfg(windows)]
     fn test_snapshot_creation() {
         let snapshot = ProcessSnapshot::new().unwrap();
         assert!(!snapshot.is_empty());
@@ -78,6 +118,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
     fn test_snapshot_lookup() {
         let snapshot = ProcessSnapshot::new().unwrap();
 
@@ -94,6 +135,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
     fn test_snapshot_pids() {
         let snapshot = ProcessSnapshot::new().unwrap();
         let pids: Vec<u32> = snapshot.pids().collect();

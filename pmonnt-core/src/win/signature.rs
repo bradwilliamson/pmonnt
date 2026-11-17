@@ -15,47 +15,7 @@ use windows::Win32::Security::Cryptography::{
 };
 use windows::core::PCWSTR;
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct SignatureInfo {
-    pub is_signed: bool,
-    pub is_valid: bool,
-    pub signer_name: Option<String>,
-    pub issuer_name: Option<String>,
-    pub timestamp: Option<std::time::SystemTime>,
-    pub catalog_signed: bool,
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SignatureStatus {
-    Valid,
-    Invalid,
-    NotSigned,
-    CatalogSigned,
-    Untrusted,
-    Expired,
-}
-
-impl SignatureInfo {
-    pub fn status(&self) -> SignatureStatus {
-        if !self.is_signed {
-            return SignatureStatus::NotSigned;
-        }
-
-        if self.is_valid {
-            if self.catalog_signed {
-                return SignatureStatus::CatalogSigned;
-            }
-            return SignatureStatus::Valid;
-        }
-
-        match self.error.as_deref() {
-            Some("Expired") => SignatureStatus::Expired,
-            Some("Untrusted") => SignatureStatus::Untrusted,
-            _ => SignatureStatus::Invalid,
-        }
-    }
-}
+pub use crate::signature::{SignatureInfo, SignatureStatus};
 
 #[repr(C)]
 #[allow(non_snake_case)]
@@ -99,7 +59,10 @@ const WTD_REVOKE_NONE: u32 = 0;
 const WTD_CHOICE_FILE: u32 = 1;
 const WTD_STATEACTION_VERIFY: u32 = 1;
 const WTD_STATEACTION_CLOSE: u32 = 2;
-const WTD_CACHE_ONLY_URL_RETRIEVAL: u32 = 0x00000004;
+// Never fetch CRLs or AIA certificates over the network: a signature check must not block on
+// a slow or offline network, and revocation is not checked anyway.
+const WTD_PROV_FLAGS: u32 = windows::Win32::Security::WinTrust::WTD_CACHE_ONLY_URL_RETRIEVAL.0
+    | windows::Win32::Security::WinTrust::WTD_REVOCATION_CHECK_NONE.0;
 
 const WINTRUST_ACTION_GENERIC_VERIFY_V2: WintrustGuid = WintrustGuid {
     Data1: 0x00AAC56B,
@@ -108,12 +71,16 @@ const WINTRUST_ACTION_GENERIC_VERIFY_V2: WintrustGuid = WintrustGuid {
     Data4: [0x8C, 0xC2, 0x00, 0xC0, 0x4F, 0xC2, 0x95, 0xEE],
 };
 
-const TRUST_E_NOSIGNATURE: i32 = -0x7FF6FE00_i32; // 0x800B0100
-const TRUST_E_EXPLICIT_DISTRUST: i32 = -0x7FF6FDFC_i32; // 0x800B0104
-const TRUST_E_SUBJECT_NOT_TRUSTED: i32 = -0x7FF6FDFE_i32; // 0x800B0102
-const CRYPT_E_SECURITY_SETTINGS: i32 = -0x7FF6CFFD_i32; // 0x80092003
-const CERT_E_EXPIRED: i32 = -0x7FF4FEFF_i32; // 0x800B0101
-const CERT_E_UNTRUSTEDROOT: i32 = -0x7FF4FEF7_i32; // 0x800B0109
+// HRESULTs returned by WinVerifyTrust, taken from the windows crate so they cannot drift.
+pub(crate) const TRUST_E_NOSIGNATURE: i32 = windows::Win32::Foundation::TRUST_E_NOSIGNATURE.0;
+pub(crate) const TRUST_E_EXPLICIT_DISTRUST: i32 =
+    windows::Win32::Foundation::TRUST_E_EXPLICIT_DISTRUST.0;
+pub(crate) const TRUST_E_SUBJECT_NOT_TRUSTED: i32 =
+    windows::Win32::Foundation::TRUST_E_SUBJECT_NOT_TRUSTED.0;
+pub(crate) const CRYPT_E_SECURITY_SETTINGS: i32 =
+    windows::Win32::Foundation::CRYPT_E_SECURITY_SETTINGS.0;
+const CERT_E_EXPIRED: i32 = windows::Win32::Foundation::CERT_E_EXPIRED.0;
+const CERT_E_UNTRUSTEDROOT: i32 = windows::Win32::Foundation::CERT_E_UNTRUSTEDROOT.0;
 
 #[link(name = "wintrust")]
 unsafe extern "system" {
@@ -135,7 +102,9 @@ fn classify_winverifytrust_error(code: i32) -> &'static str {
     }
 }
 
-fn winverifytrust_path(path: &Path) -> Result<i32> {
+/// Run `WinVerifyTrust(WINTRUST_ACTION_GENERIC_VERIFY_V2)` on a file and return its HRESULT
+/// (0 means a valid embedded signature). Never touches the network.
+pub(crate) fn winverifytrust_path(path: &Path) -> Result<i32> {
     let wide_path: Vec<u16> = path
         .as_os_str()
         .encode_wide()
@@ -171,7 +140,7 @@ fn winverifytrust_path(path: &Path) -> Result<i32> {
             hWVTStateData: HANDLE::default(),
             pwszURLReference: std::ptr::null(),
             // Avoid network retrieval in UI tooling contexts.
-            dwProvFlags: WTD_CACHE_ONLY_URL_RETRIEVAL,
+            dwProvFlags: WTD_PROV_FLAGS,
             dwUIContext: 0,
             pSignatureSettings: std::ptr::null_mut(),
         };
@@ -487,6 +456,33 @@ pub fn verify_signature(path: &Path) -> Result<SignatureInfo> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn trust_constants_match_winerror_h() {
+        assert_eq!(TRUST_E_NOSIGNATURE as u32, 0x800B_0100);
+        assert_eq!(TRUST_E_EXPLICIT_DISTRUST as u32, 0x800B_0111);
+        assert_eq!(TRUST_E_SUBJECT_NOT_TRUSTED as u32, 0x800B_0004);
+        assert_eq!(CRYPT_E_SECURITY_SETTINGS as u32, 0x8009_2026);
+        assert_eq!(WTD_PROV_FLAGS, 0x1000 | 0x10);
+    }
+
+    #[test]
+    fn unsigned_file_reports_not_signed() {
+        // A freshly written file has no Authenticode signature and is not in a catalog.
+        let dir = std::env::temp_dir().join(format!("pmonnt-sig-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("unsigned.exe");
+        std::fs::write(&path, b"MZ not really a PE").unwrap();
+        let code = winverifytrust_path(&path).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_ne!(code, 0, "unsigned file must not verify");
+        assert!(
+            code == TRUST_E_NOSIGNATURE
+                || code == windows::Win32::Foundation::TRUST_E_SUBJECT_FORM_UNKNOWN.0,
+            "unexpected WinVerifyTrust result 0x{:08X}",
+            code as u32
+        );
+    }
 
     #[test]
     fn test_status() {

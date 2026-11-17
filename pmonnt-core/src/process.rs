@@ -1,5 +1,6 @@
 //! Process enumeration functionality
 
+#[cfg(windows)]
 use anyhow::Result;
 
 use crate::SignatureInfo;
@@ -30,16 +31,18 @@ pub struct Process {
 }
 
 /// Get a list of all running processes
+#[cfg(windows)]
 pub fn enumerate_processes() -> Result<Vec<Process>> {
     crate::win::process_enum::enumerate_processes()
 }
 
 /// Get the total count of running processes
+#[cfg(windows)]
 pub fn get_process_count() -> Result<usize> {
     Ok(enumerate_processes()?.len())
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 mod tests {
     use super::*;
 

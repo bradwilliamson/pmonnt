@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 /// Compute handle summaries for all processes from raw handle list
 pub fn compute_summaries(
-    handles: &[crate::win::handles::HandleEntry],
+    handles: &[crate::handles::entry::HandleEntry],
 ) -> HashMap<u32, HandleSummary> {
     let mut per_pid: HashMap<u32, HashMap<u16, u32>> = HashMap::new();
 
@@ -29,25 +29,25 @@ mod tests {
     #[test]
     fn compute_summaries_groups_by_pid_and_counts_types() {
         let handles = vec![
-            crate::win::handles::HandleEntry {
+            crate::handles::entry::HandleEntry {
                 pid: 10,
                 handle_value: 1,
                 object_type_index: 30,
                 granted_access: 0,
             },
-            crate::win::handles::HandleEntry {
+            crate::handles::entry::HandleEntry {
                 pid: 10,
                 handle_value: 2,
                 object_type_index: 30,
                 granted_access: 0,
             },
-            crate::win::handles::HandleEntry {
+            crate::handles::entry::HandleEntry {
                 pid: 10,
                 handle_value: 3,
                 object_type_index: 7,
                 granted_access: 0,
             },
-            crate::win::handles::HandleEntry {
+            crate::handles::entry::HandleEntry {
                 pid: 20,
                 handle_value: 4,
                 object_type_index: 7,

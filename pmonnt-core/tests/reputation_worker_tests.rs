@@ -3,6 +3,7 @@
 //! These tests validate the job processing logic in the reputation worker,
 //! including hash computation error handling, lookup state transitions,
 //! and configuration updates.
+#![cfg(windows)]
 
 use pmonnt_core::local_cache::LocalCacheProvider;
 use pmonnt_core::reputation::LookupState;

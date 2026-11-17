@@ -24,7 +24,7 @@ impl HandleSummary {
 
         let mut by_type: Vec<(String, u32)> = entries
             .iter()
-            .map(|(type_idx, count)| (crate::win::handles::get_type_name(*type_idx), *count))
+            .map(|(type_idx, count)| (crate::handles::entry::get_type_name(*type_idx), *count))
             .collect();
 
         // Sort by count descending

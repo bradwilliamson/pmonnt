@@ -1,4 +1,5 @@
 //! Tests for thread parsing and sorting (not OS-dependent)
+#![cfg(windows)]
 use pmonnt_core::thread::{ThreadCache, ThreadInfo};
 use std::time::{Duration, SystemTime};
 

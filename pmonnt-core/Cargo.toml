@@ -21,17 +21,6 @@ path = "src/bin/test_services.rs"
 anyhow = "1.0"
 log = "0.4"
 thiserror = "2.0"
-windows = { version = "0.62", features = ["Win32_Foundation", "Win32_System_Diagnostics_ToolHelp", "Win32_Security", "Win32_Security_WinTrust", "Win32_Security_Cryptography", "Win32_System_Threading", "Win32_Security_Authorization", "Win32_Security_Authorization_UI", "Win32_System_Com", "Win32_UI_Controls", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_System_ProcessStatus", "Win32_System_Memory", "Win32_System_Kernel", "Win32_Storage_FileSystem", "Win32_System_Diagnostics_Debug", "Win32_System_Services", "Win32_System_LibraryLoader"] }
-windows-core = "0.62"
-windows-sys = { version = "0.61", features = [
-	"Win32_Foundation",
-	"Win32_NetworkManagement_IpHelper",
-	"Win32_Networking_WinSock",
-	"Win32_Security",
-	"Win32_Security_Authorization",
-	"Win32_System_Diagnostics_ToolHelp",
-	"Win32_System_Threading",
-] }
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "charset", "http2", "system-proxy", "json", "form", "blocking", "multipart"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 serde = { version = "1.0", features = ["derive"] }
@@ -46,6 +35,21 @@ tokio-util = "0.7"
 yara-x = "1.23"
 zip = { version = "9.6", default-features = false, features = ["deflate"] }
 url = "2.5"
+
+# Win32 bindings are only needed (and only build) on Windows; the platform-independent
+# modules compile everywhere so they can be tested and benchmarked under Valgrind on Linux.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_System_Diagnostics_ToolHelp", "Win32_Security", "Win32_Security_WinTrust", "Win32_Security_Cryptography", "Win32_System_Threading", "Win32_Security_Authorization", "Win32_Security_Authorization_UI", "Win32_System_Com", "Win32_UI_Controls", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_System_ProcessStatus", "Win32_System_Memory", "Win32_System_Kernel", "Win32_Storage_FileSystem", "Win32_System_Diagnostics_Debug", "Win32_System_Services", "Win32_System_LibraryLoader"] }
+windows-core = "0.62"
+windows-sys = { version = "0.61", features = [
+	"Win32_Foundation",
+	"Win32_NetworkManagement_IpHelper",
+	"Win32_Networking_WinSock",
+	"Win32_Security",
+	"Win32_Security_Authorization",
+	"Win32_System_Diagnostics_ToolHelp",
+	"Win32_System_Threading",
+] }
 
 [dev-dependencies]
 tempfile = "3.27"

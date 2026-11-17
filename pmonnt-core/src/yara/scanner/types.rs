@@ -42,6 +42,7 @@ impl ScanOptions {
         }
     }
 
+    #[cfg_attr(not(windows), allow(dead_code))] // only the Windows process scanner uses it
     pub(crate) fn is_suppressed(&self, rule_name: &str) -> bool {
         if self
             .suppressed_rule_names
@@ -116,12 +117,14 @@ pub struct ScanMatch {
 
 #[derive(Debug, Error)]
 pub enum ScanError {
+    #[cfg(windows)]
     #[error("Memory error: {0}")]
     MemoryError(#[from] crate::yara::memory::MemoryError),
     #[error("Engine error: {0}")]
     EngineError(#[from] crate::yara::engine::EngineError),
     #[error("Scan cancelled")]
     Cancelled,
+    #[cfg(windows)]
     #[error("Windows error: {0}")]
     WindowsError(#[from] windows::core::Error),
 }

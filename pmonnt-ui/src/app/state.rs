@@ -536,7 +536,10 @@ pub(super) fn try_build_app() -> anyhow::Result<PMonNTApp> {
                         log::error!("YARA engine compilation failed: {e}");
                         // Log first 500 chars of combined source for debugging
                         let src = rule_manager.combined_source();
-                        log::error!("Combined source preview: {}", &src[..src.len().min(500)]);
+                        log::error!(
+                            "Combined source preview: {}",
+                            &src[..src.floor_char_boundary(500)]
+                        );
                         None
                     }
                 };

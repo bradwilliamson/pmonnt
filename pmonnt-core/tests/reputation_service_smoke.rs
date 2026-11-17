@@ -1,3 +1,4 @@
+#![cfg(windows)]
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 

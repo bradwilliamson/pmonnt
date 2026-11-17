@@ -8,82 +8,78 @@ use crate::win::HandleGuard;
 use anyhow::{Result, anyhow};
 use windows::Win32::Foundation::INVALID_HANDLE_VALUE;
 use windows::Win32::System::Diagnostics::ToolHelp::{
-    CreateToolhelp32Snapshot, PROCESSENTRY32, Process32First, Process32Next, TH32CS_SNAPPROCESS,
+    CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
 };
 
-/// Enumerate all running processes on the system
+/// Enumerate all running processes on the system.
 ///
-/// # Safety
-/// This function uses Windows API calls that are inherently unsafe.
-/// The invariants are:
-/// - All handles are properly closed using CloseHandle
-/// - Memory is managed by Rust's ownership system
-/// - No dangling pointers or use-after-free
+/// Uses the wide-character ToolHelp API so executable names in any language come back
+/// intact (the ANSI variant mangles anything outside the system code page).
 pub fn enumerate_processes() -> Result<Vec<Process>> {
-    let mut processes = Vec::new();
-
-    // SAFETY: CreateToolhelp32Snapshot is a Windows API that creates a snapshot
-    // of the current processes. The handle returned is valid and must be closed.
+    // SAFETY: CreateToolhelp32Snapshot has no pointer arguments; on success the returned
+    // handle is owned by us and closed by the guard below.
     let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)? };
-
     if snapshot == INVALID_HANDLE_VALUE {
         return Err(anyhow!("Failed to create process snapshot"));
     }
+    // Owns the snapshot from here on, so every return path closes it.
+    let snapshot = HandleGuard::new(snapshot);
 
-    // SAFETY: Creating zero-initialized POD struct PROCESSENTRY32 which will be filled by Process32First
-    let mut process_entry: PROCESSENTRY32 = unsafe { std::mem::zeroed() };
-    process_entry.dwSize = std::mem::size_of::<PROCESSENTRY32>() as u32;
+    let mut entry = PROCESSENTRY32W {
+        dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+        ..Default::default()
+    };
 
-    // SAFETY: Process32First enumerates the first process in the snapshot.
-    // The process_entry structure is properly initialized with dwSize.
-    let success = unsafe { Process32First(snapshot, &raw mut process_entry) };
-
-    if success.is_err() {
-        // SAFETY: Close the snapshot handle even on failure
-        drop(HandleGuard::new(snapshot));
+    // SAFETY: `entry` is a valid PROCESSENTRY32W with dwSize set, as the API requires.
+    if unsafe { Process32FirstW(snapshot.raw(), &raw mut entry) }.is_err() {
         return Err(anyhow!("Failed to get first process"));
     }
 
+    let mut processes = Vec::with_capacity(512);
     loop {
-        // Convert the ANSI string to a Rust String
-        let name = ansi_to_string(&process_entry.szExeFile)?;
-
-        let process = Process {
-            pid: process_entry.th32ProcessID,
-            name,
-            ppid: Some(process_entry.th32ParentProcessID),
+        processes.push(Process {
+            pid: entry.th32ProcessID,
+            name: wide_to_string(&entry.szExeFile),
+            ppid: Some(entry.th32ParentProcessID),
             cpu_percent: None,
             memory_bytes: None,
             gpu_percent: None,
             gpu_memory_bytes: None,
             path: None,
             signature: None,
-        };
+        });
 
-        processes.push(process);
-
-        // SAFETY: Process32Next enumerates the next process in the snapshot.
-        // The process_entry structure remains valid for reuse.
-        let success = unsafe { Process32Next(snapshot, &raw mut process_entry) };
-
-        if success.is_err() {
+        // SAFETY: same snapshot handle and entry buffer as above.
+        if unsafe { Process32NextW(snapshot.raw(), &raw mut entry) }.is_err() {
             break;
         }
     }
 
-    // SAFETY: Close the snapshot handle when done (HandleGuard will close on drop)
-    drop(HandleGuard::new(snapshot));
-
     Ok(processes)
 }
 
-/// Convert an ANSI (8-bit) string to a Rust String
-fn ansi_to_string(ansi: &[i8]) -> Result<String> {
-    // Find the null terminator
-    let len = ansi.iter().position(|&c| c == 0).unwrap_or(ansi.len());
+/// Convert a NUL-terminated UTF-16 buffer to a String, replacing invalid sequences.
+fn wide_to_string(wide: &[u16]) -> String {
+    let len = wide.iter().position(|&c| c == 0).unwrap_or(wide.len());
+    String::from_utf16_lossy(&wide[..len])
+}
 
-    // Convert i8 to u8 (safe since we're dealing with ASCII/ANSI)
-    let bytes: Vec<u8> = ansi[..len].iter().map(|&c| c as u8).collect();
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    String::from_utf8(bytes).map_err(|_| anyhow!("Invalid ANSI string"))
+    #[test]
+    fn wide_to_string_handles_non_ascii_and_missing_terminator() {
+        let name: Vec<u16> = "日本語プロセス.exe\0garbage".encode_utf16().collect();
+        assert_eq!(wide_to_string(&name), "日本語プロセス.exe");
+        let unterminated: Vec<u16> = "Größe.exe".encode_utf16().collect();
+        assert_eq!(wide_to_string(&unterminated), "Größe.exe");
+    }
+
+    #[test]
+    fn enumerate_finds_current_process() {
+        let me = std::process::id();
+        let procs = enumerate_processes().unwrap();
+        assert!(procs.iter().any(|p| p.pid == me && !p.name.is_empty()));
+    }
 }

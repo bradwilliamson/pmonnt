@@ -1,4 +1,5 @@
 //! Tests for network module helper functions
+#![cfg(windows)]
 
 use pmonnt_core::network::{Protocol, TcpState};
 
