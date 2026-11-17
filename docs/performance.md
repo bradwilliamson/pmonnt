@@ -82,13 +82,20 @@ Measured against the commit before the optimizations (same benchmark code and fi
 
 | Benchmark | Instructions before | after | Speedup | Allocations before | after |
 |---|---:|---:|---:|---:|---:|
-| tree frame, 400 procs | 2,857,333 | 335,729 | 8.5x | 2,938 | 194 |
-| tree frame, 1200 procs | 8,884,957 | 984,376 | 9.0x | 8,643 | 391 |
-| grouped frame, 400 procs | 2,045,138 | 350,755 | 5.8x | 1,619 | 149 |
-| grouped frame, 1200 procs | 5,829,461 | 917,240 | 6.4x | 4,416 | 160 |
-| snapshot refresh + diff, 400 | 1,021,303 | 151,497 | 6.7x | 1,558 | 34 |
-| snapshot refresh + diff, 1200 | 3,065,033 | 440,698 | 7.0x | 4,626 | 71 |
-| handle scan, 100k handles | 34,569,518 | 4,470,281 | 7.7x | 5,617 | 4,821 |
+| tree frame, 400 procs | 2,853,588 | 339,178 | 8.4x | 2,938 | 194 |
+| tree frame, 1200 procs | 8,884,008 | 993,185 | 8.9x | 8,643 | 391 |
+| grouped frame, 400 procs | 2,218,777 | 353,385 | 6.3x | 1,619 | 149 |
+| grouped frame, 1200 procs | 6,198,519 | 920,837 | 6.7x | 4,416 | 160 |
+| snapshot refresh + diff, 400 | 716,943 | 122,413 | 5.9x | 793 | 33 |
+| snapshot refresh + diff, 1200 | 2,150,842 | 353,670 | 6.1x | 2,345 | 70 |
+| handle scan, 100k handles | 34,584,808 | 4,451,532 | 7.8x | 5,617 | 4,821 |
+
+The old grouped-view numbers vary by about ±10% between runs, because the old code sorted
+groups that started in `HashMap` iteration order (randomized per process), so the number of
+comparisons varied. The new code is deterministic. The refresh numbers don't count the full
+deep copy of the previous snapshot that the old UI made on every refresh, so they understate
+the old cost. The new view index adds about 0.88M instructions once per refresh at 400
+processes (`view_index_build`), against roughly 2M saved on every frame.
 
 Where the time went, and what changed:
 

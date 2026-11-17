@@ -4,7 +4,7 @@ use std::cmp::Ordering;
 
 use crate::snapshot::{NameGroup, ProcessSnapshot};
 
-use super::sort::{Handles, metric_value, num, pid_contains, signer_key};
+use super::sort::{Handles, Metric, float, metric_value, pid_contains, signer_key};
 use super::{GroupSort, GroupedOptions, GroupedRow, RowMetrics};
 
 /// Per-group sort key, computed once per group per frame.
@@ -15,7 +15,7 @@ struct Keyed<'s> {
     leader_pid: Option<u32>,
     /// Aggregate value (sum, or max for GPU %); `None` only when no member has data and
     /// the mode distinguishes that (handles).
-    agg: Option<f64>,
+    agg: Option<Metric>,
     min_pid: u32,
 }
 
@@ -114,7 +114,8 @@ fn key_group<'s>(
             Some(0.0)
         };
         for &pid in pids {
-            let Some(v) = metric_value(pid, sort, metrics, handles) else {
+            // Leader mode compares in f64, as the original implementation did.
+            let Some(v) = metric_value(pid, sort, metrics, handles).map(Metric::as_f64) else {
                 continue;
             };
             agg = Some(match (sort, agg) {
@@ -127,7 +128,7 @@ fn key_group<'s>(
         }
         k.leader = best.map(|(v, _)| v);
         k.leader_pid = best.map(|(_, pid)| pid);
-        k.agg = agg.and_then(num);
+        k.agg = agg.and_then(float);
         return k;
     }
 
@@ -139,14 +140,14 @@ fn key_group<'s>(
                 .iter()
                 .filter_map(|p| metrics.cpu_memory_data.get(p).map(|(c, _)| *c))
                 .sum();
-            num(f64::from(sum))
+            float(f64::from(sum))
         }
         GroupSort::Memory => {
             let sum: u64 = pids
                 .iter()
                 .filter_map(|p| metrics.cpu_memory_data.get(p).and_then(|(_, m)| *m))
                 .sum();
-            Some(sum as f64)
+            Some(Metric::Int(sum))
         }
         GroupSort::Disk => {
             let sum: f64 = pids
@@ -154,28 +155,28 @@ fn key_group<'s>(
                 .filter_map(|p| metrics.io_rate_by_pid.get(p))
                 .map(|r| r.read_bytes_per_sec + r.write_bytes_per_sec)
                 .sum();
-            num(sum)
+            float(sum)
         }
         GroupSort::GPU => {
             let max = pids
                 .iter()
                 .filter_map(|p| metrics.gpu_data.get(p).map(|(pct, ..)| *pct))
                 .fold(0.0_f32, f32::max);
-            num(f64::from(max))
+            float(f64::from(max))
         }
         GroupSort::GPUMemory => {
             let sum: u64 = pids
                 .iter()
                 .filter_map(|p| metrics.gpu_data.get(p).map(|(.., total)| *total))
                 .sum();
-            Some(sum as f64)
+            Some(Metric::Int(sum))
         }
         GroupSort::Threads => {
             let sum: usize = pids
                 .iter()
                 .filter_map(|p| metrics.global_thread_counts.get(p))
                 .sum();
-            Some(sum as f64)
+            Some(Metric::Int(sum as u64))
         }
         GroupSort::Handles => {
             let mut total: u32 = 0;
@@ -186,7 +187,7 @@ fn key_group<'s>(
                     any = true;
                 }
             }
-            any.then_some(f64::from(total))
+            any.then_some(Metric::Int(u64::from(total)))
         }
         GroupSort::Name | GroupSort::PID | GroupSort::VerifiedSigner => None,
     };
@@ -211,7 +212,7 @@ fn sort_groups(keyed: &mut [Keyed<'_>], opts: &GroupedOptions<'_>) {
                 (None, None) => Ordering::Equal,
             };
             let agg = || match (a.agg, b.agg) {
-                (Some(x), Some(y)) => flip(x.total_cmp(&y)),
+                (Some(x), Some(y)) => flip(x.cmp(y)),
                 (Some(_), None) => Ordering::Less,
                 (None, Some(_)) => Ordering::Greater,
                 (None, None) => Ordering::Equal,
@@ -244,7 +245,7 @@ fn sort_groups(keyed: &mut [Keyed<'_>], opts: &GroupedOptions<'_>) {
         }),
         _ => keyed.sort_by(|a, b| {
             let primary = match (a.agg, b.agg) {
-                (Some(x), Some(y)) => flip(x.total_cmp(&y)),
+                (Some(x), Some(y)) => flip(x.cmp(y)),
                 // Groups with data come first in both directions.
                 (Some(_), None) => Ordering::Less,
                 (None, Some(_)) => Ordering::Greater,

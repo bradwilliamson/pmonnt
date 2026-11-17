@@ -267,9 +267,14 @@ pub fn fixture(n: usize) -> Fixture {
     let mut handle_cache = HandleCache::new(u64::MAX / 4);
     handle_cache.update(summaries);
 
+    // Iterate paths in a fixed order: HashMap order is randomized per run, and the RNG draws
+    // below must line up with the same paths every time.
+    let mut unique_paths: Vec<&String> = image_paths.values().collect();
+    unique_paths.sort();
+    unique_paths.dedup();
     let mut signatures = HashMap::new();
-    for path in image_paths.values() {
-        if signatures.contains_key(path) || rng.below(5) == 0 {
+    for path in unique_paths {
+        if rng.below(5) == 0 {
             continue; // ~20% of paths not verified yet
         }
         let signed = !path.contains("dev");

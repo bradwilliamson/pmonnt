@@ -20,6 +20,39 @@ pub(crate) fn num(v: f64) -> Option<f64> {
     if v.is_nan() { None } else { Some(v + 0.0) }
 }
 
+/// A sort key. Integer metrics stay exact (an `f64` would merge values above 2^53);
+/// floating-point metrics are normalized by [`num`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum Metric {
+    Int(u64),
+    Float(f64),
+}
+
+impl Metric {
+    /// Total order. Each sort mode produces a single variant; the mixed arms only exist so
+    /// the function is total.
+    pub(crate) fn cmp(self, other: Self) -> Ordering {
+        match (self, other) {
+            (Self::Int(a), Self::Int(b)) => a.cmp(&b),
+            (Self::Float(a), Self::Float(b)) => a.total_cmp(&b),
+            (Self::Int(a), Self::Float(b)) => (a as f64).total_cmp(&b),
+            (Self::Float(a), Self::Int(b)) => a.total_cmp(&(b as f64)),
+        }
+    }
+
+    pub(crate) fn as_f64(self) -> f64 {
+        match self {
+            Self::Int(v) => v as f64,
+            Self::Float(v) => v,
+        }
+    }
+}
+
+/// A floating-point key, or `None` for NaN.
+pub(crate) fn float(v: f64) -> Option<Metric> {
+    num(v).map(Metric::Float)
+}
+
 /// Fresh handle summaries, read once per frame (see `HandleCache::fresh_summaries`).
 pub(crate) type Handles<'a> = Option<&'a HashMap<u32, HandleSummary>>;
 
@@ -29,30 +62,38 @@ pub(crate) fn metric_value(
     sort: GroupSort,
     metrics: &RowMetrics<'_>,
     handles: Handles<'_>,
-) -> Option<f64> {
+) -> Option<Metric> {
     match sort {
         GroupSort::Handles => handles
             .and_then(|m| m.get(&pid))
-            .map(|s| f64::from(s.total)),
-        GroupSort::Threads => metrics.global_thread_counts.get(&pid).map(|&c| c as f64),
+            .map(|s| Metric::Int(u64::from(s.total))),
+        GroupSort::Threads => metrics
+            .global_thread_counts
+            .get(&pid)
+            .map(|&c| Metric::Int(c as u64)),
         GroupSort::CPU => metrics
             .cpu_memory_data
             .get(&pid)
-            .map(|(cpu, _)| f64::from(*cpu)),
+            .and_then(|(cpu, _)| float(f64::from(*cpu))),
         GroupSort::Memory => metrics
             .cpu_memory_data
             .get(&pid)
             .and_then(|(_, mem)| *mem)
-            .map(|m| m as f64),
+            .map(Metric::Int),
         GroupSort::Disk => metrics
             .io_rate_by_pid
             .get(&pid)
-            .map(|r| r.read_bytes_per_sec + r.write_bytes_per_sec),
-        GroupSort::GPU => metrics.gpu_data.get(&pid).map(|(pct, ..)| f64::from(*pct)),
-        GroupSort::GPUMemory => metrics.gpu_data.get(&pid).map(|(.., total)| *total as f64),
+            .and_then(|r| float(r.read_bytes_per_sec + r.write_bytes_per_sec)),
+        GroupSort::GPU => metrics
+            .gpu_data
+            .get(&pid)
+            .and_then(|(pct, ..)| float(f64::from(*pct))),
+        GroupSort::GPUMemory => metrics
+            .gpu_data
+            .get(&pid)
+            .map(|(.., total)| Metric::Int(*total)),
         GroupSort::Name | GroupSort::PID | GroupSort::VerifiedSigner => None,
     }
-    .and_then(num)
 }
 
 /// (rank, lowercased signer) used by the "Verified Signer" sort. Unknown sorts last.
@@ -135,12 +176,12 @@ pub(crate) fn sort_tree_pids(
             }
         }
         _ => {
-            let mut keyed: Vec<(Option<f64>, u32)> = pids
+            let mut keyed: Vec<(Option<Metric>, u32)> = pids
                 .iter()
                 .map(|&pid| (metric_value(pid, sort, metrics, handles), pid))
                 .collect();
             keyed.sort_unstable_by(|(va, a), (vb, b)| match (va, vb) {
-                (Some(x), Some(y)) => flip(x.total_cmp(y)).then(a.cmp(b)),
+                (Some(x), Some(y)) => flip(x.cmp(*y)).then(a.cmp(b)),
                 (Some(_), None) => Ordering::Less,
                 (None, Some(_)) => Ordering::Greater,
                 (None, None) => a.cmp(b),

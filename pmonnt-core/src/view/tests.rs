@@ -878,3 +878,64 @@ mod differential {
         assert!(cases > 50_000);
     }
 }
+
+#[test]
+fn integer_metrics_sort_exactly_above_f64_precision() {
+    // 2^53 + 1 and 2^53 are equal as f64; integer metrics must still order them.
+    let big = 1u64 << 53;
+    let processes = vec![
+        proc_with_ppid(4, None, "a.exe"),
+        proc_with_ppid(8, None, "b.exe"),
+    ];
+    let snapshot = snapshot_of(&processes);
+    let handle_cache = HandleCache::new(0);
+    let threads: HashMap<u32, usize> = HashMap::new();
+    let mut cpu_memory_data: HashMap<u32, (f32, Option<u64>)> = HashMap::new();
+    cpu_memory_data.insert(4, (0.0, Some(big + 1)));
+    cpu_memory_data.insert(8, (0.0, Some(big)));
+    let io: HashMap<u32, IoRate> = HashMap::new();
+    let gpu: HashMap<u32, (f32, u64, u64, u64)> = HashMap::new();
+    let sigs: HashMap<String, crate::SignatureInfo> = HashMap::new();
+    let paths: HashMap<u32, String> = HashMap::new();
+    let metrics = RowMetrics {
+        handle_cache: &handle_cache,
+        global_thread_counts: &threads,
+        cpu_memory_data: &cpu_memory_data,
+        io_rate_by_pid: &io,
+        gpu_data: &gpu,
+        signature_cache_by_path: &sigs,
+        pid_to_image_path: &paths,
+    };
+
+    let expanded = HashSet::new();
+    let tree = build_process_rows(
+        &snapshot,
+        &TreeOptions {
+            expanded: &expanded,
+            selected_pid: None,
+            visible_pids: None,
+            filter_text_lower: "",
+            max_depth: 16,
+            sort: GroupSort::Memory,
+            sort_desc: false,
+        },
+        &metrics,
+    );
+    assert_eq!(tree.iter().map(|r| r.pid).collect::<Vec<_>>(), vec![8, 4]);
+
+    let grouped = build_grouped_rows(
+        &snapshot,
+        &GroupedOptions {
+            selected_pid: None,
+            filter_text_lower: "",
+            sort: GroupSort::Memory,
+            sort_desc: false,
+            sort_by_leader: false,
+        },
+        &metrics,
+    );
+    assert_eq!(
+        grouped.iter().map(|g| g.name.as_str()).collect::<Vec<_>>(),
+        vec!["b.exe", "a.exe"]
+    );
+}

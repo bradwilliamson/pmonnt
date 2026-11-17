@@ -19,28 +19,27 @@ use pmonnt_core::yara::YaraEngine;
 
 use fixtures::{epoch, fixture, handle_table, next_refresh};
 
-fn two_refreshes(n: usize) -> (Vec<Process>, Vec<Process>) {
+/// The previous snapshot already exists when a refresh happens, so it is built in setup.
+fn two_refreshes(n: usize) -> (ProcessSnapshot, Vec<Process>) {
     let prev = fixture(n).processes;
     let next = next_refresh(&prev, 7);
-    (prev, next)
+    (ProcessSnapshot::from_processes(prev, epoch()), next)
 }
 
-// One 2-second refresh: build the new snapshot, diff it against the previous one and
-// record exited processes (pmonnt-ui/src/app/update/snapshot.rs).
+// One 2-second refresh: index the new snapshot, diff it against the previous one (which
+// already exists) and record exited processes (pmonnt-ui/src/app/update/snapshot.rs).
 #[library_benchmark(setup = two_refreshes, teardown = fixtures::discard)]
 #[bench::desktop_400(400)]
 #[bench::busy_1200(1200)]
 fn snapshot_refresh(
-    (prev, next): (Vec<Process>, Vec<Process>),
+    (prev, next): (ProcessSnapshot, Vec<Process>),
 ) -> (
     ProcessSnapshot,
     ProcessSnapshot,
     ProcessDiff,
     ExitedProcessBuffer,
 ) {
-    let t = epoch();
-    let prev = ProcessSnapshot::from_processes(prev, t);
-    let next = ProcessSnapshot::from_processes(next, t);
+    let next = ProcessSnapshot::from_processes(next, epoch());
     let diff = ProcessDiff::new(&prev, &next);
     let mut exited = ExitedProcessBuffer::new(std::time::Duration::from_secs(30));
     exited.add_from_diff(&diff, &prev);
