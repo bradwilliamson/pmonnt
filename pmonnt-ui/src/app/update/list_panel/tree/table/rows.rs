@@ -29,6 +29,8 @@ pub(super) fn render_rows(
 
         // Use egui_extras built-in selection highlighting (safe, respects clip rect)
         row.set_selected(is_selected_row);
+        // A click on the expander only expands/collapses; it must not also select the row.
+        let mut expander_clicked = false;
 
         let apply_selected_text_color = |ui: &mut egui::Ui| {
             if is_selected_row && is_3270 {
@@ -61,6 +63,7 @@ pub(super) fn render_rows(
 
                             if item.has_children {
                                 if ui.small_button(glyph).clicked() {
+                                    expander_clicked = true;
                                     if app.expanded_pids.contains(&item.pid) {
                                         app.expanded_pids.remove(&item.pid);
                                     } else {
@@ -370,9 +373,12 @@ pub(super) fn render_rows(
         }
 
         // Get row response for click handling and scrolling (must be after row.col() calls)
-        let row_resp = row.response().interact(egui::Sense::click());
+        // The cells sense clicks (see the TableBuilder). Calling `interact` here again
+        // re-registered the first cell's id over the whole row, which lost clicks in the
+        // first column.
+        let row_resp = row.response();
 
-        if row_resp.clicked() {
+        if row_resp.clicked() && !expander_clicked {
             app.selected_pid = Some(item.pid);
             *selection_changed = true;
         }
@@ -584,7 +590,7 @@ mod tests {
     fn double_click_tree_row_opens_perf_window() {
         use super::super::super::super::PMonNTApp;
 
-        let mut app = PMonNTApp::try_new().expect("test app init");
+        let mut app = PMonNTApp::for_tests();
         let test_pid: u32 = 54321;
 
         // Verify perf_windows is empty before test

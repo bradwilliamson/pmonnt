@@ -133,6 +133,8 @@ pub(crate) struct SelectionSha {
 }
 
 pub(crate) struct PMonNTApp {
+    /// User session or isolated test (decides whether settings are loaded and saved).
+    environment: state::AppEnvironment,
     _tokio_rt: tokio::runtime::Runtime,
     bg_worker: crate::background_worker::BackgroundWorker,
     /// Bumped (on the UI thread) whenever the selection changes; hash jobs and their results
@@ -805,6 +807,8 @@ mod network_sort;
 mod perf;
 pub(crate) mod perf_window;
 mod state;
+#[cfg(test)]
+mod ui_tests;
 mod update;
 
 #[cfg(test)]

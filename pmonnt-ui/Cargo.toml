@@ -37,3 +37,8 @@ path = "src/main.rs"
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+# Drives the real app in tests through its AccessKit tree (find widgets by visible label,
+# click, type) without a window. See docs/ui-testing.md.
+egui_kittest = { version = "0.37", features = ["eframe", "wgpu", "snapshot"] }

@@ -27,25 +27,18 @@ pub(super) fn render_tree_table(
             .filter(|c| *c != ProcessColumnId::Leader)
             .collect();
 
-        let mut table = TableBuilder::new(ui).striped(true);
+        // `cell_layout` applies to the whole table, not one column: setting it per column
+        // left the last column's right-to-left layout on every cell, so names were
+        // right-aligned and tree indentation ran the wrong way. Cells are laid out left to
+        // right; numeric cells right-align themselves.
+        let mut table = TableBuilder::new(ui)
+            .striped(true)
+            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+            // Cells sense clicks so `row.response()` (the union of the cells) reports a
+            // click anywhere in the row, as in egui's table demo.
+            .sense(egui::Sense::click());
         for col in &columns {
-            // Right-align numeric columns for better readability
-            let layout = match col {
-                ProcessColumnId::CPU
-                | ProcessColumnId::Memory
-                | ProcessColumnId::Disk
-                | ProcessColumnId::GPU
-                | ProcessColumnId::GpuDedicated
-                | ProcessColumnId::GpuShared
-                | ProcessColumnId::GpuTotal
-                | ProcessColumnId::Handles
-                | ProcessColumnId::Threads
-                | ProcessColumnId::PID => egui::Layout::right_to_left(egui::Align::Center),
-                _ => egui::Layout::left_to_right(egui::Align::Center),
-            };
-            table = table
-                .column(Column::initial(col.width(&policy)).resizable(true))
-                .cell_layout(layout);
+            table = table.column(Column::initial(col.width(&policy)).resizable(true));
         }
 
         table

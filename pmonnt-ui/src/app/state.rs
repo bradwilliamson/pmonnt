@@ -274,7 +274,28 @@ fn get_config_path() -> std::path::PathBuf {
         .join("pmonnt_handle_leak_config.json")
 }
 
+/// Where the app's settings, keys and caches come from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AppEnvironment {
+    /// The user's API keys, saved layout and leak-detector config (saved again on exit).
+    User,
+    /// Isolated, for UI tests: no API keys, default layout, nothing saved on exit, a
+    /// throwaway reputation cache, and online lookups off with every aggregator provider
+    /// disabled, so a test cannot touch the user's settings or reach the network unless it
+    /// opts in.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "only tests build an isolated app")
+    )]
+    Test,
+}
+
 pub(super) fn try_build_app() -> anyhow::Result<PMonNTApp> {
+    try_build_app_in(AppEnvironment::User)
+}
+
+pub(super) fn try_build_app_in(environment: AppEnvironment) -> anyhow::Result<PMonNTApp> {
+    let user = environment == AppEnvironment::User;
     let tokio_rt = tokio::runtime::Runtime::new()
         .map_err(|e| anyhow::anyhow!("Failed to create Tokio runtime: {e}"))?;
     let tokio_handle = tokio_rt.handle().clone();
@@ -284,9 +305,13 @@ pub(super) fn try_build_app() -> anyhow::Result<PMonNTApp> {
     let current_snapshot = Arc::new(ProcessSnapshot::new().unwrap_or_default());
 
     // Initialize reputation providers
-    let cache_path = std::env::current_dir()
-        .unwrap_or_default()
-        .join("pmonnt_reputation_cache.json");
+    let cache_path = if user {
+        std::env::current_dir()
+            .unwrap_or_default()
+            .join("pmonnt_reputation_cache.json")
+    } else {
+        test_cache_path()
+    };
     let local_cache = Arc::new(LocalCacheProvider::new(cache_path));
     let vt_provider = Arc::new(VirusTotalProvider::new(local_cache.clone()));
 
@@ -362,11 +387,16 @@ pub(super) fn try_build_app() -> anyhow::Result<PMonNTApp> {
     // Must outlive the slowest adaptive scan interval (10 s) plus a slow scan, or handle
     // counts blink out between scans and shuffle the handle sort.
     let mut handle_cache = HandleCache::new(30);
-    let config_path = get_config_path();
-    let _ = handle_cache.load_config(&config_path);
+    if user {
+        let _ = handle_cache.load_config(&get_config_path());
+    }
 
     // Load persisted UI layout config (splitter width + density + perf window size).
-    let (ui_layout, perf_window_size_persisted) = load_ui_layout_config();
+    let (ui_layout, perf_window_size_persisted) = if user {
+        load_ui_layout_config()
+    } else {
+        (UiLayoutConfig::default(), false)
+    };
 
     // If the perf-window size wasn't persisted (fresh install / older config),
     // leave it unset so we can compute a sensible default from the main window
@@ -380,7 +410,11 @@ pub(super) fn try_build_app() -> anyhow::Result<PMonNTApp> {
     // ====== REPLACE FROM HERE ======
 
     // Load all API keys from Windows Credential Manager (with env var overrides)
-    let api_keys = credentials::ApiKeys::load();
+    let api_keys = if user {
+        credentials::ApiKeys::load()
+    } else {
+        credentials::ApiKeys::default()
+    };
 
     // Set VT provider key if available
     if let Some(ref vt_key) = api_keys.vt {
@@ -472,8 +506,9 @@ pub(super) fn try_build_app() -> anyhow::Result<PMonNTApp> {
         tf_ui_state: TfUiState::default(),
         reputation_service,
         pid_to_image_path: HashMap::new(),
-        online_lookups_enabled: true,
-        prev_online_lookups_enabled: true,
+        online_lookups_enabled: user,
+        prev_online_lookups_enabled: user,
+        environment,
         mb_ui_state: MbUiState::default(),
         yara_state: {
             let cache_dir = std::env::current_exe()
@@ -652,6 +687,28 @@ impl PMonNTApp {
     pub(crate) fn try_new() -> anyhow::Result<Self> {
         try_build_app()
     }
+
+    /// An app isolated from the user's keys, settings and the network (see
+    /// [`AppEnvironment::Test`]). Use this, not `try_new`, in tests.
+    #[cfg(test)]
+    pub(crate) fn for_tests() -> Self {
+        let app = try_build_app_in(AppEnvironment::Test).expect("test app init");
+        // The aggregator starts with every provider enabled; ThreatFox answers without a
+        // key, so switch them all off.
+        app.reputation_service
+            .update_config(None, None, None, false, false, false);
+        app
+    }
+}
+
+/// A reputation cache file unique to this test app.
+fn test_cache_path() -> std::path::PathBuf {
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    std::env::temp_dir().join(format!(
+        "pmonnt-test-{}-{n}-reputation.json",
+        std::process::id()
+    ))
 }
 
 impl PMonNTApp {
@@ -668,6 +725,9 @@ impl PMonNTApp {
 
 impl Drop for PMonNTApp {
     fn drop(&mut self) {
+        if self.environment != AppEnvironment::User {
+            return;
+        }
         // Save handle leak detector config on shutdown
         let config_path = get_config_path();
         let _ = self.handle_cache.save_config(&config_path);

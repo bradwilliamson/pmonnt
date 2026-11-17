@@ -30,6 +30,11 @@ impl PMonNTApp {
         // List Panel is now the CentralPanel, taking up remaining space
         let ctx = &ui.ctx().clone();
         egui::CentralPanel::default().show(ui, |ui| {
+            // Text in the process list is not selectable: a selectable label takes the click,
+            // so clicking a process's name (or any text cell) did not select its row. The
+            // details panels keep selectable text for copying.
+            ui.style_mut().interaction.selectable_labels = false;
+
             // (details tabs, scroll areas) keep their existing feel.
             match self.density {
                 Density::Comfortable => {
@@ -275,11 +280,14 @@ impl PMonNTApp {
 
             // Search/filter input with keyboard shortcut hints
             ui.horizontal(|ui| {
-                ui.label("Filter:");
-                egui::TextEdit::singleline(&mut self.filter_text)
-                    .id(egui::Id::unique("process_filter_input"))
-                    .hint_text("/ or Ctrl+F to focus, Esc to clear")
-                    .show(ui);
+                let filter_label = ui.label("Filter:");
+                // Named after its label for screen readers (and UI tests).
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.filter_text)
+                        .id(egui::Id::unique("process_filter_input"))
+                        .hint_text("/ or Ctrl+F to focus, Esc to clear"),
+                )
+                .labelled_by(filter_label.id);
 
                 if ui.button("X").clicked() {
                     self.filter_text.clear();
