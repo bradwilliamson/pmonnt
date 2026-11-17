@@ -1,0 +1,98 @@
+# cargo-deny configuration (https://embarkstudios.github.io/cargo-deny/)
+#
+# Run locally with:  cargo install cargo-deny && cargo deny check
+# CI runs `cargo deny check advisories bans licenses sources` on every push.
+
+[graph]
+# PMonNT is Windows-only; only resolve the dependency graph for that target so
+# Linux/macOS-only crates don't produce noise.
+targets = [
+    { triple = "x86_64-pc-windows-msvc" },
+    { triple = "x86_64-pc-windows-gnu" },
+]
+all-features = true
+
+[output]
+feature-depth = 1
+
+# ---------------------------------------------------------------------------
+# RustSec advisory database
+# ---------------------------------------------------------------------------
+[advisories]
+version = 2
+db-path = "$CARGO_HOME/advisory-dbs"
+db-urls = ["https://github.com/rustsec/advisory-db"]
+# Fail on anything with an advisory; unmaintained/unsound crates are reported too.
+yanked = "deny"
+# Add RUSTSEC ids here only with a comment explaining why they are accepted.
+ignore = [
+]
+
+# ---------------------------------------------------------------------------
+# Licenses
+# ---------------------------------------------------------------------------
+[licenses]
+version = 2
+# Permissive licenses that are compatible with this project's MIT license.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "0BSD",
+    "BSL-1.0",
+    "CC0-1.0",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "OpenSSL",
+    "CDLA-Permissive-2.0",
+    "Ubuntu-font-1.0",
+    "OFL-1.1",
+    "LicenseRef-UFL-1.0",
+]
+confidence-threshold = 0.8
+exceptions = [
+]
+
+# `ring` ships a composite OpenSSL/ISC/MIT license file that cargo-deny
+# cannot classify automatically.
+[[licenses.clarify]]
+crate = "ring"
+expression = "MIT AND ISC AND OpenSSL"
+license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
+
+[licenses.private]
+ignore = true
+
+# ---------------------------------------------------------------------------
+# Bans: duplicate versions, wildcard deps, known-bad crates
+# ---------------------------------------------------------------------------
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+highlight = "all"
+workspace-default-features = "allow"
+external-default-features = "allow"
+deny = [
+    # OpenSSL is not used; everything goes through rustls.
+    { crate = "openssl", reason = "TLS is provided by rustls" },
+    { crate = "openssl-sys", reason = "TLS is provided by rustls" },
+    { crate = "native-tls", reason = "TLS is provided by rustls" },
+]
+skip = [
+]
+skip-tree = [
+]
+
+# ---------------------------------------------------------------------------
+# Sources: only crates.io
+# ---------------------------------------------------------------------------
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
