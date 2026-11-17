@@ -99,7 +99,11 @@ fn test_path_normalization_extended_prefix() {
 #[test]
 fn test_save_config_creates_parent_directory() {
     let temp = tempdir().unwrap();
-    let nested_path = temp.path().join("subdir").join("nested").join("config.json");
+    let nested_path = temp
+        .path()
+        .join("subdir")
+        .join("nested")
+        .join("config.json");
 
     let mut cache = HandleCache::new(60);
     cache.update_detector_config(1000, Some("c:\\test.exe"), 5, 100, 2);
@@ -181,7 +185,8 @@ fn test_update_with_paths_applies_config_to_detector() {
         1234,
         HandleSummary {
             total: 100,
-            by_type: Vec::new(), timestamp: std::time::Instant::now(),
+            by_type: Vec::new(),
+            timestamp: std::time::Instant::now(),
         },
     );
 
@@ -208,7 +213,8 @@ fn test_update_with_paths_defaults_without_config() {
         5678,
         HandleSummary {
             total: 50,
-            by_type: Vec::new(), timestamp: std::time::Instant::now(),
+            by_type: Vec::new(),
+            timestamp: std::time::Instant::now(),
         },
     );
 
@@ -253,7 +259,8 @@ fn test_is_leaking_detects_sustained_increase() {
             1000,
             HandleSummary {
                 total: *count,
-                by_type: Vec::new(), timestamp: std::time::Instant::now(),
+                by_type: Vec::new(),
+                timestamp: std::time::Instant::now(),
             },
         );
         cache2.update_with_paths(summaries, &pid_to_path);
@@ -279,7 +286,8 @@ fn test_is_leaking_false_before_threshold() {
             1000,
             HandleSummary {
                 total: *count,
-                by_type: Vec::new(), timestamp: std::time::Instant::now(),
+                by_type: Vec::new(),
+                timestamp: std::time::Instant::now(),
             },
         );
         cache.update_with_paths(summaries, &pid_to_path);
@@ -302,7 +310,8 @@ fn test_get_delta_returns_handle_difference() {
         2000,
         HandleSummary {
             total: 100,
-            by_type: Vec::new(), timestamp: std::time::Instant::now(),
+            by_type: Vec::new(),
+            timestamp: std::time::Instant::now(),
         },
     );
     cache.update_with_paths(summaries.clone(), &pid_to_path);
@@ -312,7 +321,8 @@ fn test_get_delta_returns_handle_difference() {
         2000,
         HandleSummary {
             total: 125,
-            by_type: Vec::new(), timestamp: std::time::Instant::now(),
+            by_type: Vec::new(),
+            timestamp: std::time::Instant::now(),
         },
     );
     cache.update_with_paths(summaries, &pid_to_path);
@@ -344,7 +354,8 @@ fn test_get_leak_explanation_returns_metrics() {
             3000,
             HandleSummary {
                 total: *count,
-                by_type: Vec::new(), timestamp: std::time::Instant::now(),
+                by_type: Vec::new(),
+                timestamp: std::time::Instant::now(),
             },
         );
         cache2.update_with_paths(summaries, &pid_to_path);
@@ -375,7 +386,8 @@ fn test_reset_detector_clears_leak_state() {
             4000,
             HandleSummary {
                 total: *count,
-                by_type: Vec::new(), timestamp: std::time::Instant::now(),
+                by_type: Vec::new(),
+                timestamp: std::time::Instant::now(),
             },
         );
         cache.update_with_paths(summaries, &pid_to_path);

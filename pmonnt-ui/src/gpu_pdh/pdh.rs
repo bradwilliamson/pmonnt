@@ -3,8 +3,8 @@ use std::{ffi::OsString, os::windows::ffi::OsStringExt};
 use anyhow::Result;
 
 use windows::{
+    Win32::System::Performance::{PDH_MORE_DATA, PdhExpandWildCardPathW},
     core::{PCWSTR, PWSTR},
-    Win32::System::Performance::{PdhExpandWildCardPathW, PDH_MORE_DATA},
 };
 
 pub(super) type PdhCounterHandle = isize;

@@ -3,8 +3,8 @@ use crate::reputation::{
     AggregatedReputation, LookupState, ProviderFinding, ReputationProvider, Verdict,
 };
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Aggregator provider that queries multiple providers and merges results
 pub struct AggregatorProvider {

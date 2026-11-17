@@ -1,7 +1,7 @@
 //! Tests for Windows service state mapping functions
 
 use pmonnt_core::services::{
-    start_type_from_values, status_from_state, ServiceStartType, ServiceStatus,
+    ServiceStartType, ServiceStatus, start_type_from_values, status_from_state,
 };
 use windows::Win32::System::Services::{SERVICE_START_TYPE, SERVICE_STATUS_CURRENT_STATE};
 

@@ -41,12 +41,18 @@ mod windows_smoke {
 
         let me = std::process::id();
         let result = pmonnt_core::module::fetch_modules(me, false);
-        
+
         // Should have no error
-        assert!(result.error.is_none(), "Module enumeration should succeed for current process");
-        
+        assert!(
+            result.error.is_none(),
+            "Module enumeration should succeed for current process"
+        );
+
         // Current process should have at least one module (the exe itself)
-        assert!(!result.modules.is_empty(), "Expected at least one module for current process");
+        assert!(
+            !result.modules.is_empty(),
+            "Expected at least one module for current process"
+        );
     }
 
     #[test]
@@ -59,12 +65,12 @@ mod windows_smoke {
         let me = std::process::id();
         let path_str = pmonnt_core::win::process_path::get_process_image_path(me)
             .expect("current process image path");
-        
+
         let path = std::path::Path::new(&path_str);
-        
+
         // Query signature - should return either valid signature or known "not signed" state
         let sig_result = pmonnt_core::win::signature::verify_signature(path);
-        
+
         // Should not error (even if unsigned, should return valid SignatureInfo)
         assert!(sig_result.is_ok(), "Signature query should not error");
     }
@@ -77,16 +83,19 @@ mod windows_smoke {
         }
 
         let me = std::process::id();
-        
+
         // Enumerate threads for current process
         let threads_result = pmonnt_core::win::thread::list_threads(me);
-        
+
         // Should succeed
         assert!(threads_result.is_ok(), "Thread enumeration should succeed");
-        
+
         // Current process should have at least one thread
         let threads = threads_result.unwrap();
-        assert!(!threads.is_empty(), "Expected at least one thread for current process");
+        assert!(
+            !threads.is_empty(),
+            "Expected at least one thread for current process"
+        );
     }
 
     #[test]
@@ -98,7 +107,7 @@ mod windows_smoke {
 
         // Query all network connections
         let result = pmonnt_core::network::get_all_connections();
-        
+
         // Should succeed without error
         assert!(result.is_ok(), "Network connection query should not error");
     }
@@ -111,13 +120,16 @@ mod windows_smoke {
         }
 
         let me = std::process::id();
-        
+
         // Get token info
         let token_result = pmonnt_core::win::token_info::get_process_security_info(me);
-        
+
         if let Ok(sec) = token_result {
             // Should have user SID
-            assert!(!sec.summary.user_sid.is_empty(), "User SID should not be empty");
+            assert!(
+                !sec.summary.user_sid.is_empty(),
+                "User SID should not be empty"
+            );
         }
     }
 
@@ -130,14 +142,12 @@ mod windows_smoke {
 
         // Query all handles
         let result = pmonnt_core::win::handles::enumerate_handles();
-        
+
         // Should succeed
         assert!(result.is_ok(), "Handle query should not error");
-        
+
         let handles = result.unwrap();
         // System should have handles
         assert!(!handles.is_empty(), "System should have handles");
     }
 }
-
-

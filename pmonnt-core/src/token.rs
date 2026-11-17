@@ -1,8 +1,8 @@
 //! Process token inspection functionality
 
 use crate::process::Process;
-use std::collections::hash_map::Entry;
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::time::{Duration, Instant};
 
 /// Information about a process token

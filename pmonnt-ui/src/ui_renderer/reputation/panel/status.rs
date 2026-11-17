@@ -14,7 +14,7 @@ pub(super) struct LookupStatusRowParams<'a> {
 }
 
 pub(super) fn render_sha256_row(ui: &mut egui::Ui, sha256: &Option<String>) {
-    if let Some(ref sha256) = sha256 {
+    if let Some(sha256) = sha256 {
         ui.horizontal(|ui| {
             ui.label("SHA-256:");
             ui.monospace(sha256);

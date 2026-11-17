@@ -222,7 +222,7 @@ fn query_tcp_af_v4() -> Result<Vec<NetworkConnection>, NetworkError> {
         // - dwNumEntries indicates valid row count for the flexible array member
         let table = buf.as_ptr().cast::<MIB_TCPTABLE_OWNER_PID>();
         let count = (*table).dwNumEntries as usize;
-        
+
         // SAFETY: Windows guarantees the table array contains `count` valid entries
         // The buffer size was determined by Windows to accommodate the header + all rows
         let first: *const MIB_TCPROW_OWNER_PID = (*table).table.as_ptr();
@@ -304,7 +304,7 @@ fn query_tcp_af_v6() -> Result<Vec<NetworkConnection>, NetworkError> {
         // - dwNumEntries indicates valid row count
         let table = buf.as_ptr().cast::<MIB_TCP6TABLE_OWNER_PID>();
         let count = (*table).dwNumEntries as usize;
-        
+
         // SAFETY: Windows guarantees the table array contains `count` valid IPv6 TCP entries
         let first: *const MIB_TCP6ROW_OWNER_PID = (*table).table.as_ptr();
         let rows = std::slice::from_raw_parts(first, count);
@@ -384,7 +384,7 @@ fn query_udp_af_v4() -> Result<Vec<NetworkConnection>, NetworkError> {
         // - dwNumEntries is the actual count of rows written
         let table = buf.as_ptr().cast::<MIB_UDPTABLE_OWNER_PID>();
         let count = (*table).dwNumEntries as usize;
-        
+
         // SAFETY: Windows guarantees `count` valid UDP entries in the table array
         let first: *const MIB_UDPROW_OWNER_PID = (*table).table.as_ptr();
         let rows = std::slice::from_raw_parts(first, count);
@@ -462,7 +462,7 @@ fn query_udp_af_v6() -> Result<Vec<NetworkConnection>, NetworkError> {
         // - dwNumEntries is the actual count of IPv6 UDP rows written
         let table = buf.as_ptr().cast::<MIB_UDP6TABLE_OWNER_PID>();
         let count = (*table).dwNumEntries as usize;
-        
+
         // SAFETY: Windows guarantees `count` valid IPv6 UDP entries in the table array
         let first: *const MIB_UDP6ROW_OWNER_PID = (*table).table.as_ptr();
         let rows = std::slice::from_raw_parts(first, count);

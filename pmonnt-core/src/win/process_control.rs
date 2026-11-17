@@ -2,15 +2,15 @@ use thiserror::Error;
 
 use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
-use windows::core::{PCSTR, PCWSTR, PWSTR};
 use windows::Win32::Foundation::{
-    CloseHandle, GetLastError, ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, HANDLE, WIN32_ERROR,
+    CloseHandle, ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, GetLastError, HANDLE, WIN32_ERROR,
 };
 use windows::Win32::System::LibraryLoader::{GetModuleHandleA, GetProcAddress};
 use windows::Win32::System::Threading::{
-    CreateProcessW, OpenProcess, TerminateProcess, PROCESS_INFORMATION, PROCESS_SUSPEND_RESUME,
-    PROCESS_TERMINATE, STARTUPINFOW,
+    CreateProcessW, OpenProcess, PROCESS_INFORMATION, PROCESS_SUSPEND_RESUME, PROCESS_TERMINATE,
+    STARTUPINFOW, TerminateProcess,
 };
+use windows::core::{PCSTR, PCWSTR, PWSTR};
 
 use crate::win::HandleGuard;
 
@@ -128,8 +128,7 @@ pub fn resume_process(pid: u32) -> Result<(), ProcessControlError> {
     unsafe {
         let ntdll = GetModuleHandleA(PCSTR(c"ntdll.dll".as_ptr() as _))
             .map_err(|_| ProcessControlError::NtdllError("Could not load ntdll.dll".to_string()))?;
-        let nt_resume_process_addr =
-            GetProcAddress(ntdll, PCSTR(c"NtResumeProcess".as_ptr() as _));
+        let nt_resume_process_addr = GetProcAddress(ntdll, PCSTR(c"NtResumeProcess".as_ptr() as _));
 
         if let Some(addr) = nt_resume_process_addr {
             let nt_resume_process: unsafe extern "system" fn(HANDLE) -> i32 =

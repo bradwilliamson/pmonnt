@@ -1,11 +1,11 @@
 use pmonnt_core::win::HandleGuard;
 use windows::{
-    core::*,
     Win32::{
         Foundation::*,
         Security::*,
         System::{ProcessStatus::*, Threading::*},
     },
+    core::*,
 };
 
 /// Get image path for a process
@@ -238,17 +238,13 @@ pub fn get_session_id(pid: u32) -> Option<u32> {
     // `session` lives for the duration of the call and is only written by the API.
     unsafe {
         #[link(name = "kernel32")]
-        extern "system" {
+        unsafe extern "system" {
             fn ProcessIdToSessionId(dwProcessId: u32, pSessionId: *mut u32) -> i32;
         }
 
         let mut session: u32 = 0;
         let ok = ProcessIdToSessionId(pid, &mut session as *mut u32);
-        if ok != 0 {
-            Some(session)
-        } else {
-            None
-        }
+        if ok != 0 { Some(session) } else { None }
     }
 }
 

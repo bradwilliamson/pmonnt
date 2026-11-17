@@ -4,10 +4,10 @@ const TOKEN_PRIVILEGES_CLASS: TOKEN_INFORMATION_CLASS = TOKEN_INFORMATION_CLASS(
 const TOKEN_ELEVATION_CLASS: TOKEN_INFORMATION_CLASS = TOKEN_INFORMATION_CLASS(20); // TokenElevation
 const TOKEN_INTEGRITY_LEVEL_CLASS: TOKEN_INFORMATION_CLASS = TOKEN_INFORMATION_CLASS(25); // TokenIntegrityLevel
 const TOKEN_IS_APP_CONTAINER_CLASS: TOKEN_INFORMATION_CLASS = TOKEN_INFORMATION_CLASS(29); // TokenIsAppContainer
-                                                                                           // Windows API wrappers for process token inspection
-                                                                                           //
-                                                                                           // This module provides safe wrappers around Windows token APIs.
-                                                                                           // All unsafe code is contained here with documented invariants.
+// Windows API wrappers for process token inspection
+//
+// This module provides safe wrappers around Windows token APIs.
+// All unsafe code is contained here with documented invariants.
 
 use crate::token::{PrivilegeInfo, TokenInfo};
 use crate::win::HandleGuard;
@@ -35,7 +35,7 @@ pub fn inspect_process_token(pid: u32) -> TokenInfo {
             return TokenInfo {
                 error: Some(format!("Failed to open process: {}", e)),
                 ..Default::default()
-            }
+            };
         }
     };
 
@@ -97,8 +97,8 @@ fn get_token_user(token: HANDLE) -> Option<String> {
     // SAFETY: Only called with a valid token handle. All buffer allocations checked.
     use std::ffi::OsString;
     use std::os::windows::ffi::OsStringExt;
-    use windows::core::PWSTR;
     use windows::Win32::Security::LookupAccountSidW;
+    use windows::core::PWSTR;
 
     // Query TOKEN_USER size
     let mut required_size = 0u32;
@@ -354,8 +354,8 @@ fn get_token_privileges(token: HANDLE) -> Vec<PrivilegeInfo> {
 fn luid_to_privilege_name(luid: windows::Win32::Foundation::LUID) -> Option<String> {
     use std::ffi::OsString;
     use std::os::windows::ffi::OsStringExt;
-    use windows::core::PWSTR;
     use windows::Win32::Security::LookupPrivilegeNameW;
+    use windows::core::PWSTR;
 
     // First call to get required buffer size
     let mut required_size = 0u32;

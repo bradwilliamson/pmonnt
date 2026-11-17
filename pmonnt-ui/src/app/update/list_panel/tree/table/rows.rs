@@ -54,11 +54,7 @@ pub(super) fn render_rows(
                             }
                             // Show triangle only for processes with children
                             let glyph = if item.has_children {
-                                if item.is_expanded {
-                                    "v"
-                                } else {
-                                    ">"
-                                }
+                                if item.is_expanded { "v" } else { ">" }
                             } else {
                                 "."
                             };

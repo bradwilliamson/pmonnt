@@ -19,13 +19,13 @@ pub use reputation::{
     render_threat_intel_feeds, render_threatfox_section, render_virustotal_section,
 };
 pub use scan::render_scan_panel;
-pub use threads::{render_threads_panel, ThreadActionRequest, ThreadDetailUi};
+pub use threads::{ThreadActionRequest, ThreadDetailUi, render_threads_panel};
 
 pub(crate) use kill_dialog::render_kill_dialog;
 
-pub(crate) use affinity_dialog::{render_affinity_dialog, AffinityDialogState};
-pub(crate) use dump_dialog::{render_dump_confirm_dialog, DumpConfirmDialogState};
-pub(crate) use priority_dialog::{render_priority_dialog, PriorityDialogState};
-pub(crate) use service_dialog::{render_service_dialog, ServiceDialogState};
+pub(crate) use affinity_dialog::{AffinityDialogState, render_affinity_dialog};
+pub(crate) use dump_dialog::{DumpConfirmDialogState, render_dump_confirm_dialog};
+pub(crate) use priority_dialog::{PriorityDialogState, render_priority_dialog};
+pub(crate) use service_dialog::{ServiceDialogState, render_service_dialog};
 
 pub use context::{HandlesPanelContext, ReputationPanelContext, ReputationSettingsContext};

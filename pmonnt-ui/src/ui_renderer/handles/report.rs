@@ -1,5 +1,5 @@
 use pmonnt_core::handles::HandleCache;
-use pmonnt_core::module::{map_address_to_module, ModuleCache};
+use pmonnt_core::module::{ModuleCache, map_address_to_module};
 use pmonnt_core::reputation_service::ReputationService;
 use pmonnt_core::snapshot::ProcessSnapshot;
 use pmonnt_core::thread::{ThreadCache, ThreadInfo};

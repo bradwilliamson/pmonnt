@@ -1,6 +1,6 @@
 //! SHA-256 hashing utility with caching
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs::{self, File};
@@ -191,7 +191,7 @@ pub fn is_valid_sha256(s: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_valid_sha256, FileMeta, FileOps, HashComputer};
+    use super::{FileMeta, FileOps, HashComputer, is_valid_sha256};
     use std::collections::HashMap;
     use std::io::{Cursor, Read};
     use std::sync::atomic::{AtomicUsize, Ordering};

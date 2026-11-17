@@ -1,4 +1,4 @@
-use crossbeam_channel::{unbounded, Sender};
+use crossbeam_channel::{Sender, unbounded};
 
 pub struct BackgroundWorker {
     tx: Sender<Box<dyn FnOnce() + Send + 'static>>,
@@ -43,8 +43,8 @@ impl Drop for BackgroundWorker {
 mod tests {
     use super::*;
     use std::sync::{
-        atomic::{AtomicUsize, Ordering},
         Arc,
+        atomic::{AtomicUsize, Ordering},
     };
     use std::time::Duration;
 

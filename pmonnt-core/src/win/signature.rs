@@ -4,16 +4,15 @@ use std::path::Path;
 
 use anyhow::Result;
 
-use windows::core::PCWSTR;
 use windows::Win32::Foundation::HANDLE;
 use windows::Win32::Security::Cryptography::{
-    CertCloseStore, CertFindCertificateInStore, CertFreeCertificateContext, CertGetNameStringW,
-    CryptMsgClose, CryptMsgGetParam, CryptQueryObject, CERT_FIND_SUBJECT_CERT,
-    CERT_NAME_ISSUER_FLAG, CERT_NAME_SIMPLE_DISPLAY_TYPE,
+    CERT_FIND_SUBJECT_CERT, CERT_NAME_ISSUER_FLAG, CERT_NAME_SIMPLE_DISPLAY_TYPE,
     CERT_QUERY_CONTENT_FLAG_PKCS7_SIGNED_EMBED, CERT_QUERY_FORMAT_FLAG_BINARY,
-    CERT_QUERY_OBJECT_FILE, CMSG_SIGNER_INFO, CMSG_SIGNER_INFO_PARAM, HCERTSTORE,
-    PKCS_7_ASN_ENCODING, X509_ASN_ENCODING,
+    CERT_QUERY_OBJECT_FILE, CMSG_SIGNER_INFO, CMSG_SIGNER_INFO_PARAM, CertCloseStore,
+    CertFindCertificateInStore, CertFreeCertificateContext, CertGetNameStringW, CryptMsgClose,
+    CryptMsgGetParam, CryptQueryObject, HCERTSTORE, PKCS_7_ASN_ENCODING, X509_ASN_ENCODING,
 };
+use windows::core::PCWSTR;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SignatureInfo {
@@ -116,7 +115,7 @@ const CERT_E_EXPIRED: i32 = -0x7FF4FEFF_i32; // 0x800B0101
 const CERT_E_UNTRUSTEDROOT: i32 = -0x7FF4FEF7_i32; // 0x800B0109
 
 #[link(name = "wintrust")]
-extern "system" {
+unsafe extern "system" {
     fn WinVerifyTrust(
         hwnd: HANDLE,
         pgActionID: *const WintrustGuid,
@@ -382,11 +381,7 @@ fn cert_get_name_string(
 
     let s = String::from_utf16_lossy(&buf[..(len2 as usize).saturating_sub(1)]);
     let s = s.trim().to_string();
-    if s.is_empty() {
-        None
-    } else {
-        Some(s)
-    }
+    if s.is_empty() { None } else { Some(s) }
 }
 
 fn has_embedded_signature(path: &Path) -> bool {

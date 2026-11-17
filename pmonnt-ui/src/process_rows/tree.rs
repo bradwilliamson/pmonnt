@@ -76,19 +76,11 @@ pub(crate) fn compare_tree_pids(
     let ord = match group_sort {
         GroupSort::Name => {
             let base = lower_a.cmp(&lower_b).then(a.cmp(&b));
-            if sort_desc {
-                base.reverse()
-            } else {
-                base
-            }
+            if sort_desc { base.reverse() } else { base }
         }
         GroupSort::PID => {
             let base = a.cmp(&b).then(lower_a.cmp(&lower_b));
-            if sort_desc {
-                base.reverse()
-            } else {
-                base
-            }
+            if sort_desc { base.reverse() } else { base }
         }
         GroupSort::Handles => {
             let ha = handle_cache.get(a).map(|s| s.total);
@@ -261,11 +253,7 @@ pub(crate) fn compare_tree_pids(
             let ka = sig_sort_key(a, pid_to_proc, signature_cache_by_path);
             let kb = sig_sort_key(b, pid_to_proc, signature_cache_by_path);
             let base = ka.cmp(&kb).then(lower_a.cmp(&lower_b)).then(a.cmp(&b));
-            if sort_desc {
-                base.reverse()
-            } else {
-                base
-            }
+            if sort_desc { base.reverse() } else { base }
         }
     };
 

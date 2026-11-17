@@ -5,7 +5,7 @@ use egui_extras::{Column, TableBuilder};
 use pmonnt_core::module::fetch_modules;
 use pmonnt_core::services::{ServiceStartType, ServiceStatus};
 
-use crate::app::network_sort::{sort_connections, NetworkSortKey, NetworkSortState};
+use crate::app::network_sort::{NetworkSortKey, NetworkSortState, sort_connections};
 use crate::app::{Density, PMonNTApp, RightTab};
 use crate::process_table::ProcessColumnId;
 use crate::ui_renderer;

@@ -1,6 +1,6 @@
 //! Windows handle enumeration using NT APIs
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 use std::mem;
 use std::sync::{LazyLock, RwLock};
@@ -48,7 +48,7 @@ struct ObjectTypeInformation {
 
 // NT API imports
 #[link(name = "ntdll")]
-extern "system" {
+unsafe extern "system" {
     fn NtQuerySystemInformation(
         system_information_class: u32,
         system_information: *mut std::ffi::c_void,

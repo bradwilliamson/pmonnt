@@ -2,7 +2,7 @@ use super::types::{ScanError, ScanMatch, ScanMode, ScanOptions, ScanProgress, Sc
 
 use crate::win::HandleGuard;
 use crate::yara::engine::YaraEngine;
-use crate::yara::memory::{enumerate_memory_regions, read_process_memory_chunk, MemoryRegion};
+use crate::yara::memory::{MemoryRegion, enumerate_memory_regions, read_process_memory_chunk};
 
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};

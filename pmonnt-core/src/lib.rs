@@ -61,7 +61,7 @@ pub use win::thread as win_thread;
 #[cfg(windows)]
 pub mod yara;
 
-pub use win::signature::{verify_signature, SignatureInfo, SignatureStatus};
+pub use win::signature::{SignatureInfo, SignatureStatus, verify_signature};
 
 /// Get the current tick count for display
 pub fn get_tick_count() -> u64 {

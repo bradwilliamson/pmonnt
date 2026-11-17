@@ -51,7 +51,7 @@ fn test_is_executable_page_readwrite() {
 fn test_scanner_construction_succeeds() {
     use pmonnt_core::yara::engine::YaraEngine;
     use std::sync::Arc;
-    
+
     let rule = r#"
 rule test_rule {
     strings:
@@ -61,7 +61,7 @@ rule test_rule {
 }
 "#;
     let engine = Arc::new(YaraEngine::compile(rule).unwrap());
-    
+
     // Should construct successfully
     let _scanner = ProcessScanner::new(engine);
 }
@@ -70,7 +70,7 @@ rule test_rule {
 fn test_scanner_can_be_cloned() {
     use pmonnt_core::yara::engine::YaraEngine;
     use std::sync::Arc;
-    
+
     let rule = r#"
 rule test_rule {
     strings:
@@ -81,7 +81,7 @@ rule test_rule {
 "#;
     let engine = Arc::new(YaraEngine::compile(rule).unwrap());
     let scanner = ProcessScanner::new(engine);
-    
+
     // ProcessScanner implements Clone
     let _scanner2 = scanner.clone();
 }
@@ -90,7 +90,7 @@ rule test_rule {
 fn test_multiple_scanners_share_engine() {
     use pmonnt_core::yara::engine::YaraEngine;
     use std::sync::Arc;
-    
+
     let rule = r#"
 rule shared_rule {
     strings:
@@ -100,11 +100,9 @@ rule shared_rule {
 }
 "#;
     let engine = Arc::new(YaraEngine::compile(rule).unwrap());
-    
+
     // Multiple scanners can share the same engine via Arc
     let _scanner1 = ProcessScanner::new(Arc::clone(&engine));
     let _scanner2 = ProcessScanner::new(Arc::clone(&engine));
     let _scanner3 = ProcessScanner::new(engine);
 }
-
-

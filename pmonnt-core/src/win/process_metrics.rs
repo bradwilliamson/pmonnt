@@ -2,7 +2,7 @@
 //! Provides memory and CPU time retrieval via Windows API
 
 use crate::win::HandleGuard;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 use std::mem;
 use std::time::Instant;
@@ -12,14 +12,14 @@ use windows::Win32::System::ProcessStatus::{
     GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS, PROCESS_MEMORY_COUNTERS_EX,
 };
 use windows::Win32::System::Threading::{
-    GetPriorityClass, GetProcessIoCounters, GetProcessTimes, OpenProcess, IO_COUNTERS,
+    GetPriorityClass, GetProcessIoCounters, GetProcessTimes, IO_COUNTERS, OpenProcess,
     PROCESS_QUERY_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION,
 };
 
 // GetGuiResources is in User32, but might need different import path
 // For now, we'll call it via dynamic linking
 #[link(name = "User32")]
-extern "system" {
+unsafe extern "system" {
     fn GetGuiResources(hProcess: HANDLE, uiFlags: u32) -> u32;
 }
 
@@ -54,7 +54,7 @@ struct SystemProcessInformation {
 }
 
 #[link(name = "ntdll")]
-extern "system" {
+unsafe extern "system" {
     fn NtQuerySystemInformation(
         system_information_class: u32,
         system_information: *mut std::ffi::c_void,
@@ -408,11 +408,7 @@ pub fn get_process_priority_class_by_pid(pid: u32) -> Option<u32> {
     // SAFETY: GetPriorityClass requires a valid process HANDLE.
     let result = unsafe { GetPriorityClass(guard.raw()) };
     drop(guard);
-    if result == 0 {
-        None
-    } else {
-        Some(result)
-    }
+    if result == 0 { None } else { Some(result) }
 }
 
 pub fn get_process_cycle_time_by_pid(pid: u32) -> Option<u64> {
@@ -494,11 +490,7 @@ pub fn get_process_memory_info_by_pid(pid: u32) -> Option<PROCESS_MEMORY_COUNTER
     };
 
     drop(guard);
-    if success.is_ok() {
-        Some(pmc)
-    } else {
-        None
-    }
+    if success.is_ok() { Some(pmc) } else { None }
 }
 
 pub fn get_process_handle_count_by_pid(pid: u32) -> Option<u32> {
@@ -568,11 +560,7 @@ pub fn get_process_gdi_handles_by_pid(pid: u32) -> Option<u32> {
     let count = unsafe { GetGuiResources(guard.raw(), GR_GDIOBJECTS) };
     drop(guard);
 
-    if count > 0 {
-        Some(count)
-    } else {
-        None
-    }
+    if count > 0 { Some(count) } else { None }
 }
 
 pub fn get_process_user_handles_by_pid(pid: u32) -> Option<u32> {
@@ -591,11 +579,7 @@ pub fn get_process_user_handles_by_pid(pid: u32) -> Option<u32> {
     let count = unsafe { GetGuiResources(guard.raw(), GR_USEROBJECTS) };
     drop(guard);
 
-    if count > 0 {
-        Some(count)
-    } else {
-        None
-    }
+    if count > 0 { Some(count) } else { None }
 }
 
 #[cfg(test)]

@@ -141,7 +141,9 @@ mod tests {
             "PMONNT_MALWAREBAZAAR_KEY",
             "PMONNT_THREATFOX_KEY",
         ] {
-            std::env::remove_var(k);
+            // SAFETY: test-only. The tests that change these variables hold ENV_LOCK, and on
+            // Windows the process environment block is internally synchronized.
+            unsafe { std::env::remove_var(k) };
         }
     }
 
@@ -149,7 +151,9 @@ mod tests {
     fn env_overrides_store_for_vt() {
         let _guard = ENV_LOCK.lock().unwrap();
         clear_env();
-        std::env::set_var("PMONNT_VT_API_KEY", "vt_env");
+        // SAFETY: test-only. The tests that change these variables hold ENV_LOCK, and on
+        // Windows the process environment block is internally synchronized.
+        unsafe { std::env::set_var("PMONNT_VT_API_KEY", "vt_env") };
 
         let store = MockStore {
             values: HashMap::from([(VT_KEY_NAME.to_string(), "vt_store".to_string())]),
@@ -165,7 +169,9 @@ mod tests {
     fn tf_falls_back_to_mb_when_tf_missing() {
         let _guard = ENV_LOCK.lock().unwrap();
         clear_env();
-        std::env::set_var("PMONNT_MB_API_KEY", "mb_env");
+        // SAFETY: test-only. The tests that change these variables hold ENV_LOCK, and on
+        // Windows the process environment block is internally synchronized.
+        unsafe { std::env::set_var("PMONNT_MB_API_KEY", "mb_env") };
 
         let store = MockStore {
             values: HashMap::new(),
@@ -180,7 +186,9 @@ mod tests {
     fn tf_store_wins_over_mb_fallback() {
         let _guard = ENV_LOCK.lock().unwrap();
         clear_env();
-        std::env::set_var("PMONNT_MB_API_KEY", "mb_env");
+        // SAFETY: test-only. The tests that change these variables hold ENV_LOCK, and on
+        // Windows the process environment block is internally synchronized.
+        unsafe { std::env::set_var("PMONNT_MB_API_KEY", "mb_env") };
 
         let store = MockStore {
             values: HashMap::from([(TF_KEY_NAME.to_string(), "tf_store".to_string())]),

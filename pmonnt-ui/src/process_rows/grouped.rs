@@ -201,11 +201,7 @@ pub(crate) fn build_grouped_rows(
             let ord = match (leader_a, leader_b) {
                 (Some(va), Some(vb)) => {
                     let base = va.partial_cmp(&vb).unwrap_or(std::cmp::Ordering::Equal);
-                    if sort_desc {
-                        base.reverse()
-                    } else {
-                        base
-                    }
+                    if sort_desc { base.reverse() } else { base }
                 }
                 (Some(_), None) => {
                     // None last for descending, first for ascending.
@@ -231,11 +227,7 @@ pub(crate) fn build_grouped_rows(
             let ord = match (agg_a, agg_b) {
                 (Some(va), Some(vb)) => {
                     let base = va.partial_cmp(&vb).unwrap_or(std::cmp::Ordering::Equal);
-                    if sort_desc {
-                        base.reverse()
-                    } else {
-                        base
-                    }
+                    if sort_desc { base.reverse() } else { base }
                 }
                 (Some(_), None) => std::cmp::Ordering::Less,
                 (None, Some(_)) => std::cmp::Ordering::Greater,
@@ -412,11 +404,7 @@ pub(crate) fn build_grouped_rows(
                                 saw_any = true;
                             }
                         }
-                        if saw_any {
-                            Some(total)
-                        } else {
-                            None
-                        }
+                        if saw_any { Some(total) } else { None }
                     };
                     let sum_b_opt = {
                         let mut total: u32 = 0;
@@ -427,20 +415,12 @@ pub(crate) fn build_grouped_rows(
                                 saw_any = true;
                             }
                         }
-                        if saw_any {
-                            Some(total)
-                        } else {
-                            None
-                        }
+                        if saw_any { Some(total) } else { None }
                     };
                     let ord = match (sum_a_opt, sum_b_opt) {
                         (Some(va), Some(vb)) => {
                             let base = va.cmp(&vb);
-                            if sort_desc {
-                                base.reverse()
-                            } else {
-                                base
-                            }
+                            if sort_desc { base.reverse() } else { base }
                         }
                         (Some(_), None) => std::cmp::Ordering::Less, // Some before None
                         (None, Some(_)) => std::cmp::Ordering::Greater, // None last
@@ -709,11 +689,7 @@ pub(crate) fn build_grouped_rows(
             let base = ka
                 .cmp(&kb)
                 .then(a.name.to_lowercase().cmp(&b.name.to_lowercase()));
-            if sort_desc {
-                base.reverse()
-            } else {
-                base
-            }
+            if sort_desc { base.reverse() } else { base }
         });
     }
 

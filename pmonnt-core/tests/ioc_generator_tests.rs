@@ -1,8 +1,8 @@
 //! Tests for IOC to YARA rule generator
 
 use pmonnt_core::yara::ioc_generator::{
-    escape_yara_string, sanitize_rule_name, severity_from_confidence, IocToYaraGenerator,
-    ThreatFoxIoc,
+    IocToYaraGenerator, ThreatFoxIoc, escape_yara_string, sanitize_rule_name,
+    severity_from_confidence,
 };
 use pmonnt_core::yara::rules::Severity;
 

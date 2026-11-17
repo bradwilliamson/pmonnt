@@ -1,11 +1,11 @@
 //! Windows process image path retrieval
 
 use crate::win::HandleGuard;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use windows::Win32::Foundation::MAX_PATH;
 use windows::Win32::System::Threading::{
-    OpenProcess, QueryFullProcessImageNameW, PROCESS_ACCESS_RIGHTS,
-    PROCESS_QUERY_LIMITED_INFORMATION,
+    OpenProcess, PROCESS_ACCESS_RIGHTS, PROCESS_QUERY_LIMITED_INFORMATION,
+    QueryFullProcessImageNameW,
 };
 
 /// Get the full executable path for a process

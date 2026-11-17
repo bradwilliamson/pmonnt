@@ -134,12 +134,12 @@ pub(crate) fn query_physical_memory_used_total() -> Option<(u64, u64)> {
 
 #[cfg(windows)]
 pub(crate) fn query_gpu_memory_capacity_bytes() -> Option<(u64, u64)> {
-    use windows::core::Interface;
     use windows::Win32::Graphics::Dxgi::{
-        CreateDXGIFactory1, IDXGIAdapter3, IDXGIFactory1, DXGI_ADAPTER_DESC1,
-        DXGI_ADAPTER_FLAG_SOFTWARE, DXGI_MEMORY_SEGMENT_GROUP_LOCAL,
-        DXGI_MEMORY_SEGMENT_GROUP_NON_LOCAL, DXGI_QUERY_VIDEO_MEMORY_INFO,
+        CreateDXGIFactory1, DXGI_ADAPTER_DESC1, DXGI_ADAPTER_FLAG_SOFTWARE,
+        DXGI_MEMORY_SEGMENT_GROUP_LOCAL, DXGI_MEMORY_SEGMENT_GROUP_NON_LOCAL,
+        DXGI_QUERY_VIDEO_MEMORY_INFO, IDXGIAdapter3, IDXGIFactory1,
     };
+    use windows::core::Interface;
 
     // SAFETY: CreateDXGIFactory1 initializes COM internally and returns a factory interface.
     let factory: IDXGIFactory1 = unsafe { CreateDXGIFactory1().ok()? };
@@ -221,20 +221,20 @@ pub(crate) fn query_physical_memory_used_total() -> Option<(u64, u64)> {
 /// Paint an inline usage bar for a cell (e.g., CPU%, Memory)
 /// The bar is rendered behind the text with semi-transparency
 /// to show magnitude without obscuring readability.
-/// 
+///
 /// GUARDRAIL: This is called within a cell's ui context, so the bar respects
 /// the cell's clip rect and will not bleed into adjacent cells or text.
 pub(crate) fn paint_inline_usage_bar(ui: &egui::Ui, percentage: f32) {
     if percentage <= 0.0 {
         return;
     }
-    
+
     let response = ui.interact(
         ui.available_rect_before_wrap(),
         egui::Id::new(ui.next_auto_id()),
         egui::Sense::hover(),
     );
-    
+
     // Get the bar color based on percentage (theme-aware via visuals)
     let color = if percentage > 90.0 {
         // High usage: red tint
@@ -246,7 +246,7 @@ pub(crate) fn paint_inline_usage_bar(ui: &egui::Ui, percentage: f32) {
         // Low-medium usage: green tint
         egui::Color32::from_rgba_unmultiplied(100, 200, 100, 40)
     };
-    
+
     // Paint bar from left to right, proportional to percentage
     let bar_rect = response.rect;
     let bar_width = (bar_rect.width() * (percentage / 100.0)).min(bar_rect.width());
@@ -254,7 +254,7 @@ pub(crate) fn paint_inline_usage_bar(ui: &egui::Ui, percentage: f32) {
         min: bar_rect.min,
         max: egui::Pos2::new(bar_rect.min.x + bar_width, bar_rect.max.y),
     };
-    
+
     ui.painter().rect_filled(bar_rect, 0.0, color);
 }
 
@@ -264,16 +264,16 @@ pub(crate) fn truncate_path_middle(path: &str, max_width: usize) -> String {
     if path.len() <= max_width {
         return path.to_string();
     }
-    
+
     const ELLIPSIS: &str = "...";
     let available = max_width.saturating_sub(ELLIPSIS.len());
     if available < 4 {
-        return format!("{}...", &path[..path.len().min(max_width)])
+        return format!("{}...", &path[..path.len().min(max_width)]);
     }
-    
+
     let start_len = available / 2;
     let end_len = available - start_len;
-    
+
     format!(
         "{}{}{}",
         &path[..start_len],
@@ -325,7 +325,10 @@ mod tests {
     #[test]
     fn test_format_number_u32_delegates() {
         assert_eq!(format_number_u32(1234), "1,234");
-        assert_eq!(format_number_u32(u32::MAX), format_number_u64(u32::MAX as u64));
+        assert_eq!(
+            format_number_u32(u32::MAX),
+            format_number_u64(u32::MAX as u64)
+        );
     }
 
     #[test]
@@ -360,10 +363,10 @@ mod tests {
     fn test_format_memory_bytes_mb() {
         assert_eq!(format_memory_bytes(1024 * 1024), "1.0 MB");
         assert_eq!(format_memory_bytes(1024 * 1024 * 2), "2.0 MB");
-        
+
         // 1.5 MB
         assert_eq!(format_memory_bytes(1024 * 1024 + 512 * 1024), "1.5 MB");
-        
+
         // 123.4 MB
         let mb_123_4 = (1024.0 * 1024.0 * 123.4) as u64;
         assert!(format_memory_bytes(mb_123_4).starts_with("123."));
@@ -373,7 +376,7 @@ mod tests {
     fn test_format_memory_bytes_gb() {
         assert_eq!(format_memory_bytes(1024 * 1024 * 1024), "1.0 GB");
         assert_eq!(format_memory_bytes(1024 * 1024 * 1024 * 2), "2.0 GB");
-        
+
         // 16.5 GB
         let gb_16_5 = (1024.0 * 1024.0 * 1024.0 * 16.5) as u64;
         assert!(format_memory_bytes(gb_16_5).starts_with("16."));
@@ -384,7 +387,7 @@ mod tests {
         // Just under 1 GB
         let almost_gb = 1024 * 1024 * 1024 - 1;
         assert!(format_memory_bytes(almost_gb).contains("MB"));
-        
+
         // Exactly 1 GB
         assert!(format_memory_bytes(1024 * 1024 * 1024).contains("GB"));
     }
@@ -519,7 +522,7 @@ mod tests {
     fn test_truncate_path_middle_truncated() {
         let path = "c:\\windows\\system32\\notepad.exe";
         let result = truncate_path_middle(path, 20);
-        
+
         assert!(result.len() <= 20);
         assert!(result.contains("..."));
         assert!(result.starts_with("c:\\wi"));
@@ -530,7 +533,7 @@ mod tests {
     fn test_truncate_path_middle_very_long() {
         let path = "c:\\very\\long\\path\\that\\goes\\on\\and\\on\\forever\\file.txt";
         let result = truncate_path_middle(path, 30);
-        
+
         assert!(result.len() <= 30);
         assert!(result.contains("..."));
     }
@@ -539,7 +542,7 @@ mod tests {
     fn test_truncate_path_middle_tiny_max() {
         let path = "long_filename.exe";
         let result = truncate_path_middle(path, 5);
-        
+
         // Should still produce something reasonable
         assert!(result.len() <= 8); // "lo..." is 5, but might be slightly longer
         assert!(result.contains("..."));
@@ -549,7 +552,7 @@ mod tests {
     fn test_truncate_path_middle_preserves_start_and_end() {
         let path = "/usr/local/bin/my_application";
         let result = truncate_path_middle(path, 20);
-        
+
         assert!(result.starts_with("/usr"));
         assert!(result.ends_with("ation"));
         assert!(result.contains("..."));
@@ -578,7 +581,7 @@ mod tests {
         data.insert(1000, (25.0, Some(1024)));
         data.insert(2000, (30.0, None));
         data.insert(3000, (15.0, Some(2048)));
-        
+
         assert_eq!(sum_cpu_percent(&data), 70.0);
     }
 
@@ -587,7 +590,7 @@ mod tests {
         let mut data = HashMap::new();
         data.insert(1000, (60.0, Some(1024)));
         data.insert(2000, (50.0, None));
-        
+
         // Sum is 110, should clamp to 100
         assert_eq!(sum_cpu_percent(&data), 100.0);
     }
@@ -614,7 +617,7 @@ mod tests {
         let mut data = HashMap::new();
         data.insert(1000, (70.0, 1024, 512, 1536));
         data.insert(2000, (50.0, 2048, 1024, 3072));
-        
+
         assert_eq!(sum_gpu_percent(&data), 100.0);
     }
 
@@ -632,7 +635,7 @@ mod tests {
     fn test_sum_gpu_mem_bytes_single() {
         let mut data = HashMap::new();
         data.insert(1000, (45.0, 1024, 512, 1536));
-        
+
         assert_eq!(sum_gpu_mem_bytes(&data), (1024, 512, 1536));
     }
 
@@ -641,7 +644,7 @@ mod tests {
         let mut data = HashMap::new();
         data.insert(1000, (45.0, 1024, 512, 1536));
         data.insert(2000, (30.0, 2048, 1024, 3072));
-        
+
         assert_eq!(sum_gpu_mem_bytes(&data), (3072, 1536, 4608));
     }
 
@@ -651,7 +654,7 @@ mod tests {
         // Test saturation on overflow
         data.insert(1000, (0.0, u64::MAX, u64::MAX, u64::MAX));
         data.insert(2000, (0.0, 1, 1, 1));
-        
+
         let (d, s, t) = sum_gpu_mem_bytes(&data);
         assert_eq!(d, u64::MAX); // Should saturate, not wrap
         assert_eq!(s, u64::MAX);

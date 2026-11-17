@@ -394,12 +394,13 @@ mod tests {
             .unwrap();
         app.service_background_work();
         assert!(!app.signature_in_flight.contains(&path));
-        assert!(app
-            .signature_cache_by_path
-            .get(&path)
-            .and_then(|s| s.error.clone())
-            .unwrap_or_default()
-            .contains("unit test error"));
+        assert!(
+            app.signature_cache_by_path
+                .get(&path)
+                .and_then(|s| s.error.clone())
+                .unwrap_or_default()
+                .contains("unit test error")
+        );
 
         app.signature_in_flight.insert(path.clone());
         let sig_ok = pmonnt_core::SignatureInfo {

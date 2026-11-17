@@ -1,15 +1,15 @@
 //! Windows thread inspection (unsafe code confined here)
 //! Invariants: All handles are closed, all buffer reads are alignment-safe.
+use crate::PmonntError;
 use crate::thread::ThreadInfo;
 use crate::win::HandleGuard;
-use crate::PmonntError;
 use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt;
 use std::time::{SystemTime, UNIX_EPOCH};
 use windows::Win32::Foundation::HANDLE as WIN_HANDLE;
 use windows_sys::Win32::Foundation::{FILETIME, HANDLE as SYS_HANDLE, INVALID_HANDLE_VALUE};
 use windows_sys::Win32::System::Diagnostics::ToolHelp::{
-    CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
+    CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
 };
 use windows_sys::Win32::System::Threading::{
     GetThreadDescription, GetThreadPriority, GetThreadTimes, OpenThread,
@@ -22,7 +22,7 @@ const THREAD_QUERY_INFORMATION: u32 = 0x0040;
 
 // Define LocalFree function manually for freeing GetThreadDescription buffer
 #[link(name = "kernel32")]
-extern "system" {
+unsafe extern "system" {
     fn LocalFree(hmem: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
 }
 
@@ -58,7 +58,7 @@ struct THREAD_CYCLE_TIME_INFO {
 }
 
 #[link(name = "ntdll")]
-extern "system" {
+unsafe extern "system" {
     fn NtQueryInformationThread(
         thread_handle: WIN_HANDLE,
         thread_information_class: THREADINFOCLASS,
@@ -74,15 +74,21 @@ fn sys_handle_to_win_handle(h: SYS_HANDLE) -> WIN_HANDLE {
     WIN_HANDLE(h)
 }
 
-// Compute length of a null-terminated wide string safely, bounded by `max` u16 code units.
-// Returns the number of u16 code units before the NUL (0) or `max` if NUL not found.
+/// Compute the length of a NUL-terminated wide string, bounded by `max` u16 code units.
+/// Returns the number of u16 code units before the NUL, or `max` if no NUL was found.
+///
+/// # Safety
+/// `ptr` must be null or valid for reads of `max` u16 values (or up to and including the
+/// first NUL, whichever comes first).
 unsafe fn fn_strlen_wide_bounded(ptr: *const u16, max: usize) -> usize {
     if ptr.is_null() {
         return 0;
     }
     let mut i: usize = 0;
     while i < max {
-        let ch = *ptr.add(i);
+        // SAFETY: the caller guarantees `ptr` is readable up to `max` units or the first NUL,
+        // and we stop at whichever comes first.
+        let ch = unsafe { *ptr.add(i) };
         if ch == 0 {
             break;
         }
@@ -163,7 +169,7 @@ pub fn list_threads(pid: u32) -> Result<Vec<ThreadInfo>, PmonntError> {
                     if GetThreadDescription(thread_handle, &mut desc) >= 0 && !desc.is_null() {
                         // Bound the maximum wide-string length to avoid walking into invalid memory
                         const MAX_WSTR_LEN: usize = 32 * 1024; // 32k characters
-                                                               // SAFETY: desc is non-null and points to a null-terminated wide string allocated by Windows.
+                        // SAFETY: desc is non-null and points to a null-terminated wide string allocated by Windows.
                         let len = fn_strlen_wide_bounded(desc as *const u16, MAX_WSTR_LEN);
                         let slice = std::slice::from_raw_parts(desc as *const u16, len);
                         info.name = Some(OsString::from_wide(slice).to_string_lossy().into_owned());

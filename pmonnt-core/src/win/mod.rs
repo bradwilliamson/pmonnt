@@ -50,7 +50,7 @@ impl Drop for HandleGuard {
         // SAFETY: Valid HANDLE checked before calling CloseHandle
         unsafe {
             // Be defensive: don't close NULL or INVALID_HANDLE_VALUE.
-            if !self.0.is_invalid() && !self.0 .0.is_null() {
+            if !self.0.is_invalid() && !self.0.0.is_null() {
                 let _ = CloseHandle(self.0);
             }
         }
@@ -65,13 +65,13 @@ pub fn is_app_elevated() -> bool {
 
 /// Enable SeDebugPrivilege for the current process
 pub fn enable_debug_privilege() -> windows::core::Result<()> {
-    use windows::core::PCWSTR;
     use windows::Win32::Foundation::{GetLastError, HANDLE, LUID, WIN32_ERROR};
     use windows::Win32::Security::{
-        AdjustTokenPrivileges, LookupPrivilegeValueW, LUID_AND_ATTRIBUTES, SE_PRIVILEGE_ENABLED,
+        AdjustTokenPrivileges, LUID_AND_ATTRIBUTES, LookupPrivilegeValueW, SE_PRIVILEGE_ENABLED,
         TOKEN_ADJUST_PRIVILEGES, TOKEN_PRIVILEGES, TOKEN_QUERY,
     };
     use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+    use windows::core::PCWSTR;
 
     // SAFETY: GetCurrentProcess returns valid handle, token_handle is valid mutable reference
     unsafe {
@@ -195,9 +195,9 @@ pub fn get_process_protection(pid: u32) -> (bool, Option<String>) {
     }
 }
 
-pub use signature::{verify_signature, SignatureInfo, SignatureStatus};
+pub use signature::{SignatureInfo, SignatureStatus, verify_signature};
 
 pub use process_priority::{
-    get_affinity, get_priority_class, set_affinity, set_priority_class, AffinityInfo,
-    PriorityClass, PriorityError,
+    AffinityInfo, PriorityClass, PriorityError, get_affinity, get_priority_class, set_affinity,
+    set_priority_class,
 };

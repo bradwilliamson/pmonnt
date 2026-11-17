@@ -1,11 +1,11 @@
 use thiserror::Error;
 
 use windows::Win32::Foundation::{
-    GetLastError, ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, WIN32_ERROR,
+    ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, GetLastError, WIN32_ERROR,
 };
 use windows::Win32::System::Threading::{
-    OpenThread, ResumeThread, SuspendThread, TerminateThread, THREAD_ACCESS_RIGHTS,
-    THREAD_SUSPEND_RESUME, THREAD_TERMINATE,
+    OpenThread, ResumeThread, SuspendThread, THREAD_ACCESS_RIGHTS, THREAD_SUSPEND_RESUME,
+    THREAD_TERMINATE, TerminateThread,
 };
 
 use crate::win::HandleGuard;

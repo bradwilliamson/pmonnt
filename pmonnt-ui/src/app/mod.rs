@@ -13,8 +13,8 @@ use pmonnt_core::{
     vt::VirusTotalProvider,
 };
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 use std::time::{Duration, Instant};
 
 use crate::theme::Theme;

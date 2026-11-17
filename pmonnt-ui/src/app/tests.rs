@@ -1,10 +1,10 @@
 // Tests for app module (moved from main.rs)
 mod grouped_sort_tests {
     use super::super::state::{parse_ui_layout_config, serialize_ui_layout_config};
-    use super::super::{perf_window, Density};
+    use super::super::{Density, perf_window};
     use crate::process_rows::{build_grouped_rows, build_process_rows};
-    use crate::process_table::{process_table_policy, ProcessColumns};
-    use crate::theme::{apply_theme, Theme};
+    use crate::process_table::{ProcessColumns, process_table_policy};
+    use crate::theme::{Theme, apply_theme};
     use crate::util::{percent_used, sum_cpu_percent, sum_gpu_mem_bytes, sum_gpu_percent};
     use crate::view::GroupSort;
     use eframe::egui;
@@ -12,7 +12,7 @@ mod grouped_sort_tests {
     use pmonnt_core::process;
     use pmonnt_core::win_process_metrics::IoRate;
     use std::collections::{HashMap, HashSet, VecDeque};
-    use std::panic::{catch_unwind, AssertUnwindSafe};
+    use std::panic::{AssertUnwindSafe, catch_unwind};
 
     fn proc(pid: u32, name: &str) -> process::Process {
         process::Process {

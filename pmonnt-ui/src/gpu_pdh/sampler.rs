@@ -3,13 +3,13 @@ use std::{collections::HashMap, mem};
 use anyhow::Result;
 
 use windows::Win32::System::Performance::{
-    PdhAddEnglishCounterW, PdhCloseQuery, PdhCollectQueryData, PdhGetFormattedCounterValue,
-    PDH_FMT_COUNTERVALUE, PDH_FMT_DOUBLE, PDH_FMT_LARGE,
+    PDH_FMT_COUNTERVALUE, PDH_FMT_DOUBLE, PDH_FMT_LARGE, PdhAddEnglishCounterW, PdhCloseQuery,
+    PdhCollectQueryData, PdhGetFormattedCounterValue,
 };
 
 use crate::gpu::GpuSnapshot;
 
-use super::pdh::{expand_paths, extract_pid, pdh_ok, wstring, PdhCounterHandle, PdhQueryHandle};
+use super::pdh::{PdhCounterHandle, PdhQueryHandle, expand_paths, extract_pid, pdh_ok, wstring};
 use super::warnings::should_warn;
 
 const ENGINE_PATH: &str = r"\GPU Engine(*)\Utilization Percentage";
@@ -87,8 +87,12 @@ impl GpuPdhSampler {
         // Mark first sample as done so next sample() returns real data
         self.first_sample_done = true;
 
-        log::info!("[GPU PDH] Smoke test passed: {} usage counters, {} mem counters, {} shared counters ready",
-            self.usage_counters.len(), self.mem_counters.len(), self.shared_counters.len());
+        log::info!(
+            "[GPU PDH] Smoke test passed: {} usage counters, {} mem counters, {} shared counters ready",
+            self.usage_counters.len(),
+            self.mem_counters.len(),
+            self.shared_counters.len()
+        );
         Ok(())
     }
 
@@ -141,7 +145,9 @@ impl GpuPdhSampler {
                 let status =
                     unsafe { PdhAddEnglishCounterW(self.query, wide.as_pwstr(), 0, &mut counter) };
                 if !pdh_ok(status) {
-                    log::trace!("[GPU PDH] Failed to add usage counter for PID {pid}: status=0x{status:08X}");
+                    log::trace!(
+                        "[GPU PDH] Failed to add usage counter for PID {pid}: status=0x{status:08X}"
+                    );
                     continue;
                 }
                 self.usage_counters.push((counter, pid));
@@ -224,7 +230,9 @@ impl GpuPdhSampler {
                 let status =
                     unsafe { PdhAddEnglishCounterW(self.query, wide.as_pwstr(), 0, &mut counter) };
                 if !pdh_ok(status) {
-                    log::trace!("[GPU PDH] Failed to add shared counter for PID {pid}: status=0x{status:08X}");
+                    log::trace!(
+                        "[GPU PDH] Failed to add shared counter for PID {pid}: status=0x{status:08X}"
+                    );
                     continue;
                 }
                 self.shared_counters.push((counter, pid));
@@ -327,8 +335,13 @@ impl GpuPdhSampler {
         static SAMPLE_COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
         let count = SAMPLE_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if count.is_multiple_of(30) {
-            log::debug!("[GPU PDH] Sample #{}: {} PIDs with GPU%, {} PIDs with dedicated, {} PIDs with shared",
-                count, percent_map.len(), mem_map.len(), shared_map.len());
+            log::debug!(
+                "[GPU PDH] Sample #{}: {} PIDs with GPU%, {} PIDs with dedicated, {} PIDs with shared",
+                count,
+                percent_map.len(),
+                mem_map.len(),
+                shared_map.len()
+            );
         }
 
         Ok(GpuSnapshot {

@@ -13,14 +13,14 @@ use pmonnt_core::{
     vt::VirusTotalProvider,
 };
 
-use crate::app::network_sort::{sort_connections, NetworkSortState};
+use crate::app::network_sort::{NetworkSortState, sort_connections};
 use crate::background_worker::BackgroundWorker;
 use crate::ui_renderer;
 use crate::ui_state::{MbUiState, TfUiState, VtUiState, YaraScanState};
 use crate::util::format_memory_bytes;
 use crate::view::RightTab;
 
-use super::{sparkline, PerfStats};
+use super::{PerfStats, sparkline};
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn render_tab(
@@ -1897,10 +1897,7 @@ fn render_cpu_card(ui: &mut egui::Ui, stats: &PerfStats, pid: u32) {
                     render_row(
                         ui,
                         "Cycles Δ:",
-                        format_compact_optional(
-                            stats.cycles_delta,
-                            NA_REASON_SAMPLING,
-                        ),
+                        format_compact_optional(stats.cycles_delta, NA_REASON_SAMPLING),
                         MetricKind::Badge,
                     );
                 });
@@ -2372,8 +2369,8 @@ fn render_network_tab_with_churn(
     current_snapshot: &ProcessSnapshot,
 ) {
     use super::history::{
-        NetChurnMonitor, CLOSE_WAIT_RISING_COUNT, CLOSE_WAIT_THRESHOLD, NET_POLL_INTERVAL_SECS,
-        NEW_CONN_PER_SEC_THRESHOLD, TIME_WAIT_THRESHOLD,
+        CLOSE_WAIT_RISING_COUNT, CLOSE_WAIT_THRESHOLD, NET_POLL_INTERVAL_SECS,
+        NEW_CONN_PER_SEC_THRESHOLD, NetChurnMonitor, TIME_WAIT_THRESHOLD,
     };
 
     ui.heading("Network Connections");

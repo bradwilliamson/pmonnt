@@ -6,7 +6,7 @@ use pmonnt_core::diff::ProcessDiff;
 use pmonnt_core::process;
 
 use crate::app::{CompactView, Density, PMonNTApp};
-use crate::process_table::{process_table_policy, ProcessColumnId};
+use crate::process_table::{ProcessColumnId, process_table_policy};
 use crate::view::{GroupSort, ViewMode};
 
 mod grouped;

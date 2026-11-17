@@ -9,7 +9,7 @@
 //! - Supports querying WoW64 (32-bit) processes from a 64-bit process by using
 //!   `ProcessWow64Information` to obtain the 32-bit PEB address.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::mem;
@@ -18,8 +18,8 @@ use windows::Win32::Foundation::HANDLE;
 use windows::Win32::System::Diagnostics::Debug::ReadProcessMemory;
 use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ};
 
-use crate::win::ntdll::NtQueryInformationProcess;
 use crate::win::HandleGuard;
+use crate::win::ntdll::NtQueryInformationProcess;
 
 #[derive(Debug, Clone, Default)]
 pub struct ProcessDetails {

@@ -52,14 +52,20 @@ fn take_logs() -> String {
 
 fn set_env_var(key: &str, value: String) -> Option<String> {
     let prev = std::env::var(key).ok();
-    std::env::set_var(key, value);
+    // SAFETY: test-only. Every test in this binary holds ENV_LOCK while it reads or
+    // writes the environment, so no other thread touches it concurrently.
+    unsafe { std::env::set_var(key, value) };
     prev
 }
 
 fn restore_env_var(key: &str, prev: Option<String>) {
-    match prev {
-        Some(v) => std::env::set_var(key, v),
-        None => std::env::remove_var(key),
+    // SAFETY: test-only. Every test in this binary holds ENV_LOCK while it reads or
+    // writes the environment, so no other thread touches it concurrently.
+    unsafe {
+        match prev {
+            Some(v) => std::env::set_var(key, v),
+            None => std::env::remove_var(key),
+        }
     }
 }
 

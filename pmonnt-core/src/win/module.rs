@@ -7,22 +7,22 @@
 //! 2. PSAPI (K32EnumProcessModulesEx) - alternative API, also often blocked
 //! 3. PEB walking (NtQueryInformationProcess + ReadProcessMemory) - most robust
 
-use crate::module::ModuleInfo;
-use crate::win::ntdll::NtQueryInformationProcess;
-use crate::win::HandleGuard;
 use crate::PmonntError;
+use crate::module::ModuleInfo;
+use crate::win::HandleGuard;
+use crate::win::ntdll::NtQueryInformationProcess;
 use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt;
 use windows::Win32::Foundation::HANDLE;
 use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
 use windows_sys::Win32::System::Diagnostics::ToolHelp::{
-    CreateToolhelp32Snapshot, Module32FirstW, Module32NextW, MODULEENTRY32W, TH32CS_SNAPMODULE,
+    CreateToolhelp32Snapshot, MODULEENTRY32W, Module32FirstW, Module32NextW, TH32CS_SNAPMODULE,
     TH32CS_SNAPMODULE32,
 };
 
 // PSAPI / K32 functions for fallback module enumeration
 #[link(name = "kernel32")]
-extern "system" {
+unsafe extern "system" {
     fn K32EnumProcessModulesEx(
         hProcess: isize,
         lphModule: *mut usize,
@@ -187,7 +187,7 @@ const TRUST_E_SUBJECT_NOT_TRUSTED: i32 = -0x7FF6FDFE_i32; // 0x800B0102
 const CRYPT_E_SECURITY_SETTINGS: i32 = -0x7FF6CFFD_i32; // 0x80092003
 
 #[link(name = "wintrust")]
-extern "system" {
+unsafe extern "system" {
     fn WinVerifyTrust(hwnd: HANDLE, pgActionID: *const GUID, pWVTData: *mut WINTRUST_DATA) -> i32;
 }
 
@@ -566,6 +566,10 @@ fn offset_of_in_load_order() -> usize {
 }
 
 /// Read a UNICODE_STRING from the target process
+///
+/// # Safety
+/// `handle` must be a process handle opened with `PROCESS_VM_READ`. `us` describes memory in
+/// that process; it is only read through `ReadProcessMemory`, which validates the range.
 unsafe fn read_unicode_string(handle: isize, us: &UNICODE_STRING) -> String {
     if us.Buffer == 0 || us.Length == 0 {
         return String::new();
@@ -579,13 +583,17 @@ unsafe fn read_unicode_string(handle: isize, us: &UNICODE_STRING) -> String {
     let mut buffer: Vec<u16> = vec![0; len_chars];
     let mut bytes_read: usize = 0;
 
-    let result = ReadProcessMemory(
-        handle,
-        us.Buffer,
-        buffer.as_mut_ptr() as *mut std::ffi::c_void,
-        us.Length as usize,
-        &mut bytes_read,
-    );
+    // SAFETY: `buffer` holds `len_chars * 2 >= us.Length` writable bytes, and
+    // ReadProcessMemory checks the remote range itself.
+    let result = unsafe {
+        ReadProcessMemory(
+            handle,
+            us.Buffer,
+            buffer.as_mut_ptr() as *mut std::ffi::c_void,
+            us.Length as usize,
+            &mut bytes_read,
+        )
+    };
 
     if result == 0 {
         return String::new();

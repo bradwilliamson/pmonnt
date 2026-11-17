@@ -2,7 +2,7 @@
 
 use eframe::egui;
 
-use pmonnt_core::win::{set_priority_class, PriorityClass};
+use pmonnt_core::win::{PriorityClass, set_priority_class};
 
 use crate::app::PMonNTApp;
 

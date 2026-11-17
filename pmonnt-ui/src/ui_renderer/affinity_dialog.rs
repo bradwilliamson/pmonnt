@@ -2,7 +2,7 @@
 
 use eframe::egui;
 
-use pmonnt_core::win::{set_affinity, AffinityInfo};
+use pmonnt_core::win::{AffinityInfo, set_affinity};
 
 use crate::app::PMonNTApp;
 

@@ -1,7 +1,7 @@
 //! Tests for YARA engine compilation and scanning
 
-use pmonnt_core::yara::engine::{YaraEngine, EngineError};
-use pmonnt_core::yara::rules::{Severity, YaraRule, RuleSource};
+use pmonnt_core::yara::engine::{EngineError, YaraEngine};
+use pmonnt_core::yara::rules::{RuleSource, Severity, YaraRule};
 
 #[test]
 fn test_compile_empty_source_fails() {
@@ -78,7 +78,7 @@ rule detect_evil {
 "#;
     let engine = YaraEngine::compile(rule).unwrap();
     let matches = engine.scan_buffer(b"This contains EVIL content").unwrap();
-    
+
     assert_eq!(matches.len(), 1);
     assert_eq!(matches[0].rule_name, "detect_evil");
     assert!(!matches[0].matched_strings.is_empty());
@@ -96,7 +96,7 @@ rule detect_evil {
 "#;
     let engine = YaraEngine::compile(rule).unwrap();
     let matches = engine.scan_buffer(b"This file is clean").unwrap();
-    
+
     assert!(matches.is_empty());
 }
 
@@ -112,7 +112,7 @@ rule detect_anything {
 "#;
     let engine = YaraEngine::compile(rule).unwrap();
     let matches = engine.scan_buffer(b"").unwrap();
-    
+
     assert!(matches.is_empty());
 }
 
@@ -129,7 +129,7 @@ rule find_marker {
     let engine = YaraEngine::compile(rule).unwrap();
     let data = b"prefix_MARK_suffix";
     let matches = engine.scan_buffer(data).unwrap();
-    
+
     assert_eq!(matches.len(), 1);
     let matched = &matches[0].matched_strings[0];
     assert_eq!(matched.offset, 7); // "prefix_" is 7 bytes
@@ -150,9 +150,12 @@ rule with_meta {
 "#;
     let engine = YaraEngine::compile(rule).unwrap();
     let matches = engine.scan_buffer(b"test data").unwrap();
-    
+
     assert_eq!(matches.len(), 1);
-    assert_eq!(matches[0].description.as_deref(), Some("Test rule description"));
+    assert_eq!(
+        matches[0].description.as_deref(),
+        Some("Test rule description")
+    );
 }
 
 #[test]
@@ -169,7 +172,7 @@ rule high_severity {
 "#;
     let engine = YaraEngine::compile(rule).unwrap();
     let matches = engine.scan_buffer(b"test").unwrap();
-    
+
     assert_eq!(matches[0].severity, Severity::High);
 }
 
@@ -187,14 +190,14 @@ rule critical_severity {
 "#;
     let engine = YaraEngine::compile(rule).unwrap();
     let matches = engine.scan_buffer(b"test").unwrap();
-    
+
     assert_eq!(matches[0].severity, Severity::Critical);
 }
 
 #[test]
 fn test_compile_with_fallback_skips_invalid() {
     use std::time::SystemTime;
-    
+
     let rules = vec![
         YaraRule {
             name: "valid.yar".to_string(),
@@ -219,9 +222,9 @@ fn test_compile_with_fallback_skips_invalid() {
             tags: vec![],
         },
     ];
-    
+
     let (engine, skipped) = YaraEngine::compile_rules_with_fallback(&rules).unwrap();
-    
+
     assert!(engine.rule_count() >= 1);
     assert_eq!(skipped.len(), 1);
     assert!(skipped.contains(&"invalid.yar".to_string()));
@@ -342,7 +345,7 @@ rule multi_match {
 "#;
     let engine = YaraEngine::compile(rule).unwrap();
     let matches = engine.scan_buffer(b"prefix AAA middle BBB suffix").unwrap();
-    
+
     assert_eq!(matches.len(), 1);
     assert_eq!(matches[0].matched_strings.len(), 2);
 }
@@ -359,7 +362,7 @@ rule no_meta {
 "#;
     let engine = YaraEngine::compile(rule).unwrap();
     let matches = engine.scan_buffer(b"test").unwrap();
-    
+
     assert_eq!(matches.len(), 1);
     assert!(matches[0].description.is_none());
     // Default severity should be Medium
@@ -379,7 +382,7 @@ rule binary_pattern {
     let engine = YaraEngine::compile(rule).unwrap();
     let data = b"MZ\x90\x00\x03\x00";
     let matches = engine.scan_buffer(data).unwrap();
-    
+
     assert_eq!(matches.len(), 1);
     assert_eq!(matches[0].rule_name, "binary_pattern");
 }
@@ -396,7 +399,7 @@ rule case_insensitive {
 "#;
     let engine = YaraEngine::compile(rule).unwrap();
     let matches = engine.scan_buffer(b"This contains TEST").unwrap();
-    
+
     assert_eq!(matches.len(), 1);
 }
 
@@ -412,7 +415,7 @@ rule wildcard {
 "#;
     let engine = YaraEngine::compile(rule).unwrap();
     let matches = engine.scan_buffer(b"test text tent").unwrap();
-    
+
     // Wildcard may not be supported in all YARA implementations the same way
     // Just verify it doesn't crash
     let _ = matches.len();
@@ -421,7 +424,7 @@ rule wildcard {
 #[test]
 fn test_compile_rules_with_fallback_all_invalid() {
     use std::time::SystemTime;
-    
+
     let rules = vec![
         YaraRule {
             name: "bad1.yar".to_string(),
@@ -446,7 +449,7 @@ fn test_compile_rules_with_fallback_all_invalid() {
             tags: vec![],
         },
     ];
-    
+
     let result = YaraEngine::compile_rules_with_fallback(&rules);
     assert!(matches!(result, Err(EngineError::CompileError(_))));
 }

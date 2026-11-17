@@ -39,16 +39,22 @@ fn vt_fixture_not_found_body_does_not_parse_as_vt_response() {
 fn vt_rate_limited_response_is_error() {
     let result =
         pmonnt_core::vt::parse_vt_stats_from_json(include_str!("data/vt_rate_limited.json"));
-    
+
     // Rate limited response should not parse as a valid VT stats response
-    assert!(result.is_err(), "rate limited response should fail to parse as VT stats");
+    assert!(
+        result.is_err(),
+        "rate limited response should fail to parse as VT stats"
+    );
 }
 
 #[test]
 fn vt_unauthorized_response_is_error() {
     let result =
         pmonnt_core::vt::parse_vt_stats_from_json(include_str!("data/vt_unauthorized.json"));
-    
+
     // Unauthorized response should not parse as a valid VT stats response
-    assert!(result.is_err(), "unauthorized response should fail to parse as VT stats");
+    assert!(
+        result.is_err(),
+        "unauthorized response should fail to parse as VT stats"
+    );
 }

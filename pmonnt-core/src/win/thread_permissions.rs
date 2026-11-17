@@ -3,7 +3,7 @@ use std::os::windows::ffi::OsStringExt;
 
 use thiserror::Error;
 use windows::Win32::Foundation::{
-    GetLastError, ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, WIN32_ERROR,
+    ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, GetLastError, WIN32_ERROR,
 };
 use windows::Win32::Security::Authorization::{GetSecurityInfo, SE_KERNEL_OBJECT};
 use windows::Win32::Security::{
@@ -17,14 +17,14 @@ use crate::win::HandleGuard;
 // GetSecurityInfo and ConvertSecurityDescriptorToStringSecurityDescriptorW allocate memory
 // that must be freed with LocalFree.
 #[link(name = "kernel32")]
-extern "system" {
+unsafe extern "system" {
     fn LocalFree(hmem: *mut core::ffi::c_void) -> *mut core::ffi::c_void;
 }
 
 // windows-rs doesn't always expose ConvertSecurityDescriptorToStringSecurityDescriptorW
 // depending on enabled features, so bind it directly.
 #[link(name = "advapi32")]
-extern "system" {
+unsafe extern "system" {
     fn ConvertSecurityDescriptorToStringSecurityDescriptorW(
         security_descriptor: *const core::ffi::c_void,
         requested_string_sd_revision: u32,

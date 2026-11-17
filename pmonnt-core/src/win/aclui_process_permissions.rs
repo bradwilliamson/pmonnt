@@ -338,24 +338,24 @@ pub fn open_process_permissions_dialog(
 
 use thiserror::Error;
 
-use windows::core::{implement, Error as WinError, GUID, PCWSTR, PWSTR};
-use windows::Win32::Foundation::{SetLastError, BOOL, HWND, WIN32_ERROR};
+use windows::Win32::Foundation::{BOOL, HWND, SetLastError, WIN32_ERROR};
 use windows::Win32::Security::Authorization::UI::{
     EditSecurity, ISecurityInformation, ISecurityInformation_Impl, SECURITY_INFO_PAGE_FLAGS,
     SI_ACCESS, SI_INHERIT_TYPE, SI_OBJECT_INFO, SI_OBJECT_INFO_FLAGS, SI_PAGE_TYPE, SI_VIEW_ONLY,
 };
-use windows::Win32::Security::Authorization::{GetSecurityInfo, SetSecurityInfo, SE_KERNEL_OBJECT};
+use windows::Win32::Security::Authorization::{GetSecurityInfo, SE_KERNEL_OBJECT, SetSecurityInfo};
 use windows::Win32::Security::{
-    GetSecurityDescriptorDacl, MapGenericMask, ACL, DACL_SECURITY_INFORMATION, GENERIC_MAPPING,
+    ACL, DACL_SECURITY_INFORMATION, GENERIC_MAPPING, GetSecurityDescriptorDacl, MapGenericMask,
     OBJECT_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR,
 };
 use windows::Win32::System::Com::{
-    CoInitializeEx, CoTaskMemAlloc, CoUninitialize, COINIT_APARTMENTTHREADED,
+    COINIT_APARTMENTTHREADED, CoInitializeEx, CoTaskMemAlloc, CoUninitialize,
 };
 use windows::Win32::System::Threading::{
     OpenProcess, PROCESS_ACCESS_RIGHTS, PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use windows::Win32::UI::Controls::PSPCB_MESSAGE;
+use windows::core::{Error as WinError, GUID, PCWSTR, PWSTR, implement};
 
 use super::HandleGuard;
 

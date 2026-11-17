@@ -1,6 +1,6 @@
+use super::ReputationRequestError;
 use super::service::ReputationService;
 use super::types::Job;
-use super::ReputationRequestError;
 
 impl ReputationService {
     /// Request an on-demand ThreatFox lookup for a process id.

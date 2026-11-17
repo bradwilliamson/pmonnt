@@ -174,7 +174,7 @@ fn test_tcp_state_variants_are_distinct() {
         TcpState::TimeWait,
         TcpState::DeleteTcb,
     ];
-    
+
     // All should be distinct
     for (i, state1) in states.iter().enumerate() {
         for (j, state2) in states.iter().enumerate() {
@@ -201,14 +201,14 @@ fn test_protocol_enum() {
 fn test_connection_cache_behavior() {
     // First call - cache miss, should query Windows
     let result1 = pmonnt_core::network::get_all_connections();
-    
+
     // Second call immediately after - should hit cache
     let result2 = pmonnt_core::network::get_all_connections();
-    
+
     // Both should succeed or both should fail with same error type
     match (result1, result2) {
-        (Ok(_), Ok(_)) => {}, // Both succeeded - cache working
-        (Err(_), Err(_)) => {}, // Both failed - consistent
+        (Ok(_), Ok(_)) => {}   // Both succeeded - cache working
+        (Err(_), Err(_)) => {} // Both failed - consistent
         _ => panic!("Inconsistent cache behavior"),
     }
 }

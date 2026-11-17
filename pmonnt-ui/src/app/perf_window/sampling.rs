@@ -216,7 +216,7 @@ impl PMonNTApp {
         _pid: u32,
         pids_to_monitor: &[u32],
     ) {
-        use pmonnt_core::network::{get_all_connections, Protocol, TcpState};
+        use pmonnt_core::network::{Protocol, TcpState, get_all_connections};
         use std::collections::HashSet;
 
         monitor.error = None;

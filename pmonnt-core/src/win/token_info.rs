@@ -2,11 +2,10 @@ use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt;
 
 use thiserror::Error;
-use windows::core::{PCWSTR, PWSTR};
 use windows::Win32::Foundation::{GetLastError, HANDLE};
 use windows::Win32::Security::{
-    GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation, LookupAccountSidW,
-    LookupPrivilegeDisplayNameW, LookupPrivilegeNameW, LUID_AND_ATTRIBUTES, PSID,
+    GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation, LUID_AND_ATTRIBUTES,
+    LookupAccountSidW, LookupPrivilegeDisplayNameW, LookupPrivilegeNameW, PSID,
     SE_PRIVILEGE_ENABLED, SE_PRIVILEGE_ENABLED_BY_DEFAULT, SE_PRIVILEGE_REMOVED,
     SE_PRIVILEGE_USED_FOR_ACCESS, SID_AND_ATTRIBUTES, SID_NAME_USE, TOKEN_ELEVATION_TYPE,
     TOKEN_GROUPS, TOKEN_INFORMATION_CLASS, TOKEN_MANDATORY_LABEL, TOKEN_PRIVILEGES, TOKEN_QUERY,
@@ -15,8 +14,9 @@ use windows::Win32::Security::{
 use windows::Win32::System::Threading::{
     OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
 };
+use windows::core::{PCWSTR, PWSTR};
 
-use super::{get_process_protection, HandleGuard};
+use super::{HandleGuard, get_process_protection};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IntegrityLevel {
@@ -86,13 +86,13 @@ pub enum SecurityError {
 // ConvertSidToStringSidW isn't consistently exposed via windows-rs in this repo's feature set,
 // so we bind it directly.
 #[link(name = "advapi32")]
-extern "system" {
+unsafe extern "system" {
     fn ConvertSidToStringSidW(sid: *const core::ffi::c_void, string_sid: *mut *mut u16) -> i32;
 }
 
 // ConvertSidToStringSidW returns memory that must be freed with LocalFree.
 #[link(name = "kernel32")]
-extern "system" {
+unsafe extern "system" {
     fn LocalFree(hmem: *mut core::ffi::c_void) -> *mut core::ffi::c_void;
 }
 
@@ -302,8 +302,8 @@ fn u32_token_value(token: HANDLE, class: TOKEN_INFORMATION_CLASS) -> Option<u32>
 
 fn token_user(token: HANDLE) -> Result<(String, String), SecurityError> {
     let buf = token_info_raw(token, TOKEN_INFORMATION_CLASS(1))?; // TokenUser
-                                                                  // SAFETY: `buf` is populated by `GetTokenInformation(TokenUser)` and begins with a
-                                                                  // `TOKEN_USER`. We use `read_unaligned` because `Vec<u8>` does not guarantee alignment.
+    // SAFETY: `buf` is populated by `GetTokenInformation(TokenUser)` and begins with a
+    // `TOKEN_USER`. We use `read_unaligned` because `Vec<u8>` does not guarantee alignment.
     let token_user = unsafe { std::ptr::read_unaligned(buf.as_ptr() as *const TOKEN_USER) };
     let sid = token_user.User.Sid;
 
@@ -380,8 +380,8 @@ fn privilege_attrs_to_strings(attrs: u32) -> Vec<String> {
 
 fn token_groups(token: HANDLE) -> Result<Vec<GroupEntry>, SecurityError> {
     let buf = token_info_raw(token, TOKEN_INFORMATION_CLASS(2))?; // TokenGroups
-                                                                  // SAFETY: `buf` is populated by `GetTokenInformation(TokenGroups)` and begins with a
-                                                                  // `TOKEN_GROUPS`. We use `read_unaligned` because `Vec<u8>` does not guarantee alignment.
+    // SAFETY: `buf` is populated by `GetTokenInformation(TokenGroups)` and begins with a
+    // `TOKEN_GROUPS`. We use `read_unaligned` because `Vec<u8>` does not guarantee alignment.
     let groups = unsafe { std::ptr::read_unaligned(buf.as_ptr() as *const TOKEN_GROUPS) };
 
     let count = groups.GroupCount as usize;
@@ -472,8 +472,8 @@ fn luid_to_display(name: &str) -> Option<String> {
 
 fn token_privileges(token: HANDLE) -> Result<Vec<PrivEntry>, SecurityError> {
     let buf = token_info_raw(token, TOKEN_INFORMATION_CLASS(3))?; // TokenPrivileges
-                                                                  // SAFETY: `buf` is populated by `GetTokenInformation(TokenPrivileges)` and begins with a
-                                                                  // `TOKEN_PRIVILEGES`. We use `read_unaligned` because `Vec<u8>` does not guarantee alignment.
+    // SAFETY: `buf` is populated by `GetTokenInformation(TokenPrivileges)` and begins with a
+    // `TOKEN_PRIVILEGES`. We use `read_unaligned` because `Vec<u8>` does not guarantee alignment.
     let tp = unsafe { std::ptr::read_unaligned(buf.as_ptr() as *const TOKEN_PRIVILEGES) };
     let count = tp.PrivilegeCount as usize;
 
@@ -512,8 +512,8 @@ fn token_privileges(token: HANDLE) -> Result<Vec<PrivEntry>, SecurityError> {
 
 fn token_statistics_logon_luid(token: HANDLE) -> Option<String> {
     let buf = token_info_raw(token, TOKEN_INFORMATION_CLASS(10)).ok()?; // TokenStatistics
-                                                                        // SAFETY: `buf` is populated by `GetTokenInformation(TokenStatistics)` and begins with a
-                                                                        // `TOKEN_STATISTICS`. We use `read_unaligned` because `Vec<u8>` does not guarantee alignment.
+    // SAFETY: `buf` is populated by `GetTokenInformation(TokenStatistics)` and begins with a
+    // `TOKEN_STATISTICS`. We use `read_unaligned` because `Vec<u8>` does not guarantee alignment.
     let stats = unsafe { std::ptr::read_unaligned(buf.as_ptr() as *const TOKEN_STATISTICS) };
     let luid = stats.AuthenticationId;
     Some(format!(

@@ -16,14 +16,20 @@ static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 fn set_env(key: &str, val: String) -> Option<String> {
     let prev = std::env::var(key).ok();
-    std::env::set_var(key, val);
+    // SAFETY: test-only. Every test in this binary holds ENV_LOCK while it reads or
+    // writes the environment, so no other thread touches it concurrently.
+    unsafe { std::env::set_var(key, val) };
     prev
 }
 
 fn restore_env(key: &str, prev: Option<String>) {
-    match prev {
-        Some(v) => std::env::set_var(key, v),
-        None => std::env::remove_var(key),
+    // SAFETY: test-only. Every test in this binary holds ENV_LOCK while it reads or
+    // writes the environment, so no other thread touches it concurrently.
+    unsafe {
+        match prev {
+            Some(v) => std::env::set_var(key, v),
+            None => std::env::remove_var(key),
+        }
     }
 }
 
@@ -31,7 +37,7 @@ fn spawn_http_server(listener: TcpListener, response: String) -> thread::JoinHan
     thread::spawn(move || {
         if let Ok((mut stream, _)) = listener.accept() {
             let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
-            
+
             let mut buf = Vec::new();
             let mut tmp = [0u8; 1024];
             loop {

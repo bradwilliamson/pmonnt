@@ -5,19 +5,19 @@
 
 use std::vec::Vec;
 use thiserror::Error;
-use windows::core::{Error as WinError, HRESULT};
 use windows::Win32::Foundation::{
-    CloseHandle, BOOL, ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, HANDLE,
+    BOOL, CloseHandle, ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, HANDLE,
 };
 use windows::Win32::System::Diagnostics::Debug::ReadProcessMemory;
 use windows::Win32::System::Memory::{
-    VirtualQueryEx, MEMORY_BASIC_INFORMATION, MEM_COMMIT, PAGE_EXECUTE_READ,
-    PAGE_EXECUTE_READWRITE, PAGE_EXECUTE_WRITECOPY, PAGE_GUARD, PAGE_NOACCESS, PAGE_NOCACHE,
-    PAGE_READONLY, PAGE_READWRITE, PAGE_WRITECOMBINE, PAGE_WRITECOPY,
+    MEM_COMMIT, MEMORY_BASIC_INFORMATION, PAGE_EXECUTE_READ, PAGE_EXECUTE_READWRITE,
+    PAGE_EXECUTE_WRITECOPY, PAGE_GUARD, PAGE_NOACCESS, PAGE_NOCACHE, PAGE_READONLY, PAGE_READWRITE,
+    PAGE_WRITECOMBINE, PAGE_WRITECOPY, VirtualQueryEx,
 };
 use windows::Win32::System::Threading::{
     IsWow64Process, OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ,
 };
+use windows::core::{Error as WinError, HRESULT};
 
 /// Represents a readable memory region
 #[derive(Debug, Clone)]

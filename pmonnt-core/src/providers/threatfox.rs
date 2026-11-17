@@ -495,23 +495,26 @@ mod tests {
         let temp = tempdir().unwrap();
         let cache = Arc::new(LocalCacheProvider::new(temp.path().join("cache.json")));
         let provider = ThreatFoxProvider::new(cache, None);
-        
+
         let result = provider.lookup_hash("invalid");
         // ThreatFox validates hash format
-        assert!(matches!(result, LookupState::Error(_) | LookupState::NotFound));
+        assert!(matches!(
+            result,
+            LookupState::Error(_) | LookupState::NotFound
+        ));
     }
-    
+
     #[test]
     fn test_api_key_update() {
         let temp = tempdir().unwrap();
         let cache = Arc::new(LocalCacheProvider::new(temp.path().join("cache.json")));
         let provider = ThreatFoxProvider::new(cache, Some("initial".to_string()));
-        
+
         assert_eq!(provider.get_api_key(), Some("initial".to_string()));
-        
+
         provider.update_api_key(Some("updated".to_string()));
         assert_eq!(provider.get_api_key(), Some("updated".to_string()));
-        
+
         provider.update_api_key(None);
         assert!(provider.get_api_key().is_none());
     }
@@ -520,10 +523,10 @@ mod tests {
     fn test_new_provider_with_env_fallback() {
         let temp = tempdir().unwrap();
         let cache = Arc::new(LocalCacheProvider::new(temp.path().join("cache.json")));
-        
+
         // Provider should work even without explicit API key
         let provider = ThreatFoxProvider::new(cache, None);
-        
+
         // Should construct successfully
         assert!(provider.get_api_key().is_none() || provider.get_api_key().is_some());
     }
@@ -533,7 +536,7 @@ mod tests {
         let temp = tempdir().unwrap();
         let cache = Arc::new(LocalCacheProvider::new(temp.path().join("cache.json")));
         let provider = ThreatFoxProvider::new(cache, Some("explicit_key".to_string()));
-        
+
         assert_eq!(provider.get_api_key(), Some("explicit_key".to_string()));
     }
 
@@ -542,12 +545,11 @@ mod tests {
         let temp = tempdir().unwrap();
         let cache = Arc::new(LocalCacheProvider::new(temp.path().join("cache.json")));
         let provider = ThreatFoxProvider::new(cache, None);
-        
+
         // Valid hash should not panic, even without API key
-        let result = provider.lookup_hash(
-            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-        );
-        
+        let result = provider
+            .lookup_hash("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+
         // Result could be NotConfigured, Error, or cached result
         assert!(
             matches!(result, LookupState::NotConfigured)
@@ -562,13 +564,10 @@ mod tests {
         let temp = tempdir().unwrap();
         let cache = Arc::new(LocalCacheProvider::new(temp.path().join("cache.json")));
         let provider = ThreatFoxProvider::new(cache, None);
-        
+
         let result = provider.lookup_hash("deadbeef");
         // Should handle gracefully, not panic
-        assert!(
-            matches!(result, LookupState::Error(_))
-                || matches!(result, LookupState::NotFound)
-        );
+        assert!(matches!(result, LookupState::Error(_)) || matches!(result, LookupState::NotFound));
     }
 
     #[test]
@@ -576,15 +575,15 @@ mod tests {
         let temp = tempdir().unwrap();
         let cache = Arc::new(LocalCacheProvider::new(temp.path().join("cache.json")));
         let provider = ThreatFoxProvider::new(cache, Some("key1".to_string()));
-        
+
         assert_eq!(provider.get_api_key(), Some("key1".to_string()));
-        
+
         provider.update_api_key(Some("key2".to_string()));
         assert_eq!(provider.get_api_key(), Some("key2".to_string()));
-        
+
         provider.update_api_key(Some("key3".to_string()));
         assert_eq!(provider.get_api_key(), Some("key3".to_string()));
-        
+
         provider.update_api_key(None);
         assert!(provider.get_api_key().is_none());
     }

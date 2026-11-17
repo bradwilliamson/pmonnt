@@ -5,10 +5,10 @@
 
 use crate::process::Process;
 use crate::win::HandleGuard;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use windows::Win32::Foundation::INVALID_HANDLE_VALUE;
 use windows::Win32::System::Diagnostics::ToolHelp::{
-    CreateToolhelp32Snapshot, Process32First, Process32Next, PROCESSENTRY32, TH32CS_SNAPPROCESS,
+    CreateToolhelp32Snapshot, PROCESSENTRY32, Process32First, Process32Next, TH32CS_SNAPPROCESS,
 };
 
 /// Enumerate all running processes on the system

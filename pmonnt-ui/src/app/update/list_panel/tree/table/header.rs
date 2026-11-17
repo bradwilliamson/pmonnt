@@ -77,11 +77,7 @@ pub(super) fn render_header(
             ProcessColumnId::Name => {
                 header.col(|ui| {
                     let name_label = if app.group_sort == GroupSort::Name {
-                        if app.sort_desc {
-                            "Name v"
-                        } else {
-                            "Name ^"
-                        }
+                        if app.sort_desc { "Name v" } else { "Name ^" }
                     } else {
                         "Name"
                     };
@@ -128,11 +124,7 @@ pub(super) fn render_header(
                 header.col(|ui| {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let cpu_label = if app.group_sort == GroupSort::CPU {
-                            if app.sort_desc {
-                                "v CPU"
-                            } else {
-                                "^ CPU"
-                            }
+                            if app.sort_desc { "v CPU" } else { "^ CPU" }
                         } else {
                             "CPU"
                         };
@@ -176,11 +168,7 @@ pub(super) fn render_header(
                 header.col(|ui| {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let disk_label = if app.group_sort == GroupSort::Disk {
-                            if app.sort_desc {
-                                "v Disk"
-                            } else {
-                                "^ Disk"
-                            }
+                            if app.sort_desc { "v Disk" } else { "^ Disk" }
                         } else {
                             "Disk"
                         };
@@ -200,11 +188,7 @@ pub(super) fn render_header(
                 header.col(|ui| {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let gpu_label = if app.group_sort == GroupSort::GPU {
-                            if app.sort_desc {
-                                "v GPU"
-                            } else {
-                                "^ GPU"
-                            }
+                            if app.sort_desc { "v GPU" } else { "^ GPU" }
                         } else {
                             "GPU"
                         };
@@ -308,11 +292,7 @@ pub(super) fn render_header(
                 header.col(|ui| {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let pid_label = if app.group_sort == GroupSort::PID {
-                            if app.sort_desc {
-                                "v PID"
-                            } else {
-                                "^ PID"
-                            }
+                            if app.sort_desc { "v PID" } else { "^ PID" }
                         } else {
                             "PID"
                         };

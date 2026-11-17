@@ -12,6 +12,6 @@ pub use malwarebazaar::{
 };
 
 pub use threatfox::{
-    parse_threatfox_search_hash_response_json, TfIoc, TfMalwareSample, TfQueryMeta, TfResult,
-    ThreatFoxProvider,
+    TfIoc, TfMalwareSample, TfQueryMeta, TfResult, ThreatFoxProvider,
+    parse_threatfox_search_hash_response_json,
 };
