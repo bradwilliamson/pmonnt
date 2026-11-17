@@ -419,6 +419,10 @@ pub(super) fn try_build_app_in(environment: AppEnvironment) -> anyhow::Result<PM
     // Set VT provider key if available
     if let Some(ref vt_key) = api_keys.vt {
         vt_provider.set_api_key(vt_key.clone());
+    } else if !user {
+        // `VirusTotalProvider::new` reads VT_API_KEY by itself; a test app must not use the
+        // developer's key.
+        vt_provider.set_api_key(String::new());
     }
 
     // Determine initial enabled states
@@ -694,7 +698,9 @@ impl PMonNTApp {
     pub(crate) fn for_tests() -> Self {
         let app = try_build_app_in(AppEnvironment::Test).expect("test app init");
         // The aggregator starts with every provider enabled; ThreatFox answers without a
-        // key, so switch them all off.
+        // key, so switch them all off. This also drops the MalwareBazaar and ThreatFox keys
+        // their constructors read from environment variables (the worker applies config
+        // commands before any job).
         app.reputation_service
             .update_config(None, None, None, false, false, false);
         app

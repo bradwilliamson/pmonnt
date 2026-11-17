@@ -19,11 +19,14 @@ found by its label, a text field by the label it is tied to, a plain label by it
 
 The app is built with `PMonNTApp::for_tests()` (`AppEnvironment::Test`):
 
-- no API keys are loaded, and online lookups start disabled with every reputation provider
-  switched off, so nothing reaches the network unless a test turns lookups on (VirusTotal
+- no API keys are loaded, neither from Windows Credential Manager nor from environment
+  variables such as `VT_API_KEY`, and online lookups start disabled with every reputation
+  provider switched off, so nothing reaches the network unless a test turns lookups on (VirusTotal
   and MalwareBazaar then answer "not configured" locally; do not click ThreatFox Check,
   which works without a key);
 - the saved layout and leak-detector settings are neither read nor written;
+- in test builds, "Save key" in Settings stores the key in memory, never in Credential
+  Manager;
 - the reputation cache is a throwaway file in the temp directory.
 
 Use `for_tests()`, never `try_new()`, in tests: `try_new()` loads the user's keys and saves
@@ -68,7 +71,8 @@ Two ways, both meant to be read by an agent:
   `<test>-<label>.png` to `$PMONNT_UI_SCREENSHOTS` (default `%TEMP%\pmonnt-ui-tests`). A
   `step_until` timeout saves one automatically and prints its path. Rendering needs a GPU
   adapter (a software adapter works); without one the tests still run and the message says
-  why there is no picture. From WSL the Windows temp directory is under `/mnt/c/Users/...`.
+  why there is no picture (egui_kittest's renderer panics first; the panic is caught, but
+  its "panicked at ... wgpu.rs" line still appears in the output). From WSL the Windows temp directory is under `/mnt/c/Users/...`.
 
 The same outline plus a screenshot is the fastest way to find out why a click did nothing:
 in this repository it found that row clicks were lost in the Name column, that process names

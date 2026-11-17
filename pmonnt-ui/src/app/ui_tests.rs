@@ -16,6 +16,7 @@ use egui_kittest::kittest::{NodeT, Queryable};
 use pmonnt_core::win::process_control::query_process_create_time;
 
 use super::PMonNTApp;
+use crate::view::RightTab;
 
 /// The real app in a 1400x900 test window.
 pub(crate) fn app_harness() -> Harness<'static, PMonNTApp> {
@@ -83,7 +84,18 @@ pub(crate) fn save_screenshot(harness: &mut Harness<'_, PMonNTApp>, label: &str)
         .unwrap_or("ui-test")
         .to_string();
     let path = dir.join(format!("{test}-{label}.png"));
-    let saved = harness.render().and_then(|image| {
+    // egui_kittest builds its wgpu renderer on first use and panics when there is no
+    // adapter; that must not replace the failure being reported (a `step_until` timeout).
+    let rendered = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| harness.render()))
+        .unwrap_or_else(|panic| {
+            let why = panic
+                .downcast_ref::<&str>()
+                .map(|s| (*s).to_string())
+                .or_else(|| panic.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "the renderer panicked".to_string());
+            Err(format!("no renderer: {why}"))
+        });
+    let saved = rendered.and_then(|image| {
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         image.save(&path).map_err(|e| e.to_string())
     });
@@ -423,25 +435,32 @@ fn every_details_tab_renders_for_the_selected_process() {
     let mut h = app_harness();
     select_in_tree(&mut h, me);
 
-    for tab in [
-        "Summary",
-        "Performance Graph",
-        "Details",
-        "Services",
-        "Threads",
-        "Handles",
-        "Network",
-        "GPU",
-        "Version",
-        "Reputation",
-        "Scan",
-        "Settings",
+    // Summary is open at the start, so it comes last: every click must change the tab.
+    for (label, tab) in [
+        ("Performance Graph", RightTab::PerformanceGraph),
+        ("Details", RightTab::Details),
+        ("Services", RightTab::Services),
+        ("Threads", RightTab::Threads),
+        ("Handles", RightTab::Handles),
+        ("Network", RightTab::Network),
+        ("GPU", RightTab::GPU),
+        ("Version", RightTab::Version),
+        ("Reputation", RightTab::Reputation),
+        ("Scan", RightTab::Scan),
+        ("Settings", RightTab::Settings),
+        ("Summary", RightTab::Summary),
     ] {
-        click_tab(&mut h, tab);
+        click_tab(&mut h, label);
+        assert_eq!(
+            h.state().right_tab,
+            tab,
+            "clicking {label} did not open it\n\nScreen:\n{}",
+            describe_ui(&h)
+        );
         assert_eq!(
             h.state().selected_pid,
             Some(me),
-            "tab {tab} lost the selection"
+            "tab {label} lost the selection"
         );
     }
 }
