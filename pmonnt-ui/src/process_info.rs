@@ -213,9 +213,9 @@ pub fn get_user(pid: u32) -> Option<String> {
             if LookupAccountSidW(
                 PCWSTR(std::ptr::null()),
                 sid_ptr,
-                PWSTR(name.as_mut_ptr()),
+                Some(PWSTR(name.as_mut_ptr())),
                 &mut name_len,
-                PWSTR(domain.as_mut_ptr()),
+                Some(PWSTR(domain.as_mut_ptr())),
                 &mut domain_len,
                 &mut use_type,
             )

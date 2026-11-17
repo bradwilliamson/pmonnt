@@ -246,7 +246,7 @@ fn try_extract_signer_names(path: &Path) -> Option<(String, String)> {
             } else {
                 Some(msg as *const c_void)
             });
-            let _ = CertCloseStore(store, 0);
+            let _ = CertCloseStore(Some(store), 0);
         }
         return None;
     }
@@ -274,7 +274,7 @@ fn try_extract_signer_names(path: &Path) -> Option<(String, String)> {
             } else {
                 Some(msg as *const c_void)
             });
-            let _ = CertCloseStore(store, 0);
+            let _ = CertCloseStore(Some(store), 0);
         }
         return None;
     }
@@ -341,7 +341,7 @@ fn try_extract_signer_names(path: &Path) -> Option<(String, String)> {
         } else {
             Some(msg as *const c_void)
         });
-        let _ = CertCloseStore(store, 0);
+        let _ = CertCloseStore(Some(store), 0);
     }
 
     out
@@ -426,7 +426,7 @@ fn has_embedded_signature(path: &Path) -> bool {
             } else {
                 Some(msg as *const c_void)
             });
-            let _ = CertCloseStore(store, 0);
+            let _ = CertCloseStore(Some(store), 0);
         }
         true
     } else {

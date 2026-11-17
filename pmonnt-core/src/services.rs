@@ -216,7 +216,7 @@ fn enumerate_all_services_basic() -> Result<Vec<BasicService>> {
     };
 
     if bytes_needed == 0 {
-        let err = windows::core::Error::from_win32();
+        let err = windows::core::Error::from_thread();
         return Err(anyhow!("EnumServicesStatusExW failed: {err}"));
     }
 

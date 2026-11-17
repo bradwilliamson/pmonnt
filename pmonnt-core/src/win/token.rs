@@ -138,9 +138,9 @@ fn get_token_user(token: HANDLE) -> Option<String> {
         LookupAccountSidW(
             None,
             sid,
-            PWSTR(name.as_mut_ptr()),
+            Some(PWSTR(name.as_mut_ptr())),
             &mut name_len,
-            PWSTR(domain.as_mut_ptr()),
+            Some(PWSTR(domain.as_mut_ptr())),
             &mut domain_len,
             &mut sid_type,
         )
@@ -360,7 +360,7 @@ fn luid_to_privilege_name(luid: windows::Win32::Foundation::LUID) -> Option<Stri
     // First call to get required buffer size
     let mut required_size = 0u32;
     // SAFETY: LookupPrivilegeNameW is called with a valid LUID. Passing null buffer with size query is the documented pattern.
-    let _ = unsafe { LookupPrivilegeNameW(None, &luid, PWSTR::null(), &mut required_size) };
+    let _ = unsafe { LookupPrivilegeNameW(None, &luid, None, &mut required_size) };
 
     if required_size == 0 {
         return None;
@@ -369,8 +369,15 @@ fn luid_to_privilege_name(luid: windows::Win32::Foundation::LUID) -> Option<Stri
     // Allocate buffer and get the name
     let mut buffer = vec![0u16; required_size as usize];
     // SAFETY: LookupPrivilegeNameW is called with a valid LUID and properly allocated buffer of required_size elements.
-    if unsafe { LookupPrivilegeNameW(None, &luid, PWSTR(buffer.as_mut_ptr()), &mut required_size) }
-        .is_ok()
+    if unsafe {
+        LookupPrivilegeNameW(
+            None,
+            &luid,
+            Some(PWSTR(buffer.as_mut_ptr())),
+            &mut required_size,
+        )
+    }
+    .is_ok()
     {
         // Convert UTF-16 to String
         let os_string = OsString::from_wide(&buffer[..(required_size as usize).saturating_sub(1)]);

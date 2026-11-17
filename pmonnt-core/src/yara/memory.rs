@@ -6,7 +6,7 @@
 use std::vec::Vec;
 use thiserror::Error;
 use windows::Win32::Foundation::{
-    BOOL, CloseHandle, ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, HANDLE,
+    CloseHandle, ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, HANDLE,
 };
 use windows::Win32::System::Diagnostics::Debug::ReadProcessMemory;
 use windows::Win32::System::Memory::{
@@ -17,6 +17,7 @@ use windows::Win32::System::Memory::{
 use windows::Win32::System::Threading::{
     IsWow64Process, OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ,
 };
+use windows::core::BOOL;
 use windows::core::{Error as WinError, HRESULT};
 
 /// Represents a readable memory region

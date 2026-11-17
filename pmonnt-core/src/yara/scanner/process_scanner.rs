@@ -231,7 +231,7 @@ impl ProcessScanner {
             windows::Win32::System::Threading::OpenProcess(
                 windows::Win32::System::Threading::PROCESS_QUERY_INFORMATION
                     | windows::Win32::System::Threading::PROCESS_VM_READ,
-                windows::Win32::Foundation::BOOL(0),
+                false,
                 pid,
             )?
         };
@@ -377,7 +377,7 @@ impl ProcessScanner {
             windows::Win32::System::Threading::OpenProcess(
                 windows::Win32::System::Threading::PROCESS_QUERY_INFORMATION
                     | windows::Win32::System::Threading::PROCESS_VM_READ,
-                windows::Win32::Foundation::BOOL(0),
+                false,
                 pid,
             )?
         };

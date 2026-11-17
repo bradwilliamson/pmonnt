@@ -195,9 +195,9 @@ fn lookup_account_name(sid: PSID) -> Option<String> {
         let _ = LookupAccountSidW(
             None,
             sid,
-            PWSTR::null(),
+            None,
             &mut name_len,
-            PWSTR::null(),
+            None,
             &mut domain_len,
             &mut use_type,
         );
@@ -212,9 +212,9 @@ fn lookup_account_name(sid: PSID) -> Option<String> {
         if LookupAccountSidW(
             None,
             sid,
-            PWSTR(name_buf.as_mut_ptr()),
+            Some(PWSTR(name_buf.as_mut_ptr())),
             &mut name_len,
-            PWSTR(domain_buf.as_mut_ptr()),
+            Some(PWSTR(domain_buf.as_mut_ptr())),
             &mut domain_len,
             &mut use_type,
         )
@@ -417,14 +417,14 @@ fn luid_to_name(luid: &windows::Win32::Foundation::LUID) -> Option<String> {
         let mut len = 0u32;
         // SAFETY: `luid` is a valid pointer for the duration of the call; passing a null output
         // buffer is the documented pattern to query the required length.
-        let _ = LookupPrivilegeNameW(None, luid, PWSTR::null(), &mut len);
+        let _ = LookupPrivilegeNameW(None, luid, None, &mut len);
         if len == 0 {
             return None;
         }
         let mut buf = vec![0u16; len as usize + 2];
         // SAFETY: `buf` is a writable UTF-16 buffer of `len` elements (plus spare), and `luid` is
         // valid for the call.
-        if LookupPrivilegeNameW(None, luid, PWSTR(buf.as_mut_ptr()), &mut len).is_err() {
+        if LookupPrivilegeNameW(None, luid, Some(PWSTR(buf.as_mut_ptr())), &mut len).is_err() {
             return None;
         }
         Some(wide_string_from_buf(&buf))
@@ -445,7 +445,7 @@ fn luid_to_display(name: &str) -> Option<String> {
         let _ = LookupPrivilegeDisplayNameW(
             PCWSTR::null(),
             PCWSTR(name_w.as_ptr()),
-            PWSTR::null(),
+            None,
             &mut len,
             &mut lang,
         );
@@ -458,7 +458,7 @@ fn luid_to_display(name: &str) -> Option<String> {
         if LookupPrivilegeDisplayNameW(
             PCWSTR::null(),
             PCWSTR(name_w.as_ptr()),
-            PWSTR(buf.as_mut_ptr()),
+            Some(PWSTR(buf.as_mut_ptr())),
             &mut len,
             &mut lang,
         )

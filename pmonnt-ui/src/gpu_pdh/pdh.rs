@@ -3,12 +3,12 @@ use std::{ffi::OsString, os::windows::ffi::OsStringExt};
 use anyhow::Result;
 
 use windows::{
-    Win32::System::Performance::{PDH_MORE_DATA, PdhExpandWildCardPathW},
+    Win32::System::Performance::{PDH_HCOUNTER, PDH_HQUERY, PDH_MORE_DATA, PdhExpandWildCardPathW},
     core::{PCWSTR, PWSTR},
 };
 
-pub(super) type PdhCounterHandle = isize;
-pub(super) type PdhQueryHandle = isize;
+pub(super) type PdhCounterHandle = PDH_HCOUNTER;
+pub(super) type PdhQueryHandle = PDH_HQUERY;
 
 pub(super) struct WideString {
     inner: Vec<u16>,
@@ -39,8 +39,7 @@ pub(super) fn expand_paths(path: &str) -> Result<Vec<String>> {
     // First call to get required buffer size
     // SAFETY: PdhExpandWildCardPathW reads the input PCWSTR and writes the required size to
     // `required`. The output buffer is null for this size-query call by design.
-    let status =
-        unsafe { PdhExpandWildCardPathW(None, path_w.as_pwstr(), PWSTR::null(), &mut required, 0) };
+    let status = unsafe { PdhExpandWildCardPathW(None, path_w.as_pwstr(), None, &mut required, 0) };
     log::trace!(
         "[GPU PDH] PdhExpandWildCardPathW(size query) for '{}': status=0x{:08X}, required={}",
         path,
@@ -58,7 +57,7 @@ pub(super) fn expand_paths(path: &str) -> Result<Vec<String>> {
             PdhExpandWildCardPathW(
                 None,
                 path_w.as_pwstr(),
-                PWSTR(buf.as_mut_ptr()),
+                Some(PWSTR(buf.as_mut_ptr())),
                 &mut required,
                 0,
             )
