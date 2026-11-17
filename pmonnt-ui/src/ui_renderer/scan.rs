@@ -95,6 +95,9 @@ pub fn render_scan_panel(
             yara_state.error = Some("No YARA rules loaded. Refresh rules first.".to_string());
         } else if let Some(engine) = &yara_state.yara_engine {
             yara_state.start_scan(pid, Arc::clone(engine));
+        } else if yara_state.engine_building() {
+            yara_state.error =
+                Some("YARA rules are still compiling; try again shortly.".to_string());
         } else {
             yara_state.error = Some("No YARA engine available".to_string());
         }

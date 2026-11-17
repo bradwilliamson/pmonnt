@@ -59,4 +59,9 @@ impl ThreadCache {
         self.map
             .retain(|_, (fetched, _)| now.duration_since(*fetched).as_secs() < self.ttl_secs * 2);
     }
+
+    /// Drop entries for PIDs `keep` rejects (exited, or recycled by another process).
+    pub fn retain_pids(&mut self, keep: impl Fn(u32) -> bool) {
+        self.map.retain(|&pid, _| keep(pid));
+    }
 }

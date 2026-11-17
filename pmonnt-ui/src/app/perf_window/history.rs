@@ -1,4 +1,5 @@
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
+use std::net::IpAddr;
 use std::time::Instant;
 
 use crate::view::RightTab;
@@ -165,10 +166,15 @@ impl Default for NetChurnSample {
     }
 }
 
+/// Identity of one TCP connection: local and remote endpoints. The state is not part of it,
+/// so a connection moving from SYN_SENT to ESTABLISHED to TIME_WAIT is still one connection.
+pub(crate) type TcpConnKey = (IpAddr, u16, Option<IpAddr>, Option<u16>);
+
 /// Socket churn monitor with rolling history
 #[derive(Debug, Clone)]
 pub(crate) struct NetChurnMonitor {
-    pub(crate) last_snapshot_total: u32,
+    /// TCP connections seen at the previous poll; `None` until the first poll.
+    pub(crate) last_tcp: Option<HashSet<TcpConnKey>>,
     pub(crate) last_poll: Instant,
     pub(crate) samples: VecDeque<NetChurnSample>,
     pub(crate) last_counts: TcpStateCounts,
@@ -176,15 +182,59 @@ pub(crate) struct NetChurnMonitor {
     pub(crate) child_pid_count: usize,
 }
 
+impl NetChurnMonitor {
+    /// Record this poll's TCP connections and return how many were not present at the
+    /// previous poll. The first poll only sets the baseline (`None`), so connections that
+    /// already existed are not reported as new.
+    ///
+    /// Connections that open and close entirely between two polls are not seen.
+    pub(crate) fn observe_tcp(&mut self, current: HashSet<TcpConnKey>) -> Option<usize> {
+        let new = self
+            .last_tcp
+            .as_ref()
+            .map(|previous| current.difference(previous).count());
+        self.last_tcp = Some(current);
+        new
+    }
+}
+
 impl Default for NetChurnMonitor {
     fn default() -> Self {
         Self {
-            last_snapshot_total: 0,
+            last_tcp: None,
             last_poll: Instant::now(),
             samples: VecDeque::new(),
             last_counts: TcpStateCounts::default(),
             error: None,
             child_pid_count: 0,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::Ipv4Addr;
+
+    fn conn(local_port: u16, remote_port: u16) -> TcpConnKey {
+        let local = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        let remote = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
+        (local, local_port, Some(remote), Some(remote_port))
+    }
+
+    #[test]
+    fn new_connections_are_counted_by_identity_not_net_growth() {
+        let mut monitor = NetChurnMonitor::default();
+        // Existing connections at the first poll are a baseline, not "new".
+        assert_eq!(
+            monitor.observe_tcp(HashSet::from([conn(1, 443), conn(2, 443)])),
+            None
+        );
+        // Two closed and two opened: the total is unchanged but two are new.
+        assert_eq!(
+            monitor.observe_tcp(HashSet::from([conn(3, 443), conn(4, 443)])),
+            Some(2)
+        );
+        assert_eq!(monitor.observe_tcp(HashSet::from([conn(3, 443)])), Some(0));
     }
 }

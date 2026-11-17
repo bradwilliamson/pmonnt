@@ -146,6 +146,7 @@ fn process(pid: u32, ppid: u32, name: &str, path: Option<String>) -> Process {
         gpu_memory_bytes: None,
         path,
         signature: None,
+        create_time: None,
     }
 }
 

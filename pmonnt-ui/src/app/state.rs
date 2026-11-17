@@ -310,7 +310,7 @@ pub(super) fn try_build_app() -> anyhow::Result<PMonNTApp> {
 
     // Kill action results (background)
     let (kill_action_result_tx, kill_action_result_rx) =
-        crossbeam_channel::unbounded::<(u32, bool, bool, Result<(), String>)>();
+        crossbeam_channel::unbounded::<(u32, bool, Result<(), String>)>();
 
     // Dump action results (background)
     let (dump_action_result_tx, dump_action_result_rx) =
@@ -406,6 +406,9 @@ pub(super) fn try_build_app() -> anyhow::Result<PMonNTApp> {
         _tokio_rt: tokio_rt,
         bg_worker,
         selection_hash_generation,
+        selection_hash_pid: None,
+        selection_sha_pending: Arc::new(Mutex::new(None)),
+        selected_sha: None,
         last_update: Instant::now(),
         tick: 0,
         current_snapshot,
@@ -461,7 +464,7 @@ pub(super) fn try_build_app() -> anyhow::Result<PMonNTApp> {
             querying_started_at: None,
             last_seen_pid: None,
             current_process_sha: None,
-            current_process_sha_pending: Arc::new(Mutex::new(None)),
+            lookup_waiting_for_sha: None,
             last_query_meta: None,
         },
         tf_ui_state: TfUiState::default(),
@@ -516,27 +519,8 @@ pub(super) fn try_build_app() -> anyhow::Result<PMonNTApp> {
                 let _ = rule_manager.load_cached_rules();
             }
             log::info!("YARA rule_manager has {} rules", rule_manager.rules().len());
-            log::info!(
-                "YARA combined source length: {} bytes",
-                rule_manager.combined_source().len()
-            );
-            let yara_engine =
-                match pmonnt_core::yara::engine::YaraEngine::from_rule_manager(&rule_manager) {
-                    Ok(engine) => {
-                        log::info!("YARA engine compiled successfully");
-                        Some(Arc::new(engine))
-                    }
-                    Err(e) => {
-                        log::error!("YARA engine compilation failed: {e}");
-                        // Log first 500 chars of combined source for debugging
-                        let src = rule_manager.combined_source();
-                        log::error!(
-                            "Combined source preview: {}",
-                            &src[..src.floor_char_boundary(500)]
-                        );
-                        None
-                    }
-                };
+            // The engine is compiled in the background after startup (needs_engine_rebuild),
+            // so a large cached rule set does not delay the first window.
             YaraScanState {
                 scanning: false,
                 last_result: None,
@@ -546,9 +530,10 @@ pub(super) fn try_build_app() -> anyhow::Result<PMonNTApp> {
                 min_severity: pmonnt_core::yara::rules::Severity::High,
                 rt_handle: tokio_handle,
                 rule_manager: Arc::new(std::sync::Mutex::new(rule_manager)),
-                yara_engine,
+                yara_engine: None,
                 progress_rx: None,
-                needs_engine_rebuild: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                needs_engine_rebuild: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+                engine_build_rx: None,
             }
         },
         handle_cache,

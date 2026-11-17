@@ -277,7 +277,10 @@ impl ReputationService {
                         }
                     }
 
-                    Ok(Job::VtLookupHash { sha256 }) => {
+                    Ok(Job::VtLookupHash {
+                        sha256,
+                        bypass_cache,
+                    }) => {
                         use crate::vt::VtQueryMeta;
 
                         struct InFlightRemover {
@@ -297,7 +300,11 @@ impl ReputationService {
                             sha: sha256.clone(),
                         };
 
-                        let res = vt_provider_for_thread.lookup_hash_sync(&sha256);
+                        let res = if bypass_cache {
+                            vt_provider_for_thread.refresh_hash_sync(&sha256)
+                        } else {
+                            vt_provider_for_thread.lookup_hash_sync(&sha256)
+                        };
                         let (stats_opt, meta) = match res {
                             LookupState::Hit(stats) => {
                                 let engine_count = stats.total_engines() as usize;
@@ -644,6 +651,82 @@ mod tests {
 
         assert_eq!(mb.get_api_key(), Some("mb_key".to_string()));
         assert_eq!(tf.get_api_key(), Some("mb_key".to_string()));
+    }
+
+    fn vt_meta(status: &str) -> crate::vt::VtQueryMeta {
+        crate::vt::VtQueryMeta {
+            last_query: Some("lookup".to_string()),
+            last_http_status: None,
+            last_query_status: Some(status.to_string()),
+            last_result_count: None,
+            last_error_message: None,
+        }
+    }
+
+    #[test]
+    fn vt_request_reuses_definitive_answers_and_retries_failures() {
+        let local_cache = Arc::new(LocalCacheProvider::new(temp_path("cache_vt_req")));
+        let (service, job_rx, _cmd_rx) =
+            ReputationService::new_without_worker_for_tests(HashComputer::new(), local_cache);
+        let found = "a".repeat(64);
+        let failed = "b".repeat(64);
+        {
+            let mut cache = service.vt_cache.write().unwrap();
+            cache.insert(found.clone(), (None, vt_meta("ok")));
+            cache.insert(failed.clone(), (None, vt_meta("not_configured")));
+        }
+
+        assert!(!service.request_vt_lookup_for_hash(&found, false));
+        assert!(service.request_vt_lookup_for_hash(&failed, false));
+        // Already in flight: not queued twice, even when forced.
+        assert!(!service.request_vt_lookup_for_hash(&failed, true));
+        service.vt_in_flight.lock().unwrap().clear();
+        assert!(service.request_vt_lookup_for_hash(&found, true));
+
+        let jobs: Vec<(String, bool)> = job_rx
+            .try_iter()
+            .map(|job| match job {
+                Job::VtLookupHash {
+                    sha256,
+                    bypass_cache,
+                } => (sha256, bypass_cache),
+                other => panic!("unexpected job {other:?}"),
+            })
+            .collect();
+        assert_eq!(jobs, vec![(failed, false), (found, true)]);
+    }
+
+    #[test]
+    fn retain_paths_drops_results_and_answers_for_other_images() {
+        let local_cache = Arc::new(LocalCacheProvider::new(temp_path("cache_retain")));
+        let (service, _job_rx, _cmd_rx) =
+            ReputationService::new_without_worker_for_tests(HashComputer::new(), local_cache);
+        let result = |path: &str, sha: &str| ReputationResult {
+            image_path: path.to_string(),
+            sha256: Some(sha.to_string()),
+            state: LookupState::NotFound,
+        };
+        {
+            let mut results = service.results.write().unwrap();
+            results.insert("C:/live.exe".to_string(), result("C:/live.exe", "live"));
+            results.insert("C:/gone.exe".to_string(), result("C:/gone.exe", "gone"));
+            let mut vt = service.vt_cache.write().unwrap();
+            for sha in ["live", "gone", "busy"] {
+                vt.insert(sha.to_string(), (None, vt_meta("ok")));
+            }
+        }
+        service
+            .vt_in_flight
+            .lock()
+            .unwrap()
+            .insert("busy".to_string());
+
+        service.retain_paths(|path| path == "C:/live.exe");
+
+        assert_eq!(service.cached_path_count(), 1);
+        let vt = service.vt_cache.read().unwrap();
+        assert!(vt.contains_key("live") && vt.contains_key("busy"));
+        assert!(!vt.contains_key("gone"));
     }
 
     #[test]

@@ -24,6 +24,7 @@ fn proc(pid: u32, name: &str) -> process::Process {
         gpu_memory_bytes: None,
         path: None,
         signature: None,
+        create_time: None,
     }
 }
 
@@ -38,6 +39,7 @@ fn proc_with_ppid(pid: u32, ppid: Option<u32>, name: &str) -> process::Process {
         gpu_memory_bytes: None,
         path: None,
         signature: None,
+        create_time: None,
     }
 }
 
@@ -591,6 +593,7 @@ mod differential {
                 gpu_memory_bytes: None,
                 path,
                 signature: None,
+                create_time: None,
             });
         }
         // Occasionally make two existing processes parents of each other (a cycle).

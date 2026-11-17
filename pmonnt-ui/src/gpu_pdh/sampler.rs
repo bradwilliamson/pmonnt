@@ -267,8 +267,14 @@ impl GpuPdhSampler {
         if !self.first_sample_done {
             self.first_sample_done = true;
             log::debug!("[GPU PDH] First sample collected (grace period)");
-            return Ok(GpuSnapshot::default());
+            return Ok(GpuSnapshot {
+                warming_up: true,
+                ..GpuSnapshot::default()
+            });
         }
+        // Distinguishes "no process uses the GPU" (valid, empty) from "no counter could be
+        // read" (a failed sample, which must not wipe the last good data).
+        let mut readings_ok = 0usize;
 
         let mut percent_map: HashMap<u32, f32> = HashMap::new();
         let mut mem_map: HashMap<u32, u64> = HashMap::new();
@@ -282,6 +288,7 @@ impl GpuPdhSampler {
                 PdhGetFormattedCounterValue(*counter, PDH_FMT_DOUBLE, None, &raw mut value)
             };
             if pdh_ok(status) && value.CStatus == 0 {
+                readings_ok += 1;
                 // SAFETY: On success, PDH initializes the union field for the requested format.
                 let val = unsafe { value.Anonymous.doubleValue } as f32;
                 if val.is_finite() && val >= 0.0 {
@@ -301,6 +308,7 @@ impl GpuPdhSampler {
                 PdhGetFormattedCounterValue(*counter, PDH_FMT_LARGE, None, &raw mut value)
             };
             if pdh_ok(status) && value.CStatus == 0 {
+                readings_ok += 1;
                 // SAFETY: On success, PDH initializes the union field for the requested format.
                 let val = unsafe { value.Anonymous.largeValue };
                 if val > 0 {
@@ -318,6 +326,7 @@ impl GpuPdhSampler {
                 PdhGetFormattedCounterValue(*counter, PDH_FMT_LARGE, None, &raw mut value)
             };
             if pdh_ok(status) && value.CStatus == 0 {
+                readings_ok += 1;
                 // SAFETY: On success, PDH initializes the union field for the requested format.
                 let val = unsafe { value.Anonymous.largeValue };
                 if val > 0 {
@@ -325,6 +334,14 @@ impl GpuPdhSampler {
                     *entry = entry.saturating_add(val as u64);
                 }
             }
+        }
+
+        let counters =
+            self.usage_counters.len() + self.mem_counters.len() + self.shared_counters.len();
+        if counters > 0 && readings_ok == 0 {
+            return Err(anyhow::anyhow!(
+                "none of {counters} GPU counters returned valid data"
+            ));
         }
 
         // Compute total GPU memory per PID
@@ -356,6 +373,7 @@ impl GpuPdhSampler {
             gpu_shared_bytes: shared_map,
             gpu_total_bytes: total_map,
             sample_timestamp: std::time::Instant::now(),
+            warming_up: false,
         })
     }
 }

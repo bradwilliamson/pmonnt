@@ -7,7 +7,7 @@ use crate::theme::apply_theme;
 
 mod background;
 mod details_panel;
-mod handles;
+pub(super) mod handles;
 mod layout;
 mod list_panel;
 mod panels;
@@ -96,8 +96,8 @@ impl eframe::App for PMonNTApp {
         if let Some(pid) = self.pending_copy_sha_pid {
             // Only fulfill if the requested PID is still selected.
             if self.selected_pid == Some(pid) {
-                if let Some(sha) = self.mb_ui_state.current_process_sha.clone() {
-                    ctx.copy_text(sha);
+                if let Some(sha) = self.selected_sha_for(pid) {
+                    ctx.copy_text(sha.to_string());
                     self.pending_copy_sha_pid = None;
                 }
             } else {

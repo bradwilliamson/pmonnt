@@ -921,8 +921,8 @@ pub(super) fn render_rows(
             }
             if ui.button("Copy SHA-256 (computes if needed)").clicked() {
                 if app.selected_pid == Some(menu_pid) {
-                    if let Some(sha) = &app.mb_ui_state.current_process_sha {
-                        ui.copy_text(sha.clone());
+                    if let Some(sha) = app.selected_sha_for(menu_pid) {
+                        ui.copy_text(sha.to_string());
                     } else {
                         app.pending_copy_sha_pid = Some(menu_pid);
                     }
@@ -1087,6 +1087,7 @@ mod tests {
                         gpu_memory_bytes: None,
                         path: None,
                         signature: None,
+                        create_time: None,
                     },
                     process::Process {
                         pid: 2,
@@ -1098,6 +1099,7 @@ mod tests {
                         gpu_memory_bytes: None,
                         path: None,
                         signature: None,
+                        create_time: None,
                     },
                 ],
                 std::time::Instant::now(),
@@ -1164,6 +1166,7 @@ mod tests {
                     gpu_memory_bytes: None,
                     path: None,
                     signature: None,
+                    create_time: None,
                 }],
                 std::time::Instant::now(),
             ));
@@ -1318,6 +1321,7 @@ mod tests {
                     gpu_memory_bytes: None,
                     path: None,
                     signature: None,
+                    create_time: None,
                 }],
                 std::time::Instant::now(),
             ));
@@ -1391,6 +1395,7 @@ mod tests {
                     gpu_memory_bytes: None,
                     path: None,
                     signature: None,
+                    create_time: None,
                 }],
                 std::time::Instant::now(),
             ));
@@ -1460,6 +1465,7 @@ mod tests {
                     gpu_memory_bytes: None,
                     path: None,
                     signature: None,
+                    create_time: None,
                 }],
                 std::time::Instant::now(),
             ));

@@ -6,14 +6,11 @@ pub(crate) fn render_kill_dialog(app: &mut PMonNTApp, ctx: &egui::Context) {
         return;
     };
 
-    let is_group = state.group_pids.is_some();
-
     let mut open = true;
-    let title = match (is_group, state.kill_tree) {
-        (false, false) => "Confirm Kill Process",
-        (false, true) => "Confirm Kill Process Tree",
-        (true, false) => "Confirm Kill All in Group",
-        (true, true) => "Confirm Kill All Trees in Group",
+    let title = if state.kill_tree {
+        "Confirm Kill Process Tree"
+    } else {
+        "Confirm Kill Process"
     };
 
     egui::Window::new(title)
@@ -22,20 +19,7 @@ pub(crate) fn render_kill_dialog(app: &mut PMonNTApp, ctx: &egui::Context) {
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
         .open(&mut open)
         .show(ctx, |ui| {
-            if let Some(group_pids) = state.group_pids.as_ref() {
-                let n = group_pids.len();
-                if state.kill_tree {
-                    let child_count = state.group_descendant_count.unwrap_or(0);
-                    ui.label(format!(
-                        "Terminate all {n} instances of '{}' and their {child_count} child processes?",
-                        state.name
-                    ));
-                } else {
-                    ui.label(format!("Terminate all {n} instances of '{}'?", state.name));
-                }
-            } else {
-                ui.label(format!("{} (PID {})", state.name, state.pid));
-            }
+            ui.label(format!("{} (PID {})", state.name, state.pid));
             ui.separator();
             ui.colored_label(
                 egui::Color32::YELLOW,
@@ -43,15 +27,9 @@ pub(crate) fn render_kill_dialog(app: &mut PMonNTApp, ctx: &egui::Context) {
             );
             ui.label(egui::RichText::new("Hotkeys: Del = Kill, Shift+Del = Kill Tree").color(egui::Color32::GRAY));
             if state.kill_tree {
-                if is_group {
-                    ui.label(
-                        "This will terminate the selected group and all descendants (children first).",
-                    );
-                } else {
-                    ui.label(
-                        "This will terminate the selected process and all descendants (children first).",
-                    );
-                }
+                ui.label(
+                    "This will terminate the selected process and all descendants (children first).",
+                );
             }
 
             ui.add_space(8.0);
@@ -63,12 +41,7 @@ pub(crate) fn render_kill_dialog(app: &mut PMonNTApp, ctx: &egui::Context) {
                             app.dismiss_kill_dialog();
                         }
 
-                        let kill_label = match (is_group, state.kill_tree) {
-                            (false, false) => "Kill",
-                            (false, true) => "Kill Tree",
-                            (true, false) => "Kill All",
-                            (true, true) => "Kill All Trees",
-                        };
+                        let kill_label = if state.kill_tree { "Kill Tree" } else { "Kill" };
                         if ui
                             .add(egui::Button::new(kill_label).fill(egui::Color32::DARK_RED))
                             .clicked()

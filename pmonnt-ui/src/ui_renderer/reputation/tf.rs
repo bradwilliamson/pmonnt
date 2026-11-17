@@ -1,8 +1,33 @@
+use super::sha::{ImageSha, image_sha};
 use crate::ui_state::{TfQueryState, TfUiState};
 use eframe::egui;
 use pmonnt_core::reputation_service::ReputationService;
 use std::collections::HashMap;
 use std::sync::Arc;
+
+/// Queue a ThreatFox lookup (on the reputation worker) and track it for `pid`.
+fn start_tf_lookup(
+    tf_state: &mut TfUiState,
+    reputation_service: &ReputationService,
+    pid: u32,
+    sha: String,
+    force: bool,
+) {
+    reputation_service.request_tf_lookup_for_hash(&sha, force);
+    tf_state.current_process_sha = Some(sha.clone());
+    tf_state.querying_tf_sha = Some(sha);
+    tf_state.querying_tf_pid = Some(pid);
+}
+
+fn set_tf_error(tf_state: &mut TfUiState, message: String) {
+    tf_state.last_query_state = Some(TfQueryState {
+        last_query: Some("request".to_string()),
+        last_http_status: None,
+        last_query_status: Some("error".to_string()),
+        last_result_count: None,
+        last_error_message: Some(message),
+    });
+}
 
 pub fn render_threatfox_section(
     ui: &mut egui::Ui,
@@ -20,7 +45,33 @@ pub fn render_threatfox_section(
         tf_state.querying_tf_pid = None;
         tf_state.querying_tf_sha = None;
         tf_state.current_process_sha = None;
+        tf_state.lookup_waiting_for_sha = None;
         tf_state.last_query_state = None;
+    }
+
+    // Show the image hash as soon as the reputation worker has it.
+    let image_sha = pid.map(|pid| image_sha(reputation_service, pid_to_image_path, pid));
+    if tf_state.current_process_sha.is_none()
+        && let Some(ImageSha::Known(sha)) = &image_sha
+    {
+        tf_state.current_process_sha = Some(sha.clone());
+    }
+
+    // A "Check" clicked before the hash was ready starts once it is.
+    if let Some(waiting) = tf_state.lookup_waiting_for_sha
+        && pid == Some(waiting)
+    {
+        match &image_sha {
+            Some(ImageSha::Known(sha)) => {
+                tf_state.lookup_waiting_for_sha = None;
+                start_tf_lookup(tf_state, reputation_service, waiting, sha.clone(), false);
+            }
+            Some(ImageSha::Failed(e)) => {
+                tf_state.lookup_waiting_for_sha = None;
+                set_tf_error(tf_state, e.clone());
+            }
+            _ => {}
+        }
     }
 
     let can_query = pid.is_some() && online_lookups_enabled;
@@ -33,44 +84,37 @@ pub fn render_threatfox_section(
             .clicked()
             && let Some(pid) = pid
         {
-            match reputation_service.request_tf_lookup_for_process(pid) {
-                Ok(sha) => {
-                    tf_state.current_process_sha = Some(sha.clone());
-                    tf_state.querying_tf_sha = Some(sha);
-                    tf_state.querying_tf_pid = Some(pid);
+            match &image_sha {
+                Some(ImageSha::Known(sha)) => {
+                    start_tf_lookup(tf_state, reputation_service, pid, sha.clone(), false);
                 }
-                Err(e) => {
-                    tf_state.last_query_state = Some(TfQueryState {
-                        last_query: Some("request".to_string()),
-                        last_http_status: None,
-                        last_query_status: Some("error".to_string()),
-                        last_result_count: None,
-                        last_error_message: Some(e),
-                    });
-                }
+                Some(ImageSha::Failed(e)) => set_tf_error(tf_state, e.clone()),
+                _ => tf_state.lookup_waiting_for_sha = Some(pid),
             }
         }
 
         if ui
             .add_enabled(can_query, egui::Button::new("Refresh TF data"))
             .clicked()
-            && tf_state
-                .current_process_sha
-                .as_ref()
-                .or(tf_state.querying_tf_sha.as_ref())
-                .is_some()
             && let Some(pid) = pid
+            && let Some(sha) = tf_state
+                .current_process_sha
+                .clone()
+                .or_else(|| tf_state.querying_tf_sha.clone())
         {
-            let _ = reputation_service.request_tf_lookup_for_process(pid);
-            tf_state.querying_tf_pid = Some(pid);
+            start_tf_lookup(tf_state, reputation_service, pid, sha, true);
         }
 
-        if let Some(sha) = tf_state
+        if tf_state.lookup_waiting_for_sha.is_some() && tf_state.lookup_waiting_for_sha == pid {
+            ui.spinner();
+            ui.label("Hashing image...");
+        } else if let Some(sha) = tf_state
             .current_process_sha
             .as_ref()
             .or(tf_state.querying_tf_sha.as_ref())
-            && tf_state.querying_tf_pid == pid
-            && reputation_service.get_tf_result_for_hash(sha).is_none()
+            && (reputation_service.tf_lookup_in_flight(sha)
+                || (tf_state.querying_tf_pid == pid
+                    && reputation_service.get_tf_result_for_hash(sha).is_none()))
         {
             ui.spinner();
             ui.label("Querying ThreatFox...");

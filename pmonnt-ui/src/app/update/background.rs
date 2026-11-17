@@ -70,18 +70,8 @@ fn drain_thread_fetch_results(
 
 impl PMonNTApp {
     pub(super) fn service_background_work(&mut self) {
-        // Promote any completed SHA-256 computations (selection-driven) into UI state.
-        // This keeps SHA available even if the reputation panels are not currently rendered.
-        if let Ok(mut guard) = self.mb_ui_state.current_process_sha_pending.lock()
-            && let Some(sha) = guard.take()
-        {
-            self.mb_ui_state.current_process_sha = Some(sha);
-        }
-        if let Ok(mut guard) = self.vt_ui_state.current_process_sha_pending.lock()
-            && let Some(sha) = guard.take()
-        {
-            self.vt_ui_state.current_process_sha = Some(sha);
-        }
+        // Selection-driven SHA-256 (used by "Copy SHA-256"), if it still matches the selection.
+        self.accept_selection_sha();
 
         drain_signature_results(
             &self.signature_result_rx,
@@ -119,8 +109,8 @@ impl PMonNTApp {
         }
 
         // Drain kill action results (non-blocking)
-        while let Ok((pid, kill_tree, is_group, result)) = self.kill_action_result_rx.try_recv() {
-            self.on_kill_action_result(pid, kill_tree, is_group, result);
+        while let Ok((pid, kill_tree, result)) = self.kill_action_result_rx.try_recv() {
+            self.on_kill_action_result(pid, kill_tree, result);
         }
 
         // Drain dump action results (non-blocking)
@@ -223,31 +213,15 @@ impl PMonNTApp {
             }
         }
 
-        // Rebuild YARA engine if needed after rule refresh
+        // Recompile the YARA engine off the UI thread after the rules changed.
         if self
             .yara_state
             .needs_engine_rebuild
             .swap(false, std::sync::atomic::Ordering::AcqRel)
         {
-            let rm = self
-                .yara_state
-                .rule_manager
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            log::info!("Rebuilding YARA engine with {} rules", rm.rules().len());
-            match pmonnt_core::yara::engine::YaraEngine::from_rule_manager(&rm) {
-                Ok(engine) => {
-                    log::info!("YARA engine rebuilt successfully");
-                    self.yara_state.yara_engine = Some(std::sync::Arc::new(engine));
-                    self.yara_state.error = None;
-                }
-                Err(e) => {
-                    log::error!("YARA engine rebuild failed: {e}");
-                    self.yara_state.yara_engine = None;
-                    self.yara_state.error = Some(format!("Engine compile failed: {e}"));
-                }
-            }
+            self.yara_state.start_engine_build();
         }
+        self.yara_state.poll_engine_build();
     }
 
     pub(crate) fn request_signature_check_for_path(&mut self, path: &str) {

@@ -16,7 +16,76 @@ use crate::util::{
     sum_gpu_mem_bytes, sum_gpu_percent,
 };
 
+/// How long GPU values from the last good sample are shown while sampling fails.
+const GPU_DATA_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Above this many entries, path-keyed caches are trimmed to the images of running processes.
+const PATH_CACHE_SOFT_LIMIT: usize = 1024;
+
 impl PMonNTApp {
+    /// Drop everything cached for processes that are not in `alive` (they exited, or their PID
+    /// now belongs to a different process).
+    fn forget_departed_processes(&mut self, alive: &HashSet<u32>) {
+        let keep = |pid: u32| alive.contains(&pid);
+
+        self.expanded_pids.retain(|&pid| keep(pid));
+        // Close perf windows for exited processes
+        self.perf_windows.retain(|&pid, _| keep(pid));
+        // Keep I/O rate state in sync with live processes.
+        self.io_rate_calc.retain_pids(alive.iter().copied());
+        self.io_rate_by_pid.retain(|&pid, _| keep(pid));
+        self.previous_cpu_times.retain(|&pid, _| keep(pid));
+        self.gpu_data.retain(|&pid, _| keep(pid));
+        if self.selected_pid.is_some_and(|pid| !keep(pid)) {
+            self.selected_pid = None;
+        }
+
+        self.pid_to_image_path.retain(|&pid, _| keep(pid));
+        self.pid_to_command_line.retain(|&pid, _| keep(pid));
+        self.pid_to_current_directory.retain(|&pid, _| keep(pid));
+        self.pid_to_environment.retain(|&pid, _| keep(pid));
+        self.pid_env_attempted.retain(|&pid| keep(pid));
+
+        self.security_cache_by_pid.retain(|&pid, _| keep(pid));
+        self.services_cache_by_pid.retain(|&pid, _| keep(pid));
+        self.services_error_by_pid.retain(|&pid, _| keep(pid));
+        self.thread_prev.retain(|&pid, _| keep(pid));
+        self.selected_tid_by_pid.retain(|&pid, _| keep(pid));
+        self.thread_action_message_by_key
+            .retain(|&(pid, _), _| keep(pid));
+        self.thread_permissions_cache
+            .retain(|&(pid, _), _| keep(pid));
+        self.thread_stack_cache.retain(|&(pid, _), _| keep(pid));
+        self.thread_cache.retain_pids(keep);
+        self.module_cache.retain_pids(keep);
+        self.token_cache.retain_pids(keep);
+        let live: Vec<u32> = alive.iter().copied().collect();
+        self.handle_cache.cleanup(&live);
+    }
+
+    /// Trim caches keyed by executable path or hash once they grow large, keeping what the
+    /// running processes use. Distinct executables accumulate over a long session.
+    fn trim_path_caches(&mut self) {
+        let signatures_full = self.signature_cache_by_path.len() > PATH_CACHE_SOFT_LIMIT;
+        let reputation_full = self.reputation_service.cached_path_count() > PATH_CACHE_SOFT_LIMIT;
+        if !signatures_full && !reputation_full {
+            return;
+        }
+        let live: HashSet<&str> = self
+            .pid_to_image_path
+            .values()
+            .map(String::as_str)
+            .collect();
+        if signatures_full {
+            self.signature_cache_by_path
+                .retain(|path, _| live.contains(path.as_str()));
+        }
+        if reputation_full {
+            self.reputation_service
+                .retain_paths(|path| live.contains(path));
+        }
+    }
+
     pub(super) fn refresh_snapshot_and_metrics(&mut self, ctx: &egui::Context) {
         // Update snapshot every 2 seconds
         if self.last_snapshot_update.elapsed().as_secs() >= 2 {
@@ -25,17 +94,19 @@ impl PMonNTApp {
                 let prev = std::mem::replace(&mut self.current_snapshot, Arc::new(new_snapshot));
                 let diff = ProcessDiff::new(&prev, &self.current_snapshot);
                 self.exited_buffer.add_from_diff(&diff, &prev);
-                self.last_diff = Some(diff);
-                self.previous_snapshot = Some(prev);
 
-                // Hardening: Prune expanded_pids to only include alive processes
+                // Per-process state is valid only for PIDs that are alive and still belong to
+                // the same process; a recycled PID (diff.changed_pids) starts from scratch.
                 let alive: HashSet<u32> = self
                     .current_snapshot
                     .processes
                     .iter()
                     .map(|p| p.pid)
+                    .filter(|pid| !diff.changed_pids.contains(pid))
                     .collect();
-                self.expanded_pids.retain(|pid| alive.contains(pid));
+                self.forget_departed_processes(&alive);
+                self.last_diff = Some(diff);
+                self.previous_snapshot = Some(prev);
 
                 // Hardening: Prune expanded_groups to only include groups that still exist.
                 // Groups are keyed by exact executable name (as the grouped table inserts them);
@@ -43,20 +114,6 @@ impl PMonNTApp {
                 let groups = &self.current_snapshot.view_index().groups;
                 self.expanded_groups
                     .retain(|k| groups.iter().any(|g| &g.name == k));
-
-                // Close perf windows for exited processes
-                self.perf_windows.retain(|pid, _| alive.contains(pid));
-
-                // Keep I/O rate state in sync with live processes.
-                self.io_rate_calc.retain_pids(alive.iter().copied());
-                self.io_rate_by_pid.retain(|pid, _| alive.contains(pid));
-
-                // Hardening: Clear selection if selected process exited
-                if let Some(pid) = self.selected_pid
-                    && !alive.contains(&pid)
-                {
-                    self.selected_pid = None;
-                }
 
                 // Update global thread counts (fast, ~5ms)
                 if let Ok(counts) = win_thread::count_threads_global() {
@@ -176,11 +233,12 @@ impl PMonNTApp {
                 self.last_gpu_rebuild = Instant::now();
             }
 
-            if let Some(snapshot) = self.gpu_sampler.sample() {
-                if !snapshot.gpu_percent.is_empty()
-                    || !snapshot.gpu_dedicated_bytes.is_empty()
-                    || !snapshot.gpu_shared_bytes.is_empty()
-                {
+            match self.gpu_sampler.sample() {
+                // Counters were just rebuilt; keep the last values until real data arrives.
+                Some(snapshot) if snapshot.warming_up => {}
+                Some(snapshot) => {
+                    // A valid sample replaces everything, so processes that stopped using
+                    // the GPU (or exited) drop out even when the sample is empty.
                     self.gpu_data.clear();
                     let all_pids: HashSet<u32> = snapshot
                         .gpu_percent
@@ -204,13 +262,21 @@ impl PMonNTApp {
                     }
 
                     self.last_gpu_sample_timestamp = Some(snapshot.sample_timestamp);
-                } else if let Some(last_ts) = self.last_gpu_sample_timestamp
-                    && last_ts.elapsed().as_secs() > 30
-                    && should_warn()
-                {
-                    log::warn!(
-                        "[GPU] No GPU data received for 30+ seconds, keeping last good sample"
-                    );
+                }
+                // Collection failed: bridge short gaps, but never show old values for long.
+                None => {
+                    let stale = self
+                        .last_gpu_sample_timestamp
+                        .is_none_or(|ts| ts.elapsed() > GPU_DATA_MAX_AGE);
+                    if stale && !self.gpu_data.is_empty() {
+                        if should_warn() {
+                            log::warn!(
+                                "[GPU] No valid GPU sample for {}s; clearing GPU columns",
+                                GPU_DATA_MAX_AGE.as_secs()
+                            );
+                        }
+                        self.gpu_data.clear();
+                    }
                 }
             }
 
@@ -300,6 +366,7 @@ impl PMonNTApp {
                 }
             }
 
+            self.trim_path_caches();
             self.last_snapshot_update = Instant::now();
             ctx.request_repaint();
         }

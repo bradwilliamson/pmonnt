@@ -28,6 +28,13 @@ pub struct Process {
 
     /// Digital signature information
     pub signature: Option<SignatureInfo>,
+
+    /// Creation time as a Windows FILETIME (100 ns ticks since 1601), when known.
+    ///
+    /// Windows recycles PIDs, so `(pid, create_time)` is what identifies one process
+    /// instance: actions confirmed against a snapshot use it to make sure they still act on
+    /// the process the user saw.
+    pub create_time: Option<u64>,
 }
 
 /// Get a list of all running processes

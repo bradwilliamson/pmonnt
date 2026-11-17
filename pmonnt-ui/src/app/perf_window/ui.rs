@@ -131,12 +131,15 @@ impl PMonNTApp {
             let current_tab = w.tab;
             let current_security_filter = w.security_filter.clone();
 
-            let cpu_values: Vec<f32> = w.history.cpu_percent.iter().copied().collect();
-            let mem_values: Vec<u64> = w.history.memory_bytes.iter().copied().collect();
-            let priv_values: Vec<u64> = w.history.private_bytes.iter().copied().collect();
-            let gpu_values: Vec<f32> = w.history.gpu_percent.iter().copied().collect();
-            let io_read_values: Vec<f32> = w.history.io_read_bps.iter().copied().collect();
-            let io_write_values: Vec<f32> = w.history.io_write_bps.iter().copied().collect();
+            // The graphs borrow the history ring buffers instead of copying them every frame.
+            // make_contiguous only moves data when a new sample wrapped the ring.
+            let history = &mut w.history;
+            let cpu_values: &[f32] = history.cpu_percent.make_contiguous();
+            let mem_values: &[u64] = history.memory_bytes.make_contiguous();
+            let priv_values: &[u64] = history.private_bytes.make_contiguous();
+            let gpu_values: &[f32] = history.gpu_percent.make_contiguous();
+            let io_read_values: &[f32] = history.io_read_bps.make_contiguous();
+            let io_write_values: &[f32] = history.io_write_bps.make_contiguous();
 
             // Snapshot data needed for right-pane parity tabs.
             let stats_opt = w.current_stats.as_ref();
@@ -280,12 +283,12 @@ impl PMonNTApp {
                             current_tab,
                             &mut temp_perf_window,
                             &mut security_filter,
-                            &cpu_values,
-                            &mem_values,
-                            &priv_values,
-                            &gpu_values,
-                            &io_read_values,
-                            &io_write_values,
+                            cpu_values,
+                            mem_values,
+                            priv_values,
+                            gpu_values,
+                            io_read_values,
+                            io_write_values,
                             stats_opt,
                             &module_result,
                             gpu_opt,
@@ -351,8 +354,7 @@ impl PMonNTApp {
                                         });
 
                                     crate::app::perf_window::tabs::render_optional_gpu_footer(
-                                        ui,
-                                        &gpu_values,
+                                        ui, gpu_values,
                                     );
                                 });
                             if !open {
@@ -373,8 +375,7 @@ impl PMonNTApp {
                                     });
 
                                 crate::app::perf_window::tabs::render_optional_gpu_footer(
-                                    ui,
-                                    &gpu_values,
+                                    ui, gpu_values,
                                 );
                             });
                         }

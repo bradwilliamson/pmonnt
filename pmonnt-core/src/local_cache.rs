@@ -231,33 +231,22 @@ impl LocalCacheProvider {
     ) {
         let timestamp = Self::now_unix_secs();
 
-        // Recover from lock poisoning and persist update.
-        match self.entries.write() {
-            Ok(mut entries) => {
-                entries.insert(
-                    sha256.clone(),
-                    CacheEntry {
-                        sha256,
-                        stats,
-                        not_found,
-                        timestamp,
-                        provider: provider.map(std::string::ToString::to_string),
-                    },
-                );
-            }
-            Err(poisoned) => {
-                let mut entries = poisoned.into_inner();
-                entries.insert(
-                    sha256.clone(),
-                    CacheEntry {
-                        sha256,
-                        stats,
-                        not_found,
-                        timestamp,
-                        provider: provider.map(std::string::ToString::to_string),
-                    },
-                );
-            }
+        {
+            let mut entries = self
+                .entries
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            entries.insert(
+                sha256.clone(),
+                CacheEntry {
+                    sha256,
+                    stats,
+                    not_found,
+                    timestamp,
+                    provider: provider.map(std::string::ToString::to_string),
+                },
+            );
+            enforce_cap(&mut entries, timestamp);
         }
         self.save_to_disk_debounced();
     }
@@ -320,6 +309,36 @@ impl Drop for LocalCacheProvider {
     }
 }
 
+/// Keep the in-memory map within [`MAX_CACHE_ENTRIES`], like the file on disk: drop expired
+/// entries, then the oldest. Trims to 90% so a full cache is not re-sorted on every insert.
+fn enforce_cap(entries: &mut HashMap<String, CacheEntry>, now: u64) {
+    if entries.len() <= MAX_CACHE_ENTRIES {
+        return;
+    }
+    let ttl_secs = CACHE_TTL_DAYS * 24 * 60 * 60;
+    entries.retain(|_, e| is_fresh(now, e.timestamp, ttl_secs));
+    if entries.len() <= MAX_CACHE_ENTRIES {
+        return;
+    }
+    let keep = MAX_CACHE_ENTRIES * 9 / 10;
+    let mut timestamps: Vec<u64> = entries.values().map(|e| e.timestamp).collect();
+    timestamps.sort_unstable_by(|a, b| b.cmp(a));
+    let cutoff = timestamps[keep - 1];
+    entries.retain(|_, e| e.timestamp >= cutoff);
+    // Entries sharing the cutoff second can leave a few extra; drop arbitrary ones of those.
+    if entries.len() > keep {
+        let excess: Vec<String> = entries
+            .iter()
+            .filter(|(_, e)| e.timestamp == cutoff)
+            .map(|(k, _)| k.clone())
+            .take(entries.len() - keep)
+            .collect();
+        for key in excess {
+            entries.remove(&key);
+        }
+    }
+}
+
 /// Whether an entry written at `timestamp` is still within `ttl_secs` of `now`.
 ///
 /// Timestamps in the future (clock moved back, restored VM snapshot, edited file) count as
@@ -331,6 +350,42 @@ fn is_fresh(now: u64, timestamp: u64, ttl_secs: u64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn entry(key: &str, timestamp: u64) -> (String, CacheEntry) {
+        (
+            key.to_string(),
+            CacheEntry {
+                sha256: key.to_string(),
+                stats: None,
+                not_found: true,
+                timestamp,
+                provider: None,
+            },
+        )
+    }
+
+    #[test]
+    fn in_memory_cache_is_capped_oldest_first() {
+        let now = 10_000_000;
+        let mut entries: HashMap<String, CacheEntry> = (0..MAX_CACHE_ENTRIES as u64 + 1)
+            .map(|i| entry(&format!("k{i}"), now - 1_000 + i % 500))
+            .collect();
+        entries.extend([entry("expired", 1)]);
+        enforce_cap(&mut entries, now);
+        assert_eq!(entries.len(), MAX_CACHE_ENTRIES * 9 / 10);
+        assert!(!entries.contains_key("expired"));
+        let oldest_kept = entries.values().map(|e| e.timestamp).min().unwrap();
+        // Ten percent were dropped, all from the oldest timestamps.
+        assert!(oldest_kept >= now - 1_000 + 40);
+
+        let mut small: HashMap<String, CacheEntry> = [entry("a", 1)].into_iter().collect();
+        enforce_cap(&mut small, now);
+        assert_eq!(
+            small.len(),
+            1,
+            "under the cap nothing is evicted, even if expired"
+        );
+    }
 
     #[test]
     fn future_timestamps_are_expired_not_a_panic() {

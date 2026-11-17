@@ -1,74 +1,10 @@
-use super::ReputationRequestError;
 use super::service::ReputationService;
 use super::types::Job;
 
 impl ReputationService {
-    /// Request an on-demand MalwareBazaar lookup for a process id.
-    /// This computes the image path and SHA-256 (using the service's HashComputer),
-    /// then enqueues a job onto the service's background worker to call the MB provider.
-    /// Returns the computed SHA-256 on success (lookup started or cached), or Err on failure.
-    pub fn request_mb_lookup_for_process_typed(
-        &self,
-        pid: u32,
-    ) -> Result<String, ReputationRequestError> {
-        // Resolve image path
-        let image_path = crate::win::process_path::get_process_image_path(pid)
-            .map_err(|e| ReputationRequestError::ProcessAccess { pid, source: e })?;
-
-        // Compute sha256 synchronously (reuse HashComputer)
-        let sha = self
-            .hash_computer
-            .compute_sha256(&image_path)
-            .map_err(|e| ReputationRequestError::Hash { source: e })?;
-
-        // If cached, do nothing
-        {
-            let cache = self
-                .mb_cache
-                .read()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if cache.contains_key(&sha) {
-                return Ok(sha);
-            }
-        }
-
-        // Prevent duplicate in-flight MB queries for same sha
-        {
-            let mut in_f = self
-                .mb_in_flight
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if in_f.contains(&sha) {
-                return Ok(sha);
-            }
-            in_f.insert(sha.clone());
-        }
-
-        if self
-            .job_tx
-            .send(Job::MbLookupHash {
-                sha256: sha.clone(),
-            })
-            .is_err()
-        {
-            // Worker is gone; ensure we don't leave this sha stuck as in-flight.
-            let mut in_f = self
-                .mb_in_flight
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            in_f.remove(&sha);
-            return Err(ReputationRequestError::WorkerUnavailable);
-        }
-
-        Ok(sha)
-    }
-
-    pub fn request_mb_lookup_for_process(&self, pid: u32) -> Result<String, String> {
-        self.request_mb_lookup_for_process_typed(pid)
-            .map_err(|e| e.to_string())
-    }
-
-    /// Force-refresh MB lookup for a given SHA-256 (spawn background job)
+    /// Request a MalwareBazaar lookup for an already-computed SHA-256 on the background
+    /// worker. Without `force`, a cached answer is reused unless that attempt failed.
+    /// Returns whether a job was queued.
     pub fn request_mb_lookup_for_hash(&self, sha: &str, force: bool) -> bool {
         let sha = sha.to_string();
         if !force {
@@ -76,7 +12,10 @@ impl ReputationService {
                 .mb_cache
                 .read()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if cache.contains_key(&sha) {
+            if cache
+                .get(&sha)
+                .is_some_and(|(_, meta)| meta.last_error_message.is_none())
+            {
                 return false;
             }
         }

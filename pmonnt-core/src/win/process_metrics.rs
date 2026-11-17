@@ -81,6 +81,8 @@ pub struct SystemProcessEntry {
     pub handle_count: u32,
     pub session_id: u32,
     pub cycle_time: u64,
+    /// Creation time as a FILETIME (100 ns ticks since 1601); 0 for the idle process.
+    pub create_time: u64,
     /// Kernel-mode CPU time in 100 ns units.
     pub kernel_time_100ns: u64,
     /// User-mode CPU time in 100 ns units.
@@ -102,6 +104,7 @@ impl SystemProcessEntry {
             handle_count: spi.handle_count,
             session_id: spi.session_id,
             cycle_time: spi.cycle_time,
+            create_time: nonneg(spi.create_time),
             kernel_time_100ns: nonneg(spi.kernel_time),
             user_time_100ns: nonneg(spi.user_time),
             working_set_bytes: spi.working_set_size as u64,

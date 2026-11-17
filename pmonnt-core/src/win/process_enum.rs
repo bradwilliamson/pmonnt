@@ -47,6 +47,7 @@ pub fn enumerate_processes() -> Result<Vec<Process>> {
             gpu_memory_bytes: None,
             path: None,
             signature: None,
+            create_time: None,
         });
 
         // SAFETY: same snapshot handle and entry buffer as above.
@@ -55,7 +56,34 @@ pub fn enumerate_processes() -> Result<Vec<Process>> {
         }
     }
 
+    fill_create_times(&mut processes);
     Ok(processes)
+}
+
+/// Attach creation times from one `SystemProcessInformation` query.
+///
+/// ToolHelp does not report creation times. A process that exits between the two queries is
+/// left without one, and a PID recycled in that window is caught by its parent PID no longer
+/// matching, so a process never receives another instance's creation time.
+fn fill_create_times(processes: &mut [Process]) {
+    let entries = match crate::win::process_metrics::query_system_processes() {
+        Ok(entries) => entries,
+        Err(e) => {
+            log::debug!("SystemProcessInformation query for creation times failed: {e}");
+            return;
+        }
+    };
+    let by_pid: crate::snapshot::PidMap<(u32, u64)> = entries
+        .iter()
+        .map(|e| (e.pid, (e.parent_pid, e.create_time)))
+        .collect();
+    for process in processes {
+        if let Some(&(parent_pid, create_time)) = by_pid.get(&process.pid)
+            && process.ppid == Some(parent_pid)
+        {
+            process.create_time = Some(create_time);
+        }
+    }
 }
 
 /// Convert a NUL-terminated UTF-16 buffer to a String, replacing invalid sequences.
@@ -81,5 +109,17 @@ mod tests {
         let me = std::process::id();
         let procs = enumerate_processes().unwrap();
         assert!(procs.iter().any(|p| p.pid == me && !p.name.is_empty()));
+    }
+
+    #[test]
+    fn enumerate_reports_creation_times() {
+        let me = std::process::id();
+        let procs = enumerate_processes().unwrap();
+        let mine = procs.iter().find(|p| p.pid == me).unwrap();
+        let expected = crate::win::process_metrics::system_process_entry(me)
+            .unwrap()
+            .create_time;
+        assert_eq!(mine.create_time, Some(expected));
+        assert!(expected > 0);
     }
 }

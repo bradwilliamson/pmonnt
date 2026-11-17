@@ -258,11 +258,20 @@ impl ReputationProvider for VirusTotalProvider {
 impl VirusTotalProvider {
     /// Synchronous lookup using blocking reqwest client
     pub fn lookup_hash_sync(&self, sha256: &str) -> LookupState {
+        self.lookup_hash_blocking(sha256, true)
+    }
+
+    /// Like [`Self::lookup_hash_sync`], but always asks VirusTotal instead of answering from
+    /// the local cache (the "Refresh" action). A successful answer replaces the cached one.
+    pub fn refresh_hash_sync(&self, sha256: &str) -> LookupState {
+        self.lookup_hash_blocking(sha256, false)
+    }
+
+    fn lookup_hash_blocking(&self, sha256: &str, use_cache: bool) -> LookupState {
         if !is_valid_sha256(sha256) {
             return LookupState::Error("Invalid SHA256 hash".to_string());
         }
-        // Check cache first
-        if let Some(cached) = self.local_cache.get(sha256) {
+        if use_cache && let Some(cached) = self.local_cache.get(sha256) {
             return cached;
         }
 

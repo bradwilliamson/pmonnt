@@ -1,67 +1,10 @@
-use super::ReputationRequestError;
 use super::service::ReputationService;
 use super::types::Job;
 
 impl ReputationService {
-    /// Request an on-demand ThreatFox lookup for a process id.
-    pub fn request_tf_lookup_for_process_typed(
-        &self,
-        pid: u32,
-    ) -> Result<String, ReputationRequestError> {
-        let image_path = crate::win::process_path::get_process_image_path(pid)
-            .map_err(|e| ReputationRequestError::ProcessAccess { pid, source: e })?;
-
-        let sha = self
-            .hash_computer
-            .compute_sha256(&image_path)
-            .map_err(|e| ReputationRequestError::Hash { source: e })?;
-
-        {
-            let cache = self
-                .tf_cache
-                .read()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if cache.contains_key(&sha) {
-                return Ok(sha);
-            }
-        }
-
-        {
-            let mut in_f = self
-                .tf_in_flight
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if in_f.contains(&sha) {
-                return Ok(sha);
-            }
-            in_f.insert(sha.clone());
-        }
-
-        log::info!("Requesting ThreatFox lookup for pid {pid} sha {sha}");
-
-        if self
-            .job_tx
-            .send(Job::TfLookupHash {
-                sha256: sha.clone(),
-            })
-            .is_err()
-        {
-            let mut in_f = self
-                .tf_in_flight
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            in_f.remove(&sha);
-            return Err(ReputationRequestError::WorkerUnavailable);
-        }
-
-        Ok(sha)
-    }
-
-    pub fn request_tf_lookup_for_process(&self, pid: u32) -> Result<String, String> {
-        self.request_tf_lookup_for_process_typed(pid)
-            .map_err(|e| e.to_string())
-    }
-
+    /// Request a ThreatFox lookup for an already-computed SHA-256 on the background worker.
+    /// Without `force`, a cached answer is reused unless that attempt failed.
+    /// Returns whether a job was queued.
     pub fn request_tf_lookup_for_hash(&self, sha: &str, force: bool) -> bool {
         let sha = sha.to_string();
 
@@ -70,7 +13,10 @@ impl ReputationService {
                 .tf_cache
                 .read()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if cache.contains_key(&sha) {
+            if cache
+                .get(&sha)
+                .is_some_and(|(_, meta)| meta.last_error_message.is_none())
+            {
                 return false;
             }
         }

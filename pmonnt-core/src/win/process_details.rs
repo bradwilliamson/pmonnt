@@ -519,30 +519,44 @@ mod tests {
     #[test]
     #[ignore = "spawns a 32-bit process; run with --ignored"]
     fn get_process_details_wow64_child_process_smoke() {
-        // Best-effort WoW64 smoke test: spawn 32-bit cmd.exe if present and query its details.
-        // Ignored by default because it depends on the OS image and can be flaky in CI.
-        use std::os::windows::process::CommandExt;
-
-        let syswow64_cmd = std::path::Path::new(r"C:\Windows\SysWOW64\cmd.exe");
-        if !syswow64_cmd.exists() {
+        // Reads the 32-bit PEB of a WoW64 child. Ignored by default because it depends on the
+        // OS image having SysWOW64.
+        //
+        // The child must stay alive without a console: `cmd /c timeout` (used previously)
+        // exits at once with "Input redirection is not supported" when stdin is not a
+        // console, so the read failed on an exited process.
+        let syswow64_ping = std::path::Path::new(r"C:\Windows\SysWOW64\PING.EXE");
+        if !syswow64_ping.exists() {
             return;
         }
 
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        let mut child = std::process::Command::new(syswow64_cmd)
-            .args(["/c", "timeout", "/t", "3", "/nobreak"])
-            .creation_flags(CREATE_NO_WINDOW)
+        let mut child = std::process::Command::new(syswow64_ping)
+            .args(["-n", "30", "127.0.0.1"])
+            .stdout(std::process::Stdio::null())
             .spawn()
-            .expect("spawn wow64 cmd");
-
+            .expect("spawn wow64 ping");
         let pid = child.id();
 
-        // Give the process a brief moment to initialize PEB/process parameters.
-        std::thread::sleep(std::time::Duration::from_millis(100));
-
-        let details = get_process_details(pid, false).expect("should query wow64 process details");
-        assert!(details.command_line.is_some() || details.image_path.is_some());
-
+        // The loader fills in the process parameters shortly after start; retry briefly.
+        let mut details = None;
+        for _ in 0..40 {
+            if let Ok(d) = get_process_details(pid, false)
+                && d.command_line.is_some()
+            {
+                details = Some(d);
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        let _ = child.kill();
         let _ = child.wait();
+
+        let details = details.expect("should query wow64 process details");
+        let command_line = details.command_line.unwrap_or_default();
+        assert!(
+            command_line.to_ascii_lowercase().contains("ping"),
+            "unexpected command line {command_line:?}"
+        );
+        assert!(command_line.contains("127.0.0.1"));
     }
 }

@@ -2,6 +2,7 @@ mod feeds;
 mod mb;
 mod panel;
 mod settings;
+mod sha;
 mod tf;
 mod vt;
 

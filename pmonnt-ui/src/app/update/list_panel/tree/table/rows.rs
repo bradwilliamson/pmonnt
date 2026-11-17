@@ -443,8 +443,8 @@ pub(super) fn render_rows(
             }
             if ui.button("Copy SHA-256 (computes if needed)").clicked() {
                 if app.selected_pid == Some(item.pid) {
-                    if let Some(sha) = &app.mb_ui_state.current_process_sha {
-                        ui.copy_text(sha.clone());
+                    if let Some(sha) = app.selected_sha_for(item.pid) {
+                        ui.copy_text(sha.to_string());
                     } else {
                         app.pending_copy_sha_pid = Some(item.pid);
                     }

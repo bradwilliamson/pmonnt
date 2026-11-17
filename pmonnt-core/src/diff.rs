@@ -12,7 +12,9 @@ pub struct ProcessDiff {
     pub new_pids: HashSet<u32>,
     /// PIDs that existed in the old snapshot but not in the new one
     pub exited_pids: HashSet<u32>,
-    /// PIDs where the process name or PPID changed
+    /// PIDs present in both snapshots that now belong to a different process: the name,
+    /// PPID or creation time changed, so Windows recycled the PID in between. Per-process
+    /// state cached for these PIDs describes the old process.
     pub changed_pids: HashSet<u32>,
     /// When the diff was computed (from new snapshot's timestamp)
     pub computed_at: Instant,
@@ -29,9 +31,7 @@ impl ProcessDiff {
                 (None, _) => {
                     new_pids.insert(pid);
                 }
-                (Some(old_proc), Some(new_proc))
-                    if old_proc.name != new_proc.name || old_proc.ppid != new_proc.ppid =>
-                {
+                (Some(old_proc), Some(new_proc)) if is_different_process(old_proc, new_proc) => {
                     changed_pids.insert(pid);
                 }
                 _ => {}
@@ -59,6 +59,13 @@ impl ProcessDiff {
     pub fn change_count(&self) -> usize {
         self.new_pids.len() + self.exited_pids.len() + self.changed_pids.len()
     }
+}
+
+/// Whether two entries with the same PID describe different process instances.
+fn is_different_process(old: &Process, new: &Process) -> bool {
+    old.name != new.name
+        || old.ppid != new.ppid
+        || matches!((old.create_time, new.create_time), (Some(a), Some(b)) if a != b)
 }
 
 /// Represents an exited process with its exit time
@@ -178,6 +185,7 @@ mod tests {
             gpu_memory_bytes: None,
             path: None,
             signature: None,
+            create_time: None,
         }
     }
 
@@ -251,6 +259,23 @@ mod tests {
         assert!(diff.changed_pids.contains(&2));
         assert!(diff.has_changes());
         assert_eq!(diff.change_count(), 1);
+    }
+
+    #[test]
+    fn recycled_pid_with_same_name_counts_as_changed() {
+        let with_time = |pid, t| Process {
+            create_time: t,
+            ..create_test_process(pid, "svchost.exe", Some(1))
+        };
+        let old_snapshot =
+            create_test_snapshot(vec![with_time(10, Some(100)), with_time(20, Some(200))]);
+        let new_snapshot = create_test_snapshot(vec![
+            with_time(10, Some(900)), // exited, PID reused by another svchost.exe
+            with_time(20, None),      // creation time unknown this time: not evidence of reuse
+        ]);
+        let diff = ProcessDiff::new(&old_snapshot, &new_snapshot);
+        assert_eq!(diff.changed_pids, HashSet::from([10]));
+        assert!(diff.new_pids.is_empty() && diff.exited_pids.is_empty());
     }
 
     #[test]

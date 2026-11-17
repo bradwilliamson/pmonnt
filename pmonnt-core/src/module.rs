@@ -102,6 +102,12 @@ impl ModuleCache {
         // Sync access order
         self.access_order.retain(|pid| self.map.contains_key(pid));
     }
+
+    /// Drop entries for PIDs `keep` rejects (exited, or recycled by another process).
+    pub fn retain_pids(&mut self, keep: impl Fn(u32) -> bool) {
+        self.map.retain(|&pid, _| keep(pid));
+        self.access_order.retain(|pid| self.map.contains_key(pid));
+    }
 }
 
 /// Fetch modules for a process with signature checking

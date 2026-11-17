@@ -43,7 +43,9 @@ pub(crate) struct MbUiState {
     pub(crate) querying_started_at: Option<Instant>,
     pub(crate) last_seen_pid: Option<u32>,
     pub(crate) current_process_sha: Option<String>,
-    pub(crate) current_process_sha_pending: Arc<Mutex<Option<String>>>,
+    /// Set when "Check" was clicked before the image hash was known; the lookup starts once
+    /// the reputation worker has hashed the file.
+    pub(crate) lookup_waiting_for_sha: Option<u32>,
     // CSCB cache
     pub(crate) cscb_entries: Vec<pmonnt_core::providers::MbCscbEntry>,
     pub(crate) cscb_fetch_in_progress: bool,
@@ -89,7 +91,7 @@ impl Default for MbUiState {
             querying_started_at: None,
             last_seen_pid: None,
             current_process_sha: None,
-            current_process_sha_pending: Arc::new(Mutex::new(None)),
+            lookup_waiting_for_sha: None,
             cscb_entries: Vec::new(),
             cscb_fetch_in_progress: false,
             cscb_error: None,
@@ -122,7 +124,9 @@ pub(crate) struct VtUiState {
     pub(crate) querying_started_at: Option<std::time::Instant>,
     pub(crate) last_seen_pid: Option<u32>,
     pub(crate) current_process_sha: Option<String>,
-    pub(crate) current_process_sha_pending: Arc<Mutex<Option<String>>>,
+    /// Set when "Check" was clicked before the image hash was known; the lookup starts once
+    /// the reputation worker has hashed the file.
+    pub(crate) lookup_waiting_for_sha: Option<u32>,
     pub(crate) last_query_meta: Option<pmonnt_core::vt::VtQueryMeta>,
 }
 
@@ -134,6 +138,8 @@ pub(crate) struct TfUiState {
     pub(crate) querying_tf_sha: Option<String>,
     pub(crate) current_process_sha: Option<String>,
     pub(crate) last_seen_pid: Option<u32>,
+    /// See [`VtUiState::lookup_waiting_for_sha`].
+    pub(crate) lookup_waiting_for_sha: Option<u32>,
 }
 
 #[derive(Clone)]
@@ -163,9 +169,69 @@ pub(crate) struct YaraScanState {
     pub(crate) progress_rx:
         Option<std::sync::mpsc::Receiver<pmonnt_core::yara::scanner::ScanProgress>>,
     pub(crate) needs_engine_rebuild: Arc<AtomicBool>,
+    /// Result of the engine compile running in the background, if one is. Starting another
+    /// build replaces the receiver, so only the newest rule set's engine is ever installed.
+    pub(crate) engine_build_rx:
+        Option<std::sync::mpsc::Receiver<Result<pmonnt_core::yara::engine::YaraEngine, String>>>,
 }
 
 impl YaraScanState {
+    /// Compile the current rules into a new engine on a background thread. The rules are
+    /// copied out first, so neither the UI thread nor rule downloads wait on the compile, and
+    /// the previous engine stays usable until the new one is ready.
+    pub(crate) fn start_engine_build(&mut self) {
+        let rules = self
+            .rule_manager
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .rules()
+            .to_vec();
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.engine_build_rx = Some(rx);
+        log::info!("Compiling YARA engine with {} rules", rules.len());
+        std::thread::spawn(move || {
+            let result = pmonnt_core::yara::engine::YaraEngine::from_rules(&rules)
+                .map_err(|e| e.to_string());
+            // Fails only if a newer build replaced this one; its result is then irrelevant.
+            let _ = tx.send(result);
+        });
+    }
+
+    /// Install a finished engine build, if any.
+    pub(crate) fn poll_engine_build(&mut self) {
+        let Some(rx) = &self.engine_build_rx else {
+            return;
+        };
+        let outcome = match rx.try_recv() {
+            Ok(outcome) => outcome,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                Err("engine compile stopped unexpectedly".to_string())
+            }
+        };
+        self.engine_build_rx = None;
+        match outcome {
+            Ok(engine) => {
+                log::info!("YARA engine compiled ({} rules)", engine.rule_count());
+                self.yara_engine = Some(Arc::new(engine));
+                self.error = None;
+            }
+            Err(e) => {
+                log::error!("YARA engine compile failed: {e}");
+                // Keep scanning with the previous engine, if there is one.
+                self.error = Some(if self.yara_engine.is_some() {
+                    format!("Engine compile failed (still using the previous rules): {e}")
+                } else {
+                    format!("Engine compile failed: {e}")
+                });
+            }
+        }
+    }
+
+    pub(crate) fn engine_building(&self) -> bool {
+        self.engine_build_rx.is_some()
+    }
+
     pub(crate) fn rule_count(&self) -> usize {
         let rm = self
             .rule_manager

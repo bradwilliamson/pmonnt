@@ -1,8 +1,34 @@
+use super::sha::{ImageSha, image_sha};
 use crate::ui_state::{MbQueryState, MbUiState};
 use eframe::egui;
 use pmonnt_core::reputation_service::ReputationService;
 use std::collections::HashMap;
 use std::sync::Arc;
+
+/// Queue a MalwareBazaar lookup (on the reputation worker) and track it for `pid`.
+fn start_mb_lookup(
+    mb_state: &mut MbUiState,
+    reputation_service: &ReputationService,
+    pid: u32,
+    sha: String,
+    force: bool,
+) {
+    reputation_service.request_mb_lookup_for_hash(&sha, force);
+    mb_state.current_process_sha = Some(sha.clone());
+    mb_state.querying_mb_sha = Some(sha);
+    mb_state.querying_mb_pid = Some(pid);
+    mb_state.querying_started_at = Some(std::time::Instant::now());
+}
+
+fn set_mb_error(mb_state: &mut MbUiState, message: String) {
+    mb_state.last_query_state = Some(MbQueryState {
+        last_query: Some("get_info".to_string()),
+        last_http_status: None,
+        last_query_status: None,
+        last_result_count: None,
+        last_error_message: Some(message),
+    });
+}
 
 pub fn render_malwarebazaar_section(
     ui: &mut egui::Ui,
@@ -21,7 +47,33 @@ pub fn render_malwarebazaar_section(
         mb_state.querying_mb_pid = None;
         mb_state.querying_mb_sha = None;
         mb_state.current_process_sha = None;
+        mb_state.lookup_waiting_for_sha = None;
         mb_state.last_query_state = None;
+    }
+
+    // Show the image hash as soon as the reputation worker has it.
+    let image_sha = pid.map(|pid| image_sha(reputation_service, pid_to_image_path, pid));
+    if mb_state.current_process_sha.is_none()
+        && let Some(ImageSha::Known(sha)) = &image_sha
+    {
+        mb_state.current_process_sha = Some(sha.clone());
+    }
+
+    // A "Check" clicked before the hash was ready starts once it is.
+    if let Some(waiting) = mb_state.lookup_waiting_for_sha
+        && pid == Some(waiting)
+    {
+        match &image_sha {
+            Some(ImageSha::Known(sha)) => {
+                mb_state.lookup_waiting_for_sha = None;
+                start_mb_lookup(mb_state, reputation_service, waiting, sha.clone(), false);
+            }
+            Some(ImageSha::Failed(e)) => {
+                mb_state.lookup_waiting_for_sha = None;
+                set_mb_error(mb_state, e.clone());
+            }
+            _ => {}
+        }
     }
 
     // Button enable logic: only allow when a process selected and online lookups enabled.
@@ -37,47 +89,37 @@ pub fn render_malwarebazaar_section(
             .clicked()
             && let Some(pid) = pid
         {
-            match reputation_service.request_mb_lookup_for_process(pid) {
-                Ok(sha) => {
-                    mb_state.current_process_sha = Some(sha.clone());
-                    mb_state.querying_mb_sha = Some(sha);
-                    mb_state.querying_mb_pid = Some(pid);
-                    mb_state.querying_started_at = Some(std::time::Instant::now());
+            match &image_sha {
+                Some(ImageSha::Known(sha)) => {
+                    start_mb_lookup(mb_state, reputation_service, pid, sha.clone(), false);
                 }
-                Err(e) => {
-                    mb_state.last_query_state = Some(MbQueryState {
-                        last_query: Some("get_info".to_string()),
-                        last_http_status: None,
-                        last_query_status: None,
-                        last_result_count: None,
-                        last_error_message: Some(e),
-                    });
-                }
+                Some(ImageSha::Failed(e)) => set_mb_error(mb_state, e.clone()),
+                _ => mb_state.lookup_waiting_for_sha = Some(pid),
             }
         }
 
         if ui
             .add_enabled(can_query, egui::Button::new("Refresh MB data"))
             .clicked()
+            && let Some(pid) = pid
             && let Some(sha) = mb_state
                 .current_process_sha
-                .as_ref()
-                .or(mb_state.querying_mb_sha.as_ref())
+                .clone()
+                .or_else(|| mb_state.querying_mb_sha.clone())
         {
-            let _ = reputation_service.request_mb_lookup_for_hash(sha, true);
-            if let Some(pid) = pid {
-                mb_state.querying_mb_pid = Some(pid);
-                mb_state.querying_started_at = Some(std::time::Instant::now());
-            }
+            start_mb_lookup(mb_state, reputation_service, pid, sha, true);
         }
 
-        // Only show spinner if querying for this process, have a sha, and no cached result yet
-        if let Some(sha) = mb_state
+        if mb_state.lookup_waiting_for_sha.is_some() && mb_state.lookup_waiting_for_sha == pid {
+            ui.spinner();
+            ui.label("Hashing image...");
+        } else if let Some(sha) = mb_state
             .current_process_sha
             .as_ref()
             .or(mb_state.querying_mb_sha.as_ref())
-            && mb_state.querying_mb_pid == pid
-            && reputation_service.get_mb_sample_for_hash(sha).is_none()
+            && (reputation_service.mb_lookup_in_flight(sha)
+                || (mb_state.querying_mb_pid == pid
+                    && reputation_service.get_mb_sample_for_hash(sha).is_none()))
         {
             ui.spinner();
             ui.label("Querying MalwareBazaar...");
@@ -93,13 +135,6 @@ pub fn render_malwarebazaar_section(
             "Select a process on the left to query MalwareBazaar.",
         );
         return;
-    }
-
-    // Drain pending computed SHA (from background thread)
-    if let Ok(mut guard) = mb_state.current_process_sha_pending.lock()
-        && let Some(sha) = guard.take()
-    {
-        mb_state.current_process_sha = Some(sha);
     }
 
     // Prefer current_process_sha, fallback to querying_mb_sha

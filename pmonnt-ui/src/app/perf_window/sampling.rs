@@ -249,11 +249,18 @@ impl PMonNTApp {
         let mut total_tcp = 0u32;
         let mut total_udp = 0u32;
         let mut unique_remotes = HashSet::new();
+        let mut tcp_keys = HashSet::new();
 
         for conn in &filtered {
             match conn.protocol {
                 Protocol::Tcp => {
                     total_tcp += 1;
+                    tcp_keys.insert((
+                        conn.local_address,
+                        conn.local_port,
+                        conn.remote_address,
+                        conn.remote_port,
+                    ));
                     if let Some(state) = conn.state {
                         match state {
                             TcpState::Established => tcp_states.established += 1,
@@ -280,14 +287,15 @@ impl PMonNTApp {
             }
         }
 
-        // Compute new connections/sec
+        // New connections/sec: connections not present at the previous poll (by identity,
+        // so 100 closed + 100 opened counts as 100 new, not 0).
         let now = std::time::Instant::now();
         let dt = now
             .duration_since(monitor.last_poll)
             .as_secs_f32()
             .max(0.001);
-        let delta_total = total_tcp.saturating_sub(monitor.last_snapshot_total) as f32;
-        let new_per_sec = (delta_total / dt).max(0.0);
+        let new_conns = monitor.observe_tcp(tcp_keys).unwrap_or(0);
+        let new_per_sec = new_conns as f32 / dt;
 
         // Smooth new_per_sec with rolling average of last 5 samples
         let smoothed_new_per_sec = if monitor.samples.len() >= 5 {
@@ -325,7 +333,6 @@ impl PMonNTApp {
         }
 
         // Update state
-        monitor.last_snapshot_total = total_tcp;
         monitor.last_poll = now;
         monitor.last_counts = tcp_states;
         monitor.child_pid_count = pids_to_monitor.len().saturating_sub(1); // Exclude root PID

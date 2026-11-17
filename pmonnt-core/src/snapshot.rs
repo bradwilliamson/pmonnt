@@ -136,6 +136,47 @@ impl ProcessSnapshot {
             .get(&pid)
             .map_or("", |&i| self.view_index().lower_names[i].as_str())
     }
+
+    /// `root` followed by its descendants, children before their parents (the order a
+    /// "kill tree" terminates them in). Empty if `root` is not in the snapshot.
+    ///
+    /// Windows keeps reporting a parent PID after the parent exits, and once that PID is
+    /// recycled an unrelated process appears to be the parent of the old one's children. A
+    /// process therefore only counts as a child if both creation times are known and it was
+    /// created no earlier than its parent.
+    pub fn descendants_child_first(&self, root: u32) -> Vec<&Process> {
+        let Some(root_process) = self.get_process(root) else {
+            return Vec::new();
+        };
+        let children = &self.view_index().children;
+        let is_child_of =
+            |child: &Process, parent: &Process| match (child.create_time, parent.create_time) {
+                (Some(c), Some(p)) => c >= p,
+                _ => false,
+            };
+
+        // Iterative post-order walk; `visited` guards against PPID cycles.
+        let mut out = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        visited.insert(root);
+        let mut stack = vec![(root_process, false)];
+        while let Some((process, expanded)) = stack.pop() {
+            if expanded {
+                out.push(process);
+                continue;
+            }
+            stack.push((process, true));
+            for &kid in children.get(&process.pid).into_iter().flatten().rev() {
+                if let Some(child) = self.get_process(kid)
+                    && is_child_of(child, process)
+                    && visited.insert(kid)
+                {
+                    stack.push((child, false));
+                }
+            }
+        }
+        out
+    }
 }
 
 /// Lowercase like `str::to_lowercase`, skipping the Unicode tables for plain ASCII.
@@ -217,7 +258,65 @@ mod tests {
             gpu_memory_bytes: None,
             path: None,
             signature: None,
+            create_time: None,
         }
+    }
+
+    fn timed(pid: u32, ppid: u32, create_time: Option<u64>) -> Process {
+        Process {
+            create_time,
+            ..proc(pid, ppid, "p.exe")
+        }
+    }
+
+    fn pids(procs: &[&Process]) -> Vec<u32> {
+        procs.iter().map(|p| p.pid).collect()
+    }
+
+    #[test]
+    fn descendants_are_listed_children_first() {
+        let snapshot = ProcessSnapshot::from_processes(
+            vec![
+                timed(10, 1, Some(100)),
+                timed(20, 10, Some(110)),
+                timed(30, 20, Some(120)),
+                timed(40, 10, Some(130)),
+                timed(50, 1, Some(140)), // unrelated
+            ],
+            Instant::now(),
+        );
+        let order = pids(&snapshot.descendants_child_first(10));
+        assert_eq!(order.last(), Some(&10));
+        let pos = |pid| order.iter().position(|&p| p == pid).unwrap();
+        assert!(pos(30) < pos(20));
+        assert!(pos(20) < pos(10) && pos(40) < pos(10));
+        assert_eq!(order.len(), 4);
+        assert!(snapshot.descendants_child_first(999).is_empty());
+    }
+
+    #[test]
+    fn descendants_skip_children_of_a_recycled_parent_pid() {
+        // PID 10 was reused at t=500. PID 20 was started by the earlier PID 10 (t=110) and is
+        // not a child of the current one; PID 30 was started by the current one.
+        let snapshot = ProcessSnapshot::from_processes(
+            vec![
+                timed(10, 1, Some(500)),
+                timed(20, 10, Some(110)),
+                timed(30, 10, Some(510)),
+                timed(40, 10, None),
+            ],
+            Instant::now(),
+        );
+        assert_eq!(pids(&snapshot.descendants_child_first(10)), vec![30, 10]);
+    }
+
+    #[test]
+    fn descendants_survive_ppid_cycles() {
+        let snapshot = ProcessSnapshot::from_processes(
+            vec![timed(10, 20, Some(100)), timed(20, 10, Some(100))],
+            Instant::now(),
+        );
+        assert_eq!(pids(&snapshot.descendants_child_first(10)), vec![20, 10]);
     }
 
     #[test]
