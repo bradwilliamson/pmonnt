@@ -266,9 +266,16 @@ mod tests {
 
     #[test]
     fn test_get_own_priority() {
-        let pid = std::process::id();
-        let priority = get_priority_class(pid).unwrap();
-        assert_eq!(priority, PriorityClass::Normal);
+        // Compare with the class this process really has: CI runners (GitHub's Windows
+        // images) start jobs at BelowNormal, so assuming Normal fails there.
+        // SAFETY: GetCurrentProcess returns a pseudo-handle that needs no closing, and
+        // GetPriorityClass only reads from it.
+        let raw =
+            unsafe { GetPriorityClass(windows::Win32::System::Threading::GetCurrentProcess()) };
+        let expected = PriorityClass::from_win32(raw).expect("known priority class");
+
+        let priority = get_priority_class(std::process::id()).unwrap();
+        assert_eq!(priority, expected);
     }
 
     #[test]
