@@ -534,6 +534,8 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "sends a real lookup to threatfox-api.abuse.ch (and fails offline); \
+                provider_http_state_tests cover this path against a local server"]
     fn test_valid_hash_format_no_crash() {
         let temp = tempdir().unwrap();
         let cache = Arc::new(LocalCacheProvider::new(temp.path().join("cache.json")));

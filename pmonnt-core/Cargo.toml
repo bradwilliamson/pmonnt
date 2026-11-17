@@ -20,6 +20,16 @@ name = "test_services"
 path = "src/bin/test_services.rs"
 bench = false
 
+[[bin]]
+name = "test_privileges"
+path = "src/bin/test_privileges.rs"
+bench = false
+
+[[bin]]
+name = "pmonnt-mb-debug"
+path = "src/bin/pmonnt-mb-debug.rs"
+bench = false
+
 [dependencies]
 
 anyhow = "1.0"
