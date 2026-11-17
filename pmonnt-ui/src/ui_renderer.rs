@@ -14,9 +14,10 @@ mod threads;
 pub use handles::{render_handles_panel, render_handles_panel_ctx};
 #[allow(unused_imports)]
 pub use reputation::{
-    render_malwarebazaar_section, render_reputation_panel, render_reputation_panel_ctx,
-    render_reputation_settings_panel, render_reputation_settings_panel_ctx,
-    render_threat_intel_feeds, render_threatfox_section, render_virustotal_section,
+    dispatch_pending_lookups, render_malwarebazaar_section, render_reputation_panel,
+    render_reputation_panel_ctx, render_reputation_settings_panel,
+    render_reputation_settings_panel_ctx, render_threat_intel_feeds, render_threatfox_section,
+    render_virustotal_section,
 };
 pub use scan::render_scan_panel;
 pub use threads::{ThreadActionRequest, ThreadDetailUi, render_threads_panel};

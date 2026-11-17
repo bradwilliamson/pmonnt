@@ -715,10 +715,15 @@ mod tests {
             results.insert("C:/live.exe".to_string(), result("C:/live.exe", "live"));
             results.insert("C:/gone.exe".to_string(), result("C:/gone.exe", "gone"));
             let mut vt = service.vt_cache.write().unwrap();
-            for sha in ["live", "gone", "busy"] {
+            for sha in ["live", "gone", "busy", "revalidated"] {
                 vt.insert(sha.to_string(), (None, vt_meta("ok")));
             }
         }
+        // The live image was re-hashed to a new value (upgraded in place).
+        service.image_hashes.lock().unwrap().insert(
+            "C:/live.exe".to_string(),
+            ImageHashState::Ready("revalidated".to_string()),
+        );
         service
             .vt_in_flight
             .lock()
@@ -730,6 +735,7 @@ mod tests {
         assert_eq!(service.cached_path_count(), 1);
         let vt = service.vt_cache.read().unwrap();
         assert!(vt.contains_key("live") && vt.contains_key("busy"));
+        assert!(vt.contains_key("revalidated"));
         assert!(!vt.contains_key("gone"));
     }
 
@@ -766,6 +772,16 @@ mod tests {
             panic!("expected a hash");
         };
 
+        // The panel's path result was computed for version one.
+        service.results.write().unwrap().insert(
+            path.clone(),
+            ReputationResult {
+                image_path: path.clone(),
+                sha256: Some(first.clone()),
+                state: LookupState::NotFound,
+            },
+        );
+
         // Same path, new contents and size (an upgraded binary): the hash follows the file.
         std::fs::write(&file, b"version two, longer").unwrap();
         service.rehash_image(&path);
@@ -776,6 +792,8 @@ mod tests {
         let _ = std::fs::remove_file(&file);
         assert_ne!(first, second);
         assert_eq!(second, expected);
+        // The stale path result (and its verdict) was dropped so it gets rebuilt.
+        assert!(service.get_result(&path).is_none());
     }
 
     #[test]

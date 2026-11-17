@@ -54,9 +54,47 @@ pub(crate) struct DumpJobResult {
     pub(crate) result: Result<std::path::PathBuf, String>,
 }
 
+/// Which process instance a background reply describes. Jobs are requested by PID, and
+/// Windows recycles PIDs, so a reply can arrive after its PID has passed to another process.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ReplyIdentity {
+    /// Creation time of the process the job read.
+    Known(u64),
+    /// Could not be determined (no query access); the reply is accepted as before.
+    Unknown,
+    /// The PID changed owner while the job ran, so the data may belong to either process.
+    Changed,
+}
+
+impl ReplyIdentity {
+    /// Run `job` for `pid`, noting the process instance before and after it.
+    pub(crate) fn around<T>(pid: u32, job: impl FnOnce() -> T) -> (T, Self) {
+        let instance = || pmonnt_core::win::process_control::query_process_create_time(pid).ok();
+        let before = instance();
+        let value = job();
+        let identity = match (before, instance()) {
+            (Some(a), Some(b)) if a != b => Self::Changed,
+            (Some(t), _) | (None, Some(t)) => Self::Known(t),
+            (None, None) => Self::Unknown,
+        };
+        (value, identity)
+    }
+
+    /// Whether a reply with this identity describes the process that `current` (the latest
+    /// snapshot's creation time for the PID) identifies.
+    pub(crate) fn matches(self, current: Option<u64>) -> bool {
+        match (self, current) {
+            (Self::Changed, _) => false,
+            (Self::Known(a), Some(b)) => a == b,
+            _ => true,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct SecurityJobResult {
     pub(crate) pid: u32,
+    pub(crate) identity: ReplyIdentity,
     pub(crate) result: Result<pmonnt_core::win::token_info::SecurityInfo, String>,
 }
 
@@ -120,7 +158,8 @@ pub(crate) struct PMonNTApp {
     thread_fetch_in_flight: HashSet<u32>,
     thread_fetch_started: HashMap<u32, Instant>,
     thread_fetch_tx: crossbeam_channel::Sender<u32>,
-    thread_fetch_rx: crossbeam_channel::Receiver<(u32, Result<Vec<ThreadInfo>, String>)>,
+    thread_fetch_rx:
+        crossbeam_channel::Receiver<(u32, ReplyIdentity, Result<Vec<ThreadInfo>, String>)>,
 
     // Threads tab selection + actions
     selected_tid_by_pid: HashMap<u32, u32>,

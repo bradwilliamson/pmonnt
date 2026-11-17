@@ -530,9 +530,15 @@ fn render_security_tab(
         security_in_flight.insert(pid);
         let tx = security_result_tx.clone();
         bg_worker.spawn(move || {
-            let result = pmonnt_core::win::token_info::get_process_security_info(pid)
-                .map_err(|e| e.to_string());
-            let _ = tx.send(crate::app::SecurityJobResult { pid, result });
+            let (result, identity) = crate::app::ReplyIdentity::around(pid, || {
+                pmonnt_core::win::token_info::get_process_security_info(pid)
+                    .map_err(|e| e.to_string())
+            });
+            let _ = tx.send(crate::app::SecurityJobResult {
+                pid,
+                identity,
+                result,
+            });
         });
     }
 

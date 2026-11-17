@@ -382,3 +382,47 @@ impl YaraScanState {
         (yaraify, threatfox, local)
     }
 }
+
+impl VtUiState {
+    /// Drop state for processes that exited or whose PID now belongs to another process.
+    /// The panel resets only when the shown PID changes, so a recycled PID would otherwise
+    /// keep showing the previous process's hash and verdict.
+    pub(crate) fn forget_departed(&mut self, keep: impl Fn(u32) -> bool) {
+        self.pending_checks.retain(|&pid, _| keep(pid));
+        if self.last_seen_pid.is_some_and(|pid| !keep(pid)) {
+            self.last_seen_pid = None;
+            self.querying_vt_pid = None;
+            self.querying_vt_sha = None;
+            self.current_process_sha = None;
+            self.last_query_meta = None;
+        }
+    }
+}
+
+impl MbUiState {
+    /// See [`VtUiState::forget_departed`].
+    pub(crate) fn forget_departed(&mut self, keep: impl Fn(u32) -> bool) {
+        self.pending_checks.retain(|&pid, _| keep(pid));
+        if self.last_seen_pid.is_some_and(|pid| !keep(pid)) {
+            self.last_seen_pid = None;
+            self.querying_mb_pid = None;
+            self.querying_mb_sha = None;
+            self.current_process_sha = None;
+            self.last_query_state = None;
+        }
+    }
+}
+
+impl TfUiState {
+    /// See [`VtUiState::forget_departed`].
+    pub(crate) fn forget_departed(&mut self, keep: impl Fn(u32) -> bool) {
+        self.pending_checks.retain(|&pid, _| keep(pid));
+        if self.last_seen_pid.is_some_and(|pid| !keep(pid)) {
+            self.last_seen_pid = None;
+            self.querying_tf_pid = None;
+            self.querying_tf_sha = None;
+            self.current_process_sha = None;
+            self.last_query_state = None;
+        }
+    }
+}

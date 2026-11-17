@@ -297,8 +297,11 @@ pub(super) fn try_build_app() -> anyhow::Result<PMonNTApp> {
 
     // Create channels for thread fetches using crossbeam for multi-consumer
     let (thread_request_tx, thread_request_rx) = crossbeam_channel::unbounded::<u32>();
-    let (thread_result_tx, thread_result_rx) =
-        crossbeam_channel::unbounded::<(u32, Result<Vec<ThreadInfo>, String>)>();
+    let (thread_result_tx, thread_result_rx) = crossbeam_channel::unbounded::<(
+        u32,
+        super::ReplyIdentity,
+        Result<Vec<ThreadInfo>, String>,
+    )>();
 
     // Signature verification results (background; keyed by image path)
     let (signature_result_tx, signature_result_rx) =
@@ -336,11 +339,10 @@ pub(super) fn try_build_app() -> anyhow::Result<PMonNTApp> {
             while let Ok(pid) = rx.recv() {
                 let start = std::time::Instant::now();
 
-                // Fetch threads
-                let result = match win_thread::list_threads(pid) {
-                    Ok(threads) => Ok(threads),
-                    Err(e) => Err(format!("Thread fetch error: {e}")),
-                };
+                // Fetch threads, noting which process instance they came from.
+                let (result, identity) = super::ReplyIdentity::around(pid, || {
+                    win_thread::list_threads(pid).map_err(|e| format!("Thread fetch error: {e}"))
+                });
 
                 let elapsed = start.elapsed().as_millis();
                 if elapsed > 200 {
@@ -348,7 +350,7 @@ pub(super) fn try_build_app() -> anyhow::Result<PMonNTApp> {
                 }
 
                 // Send result back
-                let _ = tx.send((pid, result));
+                let _ = tx.send((pid, identity, result));
             }
         });
     }

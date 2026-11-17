@@ -1,4 +1,5 @@
 use super::*;
+use crate::app::ReplyIdentity;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
@@ -17,9 +18,17 @@ fn drain_security_results(
     security_result_rx: &crossbeam_channel::Receiver<crate::app::SecurityJobResult>,
     security_in_flight: &mut HashSet<u32>,
     security_cache_by_pid: &mut HashMap<u32, crate::app::CachedSecurityInfo>,
+    is_current: impl Fn(u32, ReplyIdentity) -> bool,
 ) {
     while let Ok(job) = security_result_rx.try_recv() {
         security_in_flight.remove(&job.pid);
+        if !is_current(job.pid, job.identity) {
+            log::debug!(
+                "Dropping security info for a previous process with PID {}",
+                job.pid
+            );
+            continue;
+        }
 
         match &job.result {
             Ok(info) => {
@@ -45,19 +54,29 @@ fn drain_security_results(
     }
 }
 
+type ThreadFetchReply = (
+    u32,
+    ReplyIdentity,
+    Result<Vec<pmonnt_core::thread::ThreadInfo>, String>,
+);
+
 fn drain_thread_fetch_results(
-    thread_fetch_rx: &crossbeam_channel::Receiver<(
-        u32,
-        Result<Vec<pmonnt_core::thread::ThreadInfo>, String>,
-    )>,
+    thread_fetch_rx: &crossbeam_channel::Receiver<ThreadFetchReply>,
     thread_fetch_in_flight: &mut HashSet<u32>,
     thread_fetch_started: &mut HashMap<u32, Instant>,
     thread_cache: &mut pmonnt_core::thread::ThreadCache,
     thread_prev: &mut HashMap<u32, Vec<pmonnt_core::thread::ThreadInfo>>,
+    is_current: impl Fn(u32, ReplyIdentity) -> bool,
 ) {
-    while let Ok((pid, result)) = thread_fetch_rx.try_recv() {
+    while let Ok((pid, identity, result)) = thread_fetch_rx.try_recv() {
+        // The in-flight marker is cleared even for a stale reply: at worst the current
+        // process is fetched twice, while a kept marker could block its fetch for good.
         thread_fetch_in_flight.remove(&pid);
         thread_fetch_started.remove(&pid);
+        if !is_current(pid, identity) {
+            log::debug!("Dropping threads of a previous process with PID {pid}");
+            continue;
+        }
 
         if let Ok(threads) = result {
             if let Some(old) = thread_cache.peek(pid).cloned() {
@@ -72,6 +91,18 @@ impl PMonNTApp {
     pub(super) fn service_background_work(&mut self) {
         // Selection-driven SHA-256 (used by "Copy SHA-256"), if it still matches the selection.
         self.accept_selection_sha();
+
+        // Explicit reputation Check/Refresh requests whose hash is ready.
+        crate::ui_renderer::dispatch_pending_lookups(
+            &self.reputation_service,
+            &self.pid_to_image_path,
+            self.online_lookups_enabled,
+            (
+                &mut self.vt_ui_state,
+                &mut self.mb_ui_state,
+                &mut self.tf_ui_state,
+            ),
+        );
 
         drain_signature_results(
             &self.signature_result_rx,
@@ -138,10 +169,17 @@ impl PMonNTApp {
             }
         }
 
+        // Replies are requested by PID; drop those that describe a process which has since
+        // given its PID to another (the refresh already cleared that PID's caches).
+        let snapshot = &self.current_snapshot;
+        let is_current = |pid: u32, identity: ReplyIdentity| {
+            identity.matches(snapshot.get_process(pid).and_then(|p| p.create_time))
+        };
         drain_security_results(
             &self.security_result_rx,
             &mut self.security_in_flight,
             &mut self.security_cache_by_pid,
+            is_current,
         );
 
         drain_thread_fetch_results(
@@ -150,6 +188,7 @@ impl PMonNTApp {
             &mut self.thread_fetch_started,
             &mut self.thread_cache,
             &mut self.thread_prev,
+            is_current,
         );
 
         // Drain thread action results (non-blocking)
@@ -306,18 +345,38 @@ mod tests {
         sec_tx
             .send(crate::app::SecurityJobResult {
                 pid,
+                identity: ReplyIdentity::Unknown,
                 result: Err("unit test".to_string()),
             })
             .unwrap();
-        drain_security_results(&sec_rx, &mut security_in_flight, &mut security_cache_by_pid);
+        drain_security_results(
+            &sec_rx,
+            &mut security_in_flight,
+            &mut security_cache_by_pid,
+            |_, _| true,
+        );
         assert!(!security_in_flight.contains(&pid));
         assert!(security_cache_by_pid.get(&pid).unwrap().result.is_err());
 
+        // A reply for a previous owner of the PID is dropped.
+        security_cache_by_pid.clear();
+        sec_tx
+            .send(crate::app::SecurityJobResult {
+                pid,
+                identity: ReplyIdentity::Known(1),
+                result: Err("stale".to_string()),
+            })
+            .unwrap();
+        drain_security_results(
+            &sec_rx,
+            &mut security_in_flight,
+            &mut security_cache_by_pid,
+            |_, identity| identity.matches(Some(2)),
+        );
+        assert!(security_cache_by_pid.is_empty());
+
         // Thread fetch
-        let (thr_tx, thr_rx) = crossbeam_channel::unbounded::<(
-            u32,
-            Result<Vec<pmonnt_core::thread::ThreadInfo>, String>,
-        )>();
+        let (thr_tx, thr_rx) = crossbeam_channel::unbounded::<ThreadFetchReply>();
         let mut thread_fetch_in_flight: HashSet<u32> = HashSet::new();
         let mut thread_fetch_started: HashMap<u32, Instant> = HashMap::new();
         let mut thread_cache = pmonnt_core::thread::ThreadCache::new(4);
@@ -326,13 +385,16 @@ mod tests {
         let tpid = 31337u32;
         thread_fetch_in_flight.insert(tpid);
         thread_fetch_started.insert(tpid, Instant::now());
-        thr_tx.send((tpid, Err("unit test".to_string()))).unwrap();
+        thr_tx
+            .send((tpid, ReplyIdentity::Unknown, Err("unit test".to_string())))
+            .unwrap();
         drain_thread_fetch_results(
             &thr_rx,
             &mut thread_fetch_in_flight,
             &mut thread_fetch_started,
             &mut thread_cache,
             &mut thread_prev,
+            |_, _| true,
         );
         assert!(!thread_fetch_in_flight.contains(&tpid));
         assert!(!thread_fetch_started.contains_key(&tpid));
@@ -357,6 +419,44 @@ mod tests {
             privileges: Vec::new(),
             privileges_error: None,
         }
+    }
+
+    #[test]
+    fn explicit_lookups_progress_off_screen_and_respect_online_toggle() {
+        let mut app = crate::app::PMonNTApp::try_new().expect("test app init");
+        // A real file so the re-hash succeeds; two fake PIDs that use it.
+        let file = std::env::temp_dir().join(format!("pmonnt_dispatch_{}", std::process::id()));
+        std::fs::write(&file, b"dispatch test image").unwrap();
+        let path = file.to_string_lossy().to_string();
+        let (checked, shown) = (900_001u32, 900_002u32);
+        app.pid_to_image_path.insert(checked, path.clone());
+        app.pid_to_image_path.insert(shown, path.clone());
+
+        // Check was clicked for `checked`, then the section moved on to `shown`.
+        app.reputation_service.rehash_image(&path);
+        app.vt_ui_state.pending_checks.insert(checked, false);
+        app.vt_ui_state.last_seen_pid = Some(shown);
+        for _ in 0..200 {
+            app.service_background_work();
+            if app.vt_ui_state.pending_checks.is_empty() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(
+            app.vt_ui_state.pending_checks.is_empty(),
+            "lookup started without its section being rendered"
+        );
+        // The other process's display state was left alone.
+        assert_eq!(app.vt_ui_state.current_process_sha, None);
+        assert_eq!(app.vt_ui_state.querying_vt_pid, None);
+
+        // With online lookups off, a pending request is dropped rather than sent later.
+        app.online_lookups_enabled = false;
+        app.mb_ui_state.pending_checks.insert(checked, true);
+        app.service_background_work();
+        assert!(app.mb_ui_state.pending_checks.is_empty());
+        let _ = std::fs::remove_file(&file);
     }
 
     #[test]
@@ -407,6 +507,7 @@ mod tests {
         app.security_result_tx
             .send(crate::app::SecurityJobResult {
                 pid,
+                identity: ReplyIdentity::Unknown,
                 result: Err("unit test error".to_string()),
             })
             .unwrap();
@@ -418,6 +519,7 @@ mod tests {
         app.security_result_tx
             .send(crate::app::SecurityJobResult {
                 pid,
+                identity: ReplyIdentity::Unknown,
                 result: Ok(test_security_info()),
             })
             .unwrap();

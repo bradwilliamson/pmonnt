@@ -1,23 +1,33 @@
-use super::sha::{known_image_sha, request_check, take_ready_check};
+use super::sha::{PendingLookups, known_image_sha, request_check};
 use crate::ui_state::{MbQueryState, MbUiState};
 use eframe::egui;
 use pmonnt_core::reputation_service::ReputationService;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// Queue a MalwareBazaar lookup (on the reputation worker) and track it for `pid`.
-fn start_mb_lookup(
-    mb_state: &mut MbUiState,
-    reputation_service: &ReputationService,
-    pid: u32,
-    sha: String,
-    force: bool,
-) {
-    reputation_service.request_mb_lookup_for_hash(&sha, force);
-    mb_state.current_process_sha = Some(sha.clone());
-    mb_state.querying_mb_sha = Some(sha);
-    mb_state.querying_mb_pid = Some(pid);
-    mb_state.querying_started_at = Some(std::time::Instant::now());
+impl PendingLookups for MbUiState {
+    fn pending_checks(&mut self) -> &mut HashMap<u32, bool> {
+        &mut self.pending_checks
+    }
+
+    fn shown_pid(&self) -> Option<u32> {
+        self.last_seen_pid
+    }
+
+    fn request(service: &ReputationService, sha: &str, force: bool) {
+        service.request_mb_lookup_for_hash(sha, force);
+    }
+
+    fn track(&mut self, pid: u32, sha: String) {
+        self.current_process_sha = Some(sha.clone());
+        self.querying_mb_sha = Some(sha);
+        self.querying_mb_pid = Some(pid);
+        self.querying_started_at = Some(std::time::Instant::now());
+    }
+
+    fn show_error(&mut self, message: String) {
+        set_mb_error(self, message);
+    }
 }
 
 fn set_mb_error(mb_state: &mut MbUiState, message: String) {
@@ -75,22 +85,6 @@ pub fn render_malwarebazaar_section(
             pid.and_then(|pid| known_image_sha(reputation_service, pid_to_image_path, pid))
     {
         mb_state.current_process_sha = Some(sha);
-    }
-
-    // Explicit requests start once their re-validated image hash is ready.
-    if let Some(pid) = pid
-        && let Some(ready) = take_ready_check(
-            reputation_service,
-            pid_to_image_path,
-            pid,
-            online_lookups_enabled,
-            &mut mb_state.pending_checks,
-        )
-    {
-        match ready {
-            Ok((sha, force)) => start_mb_lookup(mb_state, reputation_service, pid, sha, force),
-            Err(e) => set_mb_error(mb_state, e),
-        }
     }
 
     let can_query = pid.is_some() && online_lookups_enabled;
