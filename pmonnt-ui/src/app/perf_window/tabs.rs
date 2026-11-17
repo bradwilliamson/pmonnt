@@ -628,10 +628,10 @@ fn render_security_tab(
                 });
             });
 
-            egui::Frame::none()
+            egui::Frame::NONE
                 .fill(ui.visuals().widgets.inactive.bg_fill)
-                .rounding(egui::Rounding::same(8.0))
-                .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+                .corner_radius(egui::CornerRadius::same(8))
+                .inner_margin(egui::Margin::symmetric(10, 8))
                 .show(ui, |ui| {
                     egui::Grid::new(("security_summary_grid", pid))
                         .num_columns(2)
@@ -645,9 +645,7 @@ fn render_security_tab(
                             ui.horizontal(|ui| {
                                 ui.label(&info.summary.user_sid);
                                 if ui.small_button("Copy").clicked() {
-                                    ui.output_mut(|o| {
-                                        o.copied_text = info.summary.user_sid.clone()
-                                    });
+                                    ui.copy_text(info.summary.user_sid.clone());
                                 }
                             });
                             ui.end_row();
@@ -661,7 +659,7 @@ fn render_security_tab(
                                 if let Some(luid) = info.summary.logon_luid.as_deref() {
                                     ui.label(luid);
                                     if ui.small_button("Copy").clicked() {
-                                        ui.output_mut(|o| o.copied_text = luid.to_string());
+                                        ui.copy_text(luid.to_string());
                                     }
                                 } else {
                                     ui.label(egui::RichText::new("—").color(egui::Color32::GRAY));
@@ -1022,7 +1020,7 @@ pub(super) fn render_performance_tab(ui: &mut egui::Ui, stats: &PerfStats, _pid:
 }
 
 fn render_group_box(ui: &mut egui::Ui, title: &str, content: impl FnOnce(&mut egui::Ui)) {
-    let frame = egui::Frame::group(ui.style()).inner_margin(egui::Margin::same(10.0));
+    let frame = egui::Frame::group(ui.style()).inner_margin(egui::Margin::same(10));
 
     frame.show(ui, |ui| {
         ui.label(egui::RichText::new(title).strong());
@@ -1108,10 +1106,10 @@ pub(super) fn render_performance_tab_old(ui: &mut egui::Ui, stats: &PerfStats, p
                     .small(),
             );
 
-            let chip_frame = egui::Frame::none()
+            let chip_frame = egui::Frame::NONE
                 .fill(ui.visuals().widgets.inactive.bg_fill)
-                .rounding(egui::Rounding::same(8.0))
-                .inner_margin(egui::Margin::symmetric(10.0, 8.0));
+                .corner_radius(egui::CornerRadius::same(8))
+                .inner_margin(egui::Margin::symmetric(10, 8));
 
             chip_frame.show(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
@@ -1347,7 +1345,7 @@ pub(super) fn render_performance_graph_tab(
                     .show_y(false)
                     .show(ui, |plot_ui| {
                         plot_ui.line(
-                            Line::new(cpu_points)
+                            Line::new("CPU %", cpu_points)
                                 .color(egui::Color32::from_rgb(100, 200, 100))
                                 .width(1.5),
                         );
@@ -1388,7 +1386,7 @@ pub(super) fn render_performance_graph_tab(
                     .show_y(false)
                     .show(ui, |plot_ui| {
                         plot_ui.line(
-                            Line::new(priv_points)
+                            Line::new("Private bytes", priv_points)
                                 .color(egui::Color32::from_rgb(100, 150, 255))
                                 .width(1.5)
                                 .fill(0.0),
@@ -1442,13 +1440,13 @@ pub(super) fn render_performance_graph_tab(
                     .show_y(false)
                     .show(ui, |plot_ui| {
                         plot_ui.line(
-                            Line::new(read_points)
+                            Line::new("Read", read_points)
                                 .color(egui::Color32::from_rgb(100, 255, 100))
                                 .width(1.5)
                                 .name("Read"),
                         );
                         plot_ui.line(
-                            Line::new(write_points)
+                            Line::new("Write", write_points)
                                 .color(egui::Color32::from_rgb(255, 150, 100))
                                 .width(1.5)
                                 .name("Write"),
@@ -1490,7 +1488,7 @@ fn render_mini_bar(
         // Background
         ui.painter().rect_filled(
             rect,
-            egui::Rounding::same(2.0),
+            egui::CornerRadius::same(2),
             ui.visuals().extreme_bg_color,
         );
 
@@ -1502,7 +1500,7 @@ fn render_mini_bar(
             );
             ui.painter().rect_filled(
                 fill_rect,
-                egui::Rounding::same(2.0),
+                egui::CornerRadius::same(2),
                 egui::Color32::from_rgb(100, 200, 100),
             );
         }
@@ -1510,8 +1508,9 @@ fn render_mini_bar(
         // Border
         ui.painter().rect_stroke(
             rect,
-            egui::Rounding::same(2.0),
+            egui::CornerRadius::same(2),
             egui::Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color),
+            egui::StrokeKind::Inside,
         );
 
         ui.add_space(5.0);
@@ -1637,11 +1636,11 @@ fn perf_chip(
     let stroke = egui::Stroke::new(1.0, visuals.strong_text_color().linear_multiply(0.25));
     let fill = visuals.panel_fill.gamma_multiply(0.05);
 
-    let frame = egui::Frame::none()
+    let frame = egui::Frame::NONE
         .stroke(stroke)
         .fill(fill)
-        .rounding(egui::Rounding::same(10.0))
-        .inner_margin(egui::Margin::symmetric(8.0, 4.0));
+        .corner_radius(egui::CornerRadius::same(10))
+        .inner_margin(egui::Margin::symmetric(8, 4));
 
     frame.show(ui, |ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
@@ -1715,10 +1714,10 @@ fn metric_value(ui: &mut egui::Ui, value: &ValueCell, kind: MetricKind) {
             });
         }
         MetricKind::Badge => {
-            let frame = egui::Frame::none()
+            let frame = egui::Frame::NONE
                 .fill(ui.visuals().widgets.noninteractive.bg_fill)
-                .rounding(egui::Rounding::same(4.0))
-                .inner_margin(egui::Margin::symmetric(6.0, 2.0));
+                .corner_radius(egui::CornerRadius::same(4))
+                .inner_margin(egui::Margin::symmetric(6, 2));
             frame.show(ui, |ui| {
                 let label = match value {
                     ValueCell::Value(text) => ui.label(

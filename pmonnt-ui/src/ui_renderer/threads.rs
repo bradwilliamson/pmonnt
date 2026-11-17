@@ -263,7 +263,7 @@ pub fn render_threads_panel<F: FnMut(ThreadActionRequest)>(
             ui.separator();
 
             egui::Frame::group(ui.style())
-                .inner_margin(egui::Margin::same(8.0))
+                .inner_margin(egui::Margin::same(8))
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         ui.heading(format!("Thread {tid}"));

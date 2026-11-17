@@ -132,11 +132,11 @@ fn render_count_badge(ui: &mut egui::Ui, total: usize, match_count: usize) {
     } else {
         total.to_string()
     };
-    let frame = egui::Frame::none()
+    let frame = egui::Frame::NONE
         .fill(ui.visuals().faint_bg_color)
         .stroke(ui.visuals().widgets.noninteractive.bg_stroke)
-        .rounding(egui::Rounding::same(6.0))
-        .inner_margin(egui::Margin::symmetric(6.0, 2.0));
+        .corner_radius(egui::CornerRadius::same(6))
+        .inner_margin(egui::Margin::symmetric(6, 2));
     frame.show(ui, |ui| {
         ui.label(egui::RichText::new(text).small());
     });
@@ -278,11 +278,11 @@ pub(super) fn render_rows(
                                     let glyph = if is_expanded { "v" } else { ">" };
 
                                     ui.push_id(format!("group_header:{group_key}"), |ui| {
-                                        let inner = egui::Frame::none()
+                                        let inner = egui::Frame::NONE
                                             .fill(ui.visuals().faint_bg_color)
                                             .stroke(ui.visuals().widgets.noninteractive.bg_stroke)
-                                            .rounding(egui::Rounding::same(6.0))
-                                            .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                                            .corner_radius(egui::CornerRadius::same(6))
+                                            .inner_margin(egui::Margin::symmetric(6, 2))
                                             .show(ui, |ui| {
                                                 ui.horizontal(|ui| {
                                                     let chevron = ui
@@ -884,7 +884,7 @@ pub(super) fn render_rows(
                 .clicked()
             {
                 app.request_mini_dump(menu_pid, menu_name.clone());
-                ui.close_menu();
+                ui.close();
             }
 
             if ui
@@ -892,21 +892,21 @@ pub(super) fn render_rows(
                 .clicked()
             {
                 app.request_full_dump_with_confirm(menu_pid, menu_name.clone());
-                ui.close_menu();
+                ui.close();
             }
 
             // Optional post-create actions
             if let Some(path) = app.last_dump_path() {
                 ui.separator();
                 if ui.button("Copy dump path").clicked() {
-                    ui.output_mut(|o| o.copied_text = path.to_string_lossy().to_string());
-                    ui.close_menu();
+                    ui.copy_text(path.to_string_lossy().to_string());
+                    ui.close();
                 }
                 if ui.button("Open dump folder").clicked() {
                     if let Some(parent) = path.parent() {
                         let _ = std::process::Command::new("explorer").arg(parent).spawn();
                     }
-                    ui.close_menu();
+                    ui.close();
                 }
             }
 
@@ -915,9 +915,9 @@ pub(super) fn render_rows(
             // Existing workflow actions
             if ui.button("Copy path").clicked() {
                 if let Some(path) = app.pid_to_image_path.get(&menu_pid) {
-                    ui.output_mut(|o| o.copied_text = path.clone());
+                    ui.copy_text(path.clone());
                 }
-                ui.close_menu();
+                ui.close();
             }
             if ui.button("Open containing folder").clicked() {
                 if let Some(path) = app.pid_to_image_path.get(&menu_pid) {
@@ -926,12 +926,12 @@ pub(super) fn render_rows(
                         .arg(path)
                         .spawn();
                 }
-                ui.close_menu();
+                ui.close();
             }
             if ui.button("Copy SHA-256 (computes if needed)").clicked() {
                 if app.selected_pid == Some(menu_pid) {
                     if let Some(sha) = &app.mb_ui_state.current_process_sha {
-                        ui.output_mut(|o| o.copied_text = sha.clone());
+                        ui.copy_text(sha.clone());
                     } else {
                         app.pending_copy_sha_pid = Some(menu_pid);
                     }
@@ -939,33 +939,33 @@ pub(super) fn render_rows(
                     app.selected_pid = Some(menu_pid);
                     app.pending_copy_sha_pid = Some(menu_pid);
                 }
-                ui.close_menu();
+                ui.close();
             }
 
             ui.separator();
             if ui.button("Kill Process (Del)").clicked() {
                 app.open_kill_dialog(menu_pid, false);
-                ui.close_menu();
+                ui.close();
             }
             if ui.button("Kill Process Tree (Shift+Del)").clicked() {
                 app.open_kill_dialog(menu_pid, true);
-                ui.close_menu();
+                ui.close();
             }
 
             ui.separator();
             if ui.button("Set Priority...").clicked() {
                 app.open_priority_dialog(menu_pid);
-                ui.close_menu();
+                ui.close();
             }
             if ui.button("Set Affinity...").clicked() {
                 app.open_affinity_dialog(menu_pid);
-                ui.close_menu();
+                ui.close();
             }
 
             ui.separator();
             if ui.button("Services...").clicked() {
                 app.open_service_dialog(menu_pid);
-                ui.close_menu();
+                ui.close();
             }
         });
 
@@ -1126,8 +1126,9 @@ mod tests {
             ..Default::default()
         };
 
-        let _output = ctx.run(input, |ctx| {
-            CentralPanel::default().show(ctx, |ui| {
+        let _output = crate::util::run_headless(&ctx, input, |root_ui| {
+            let ctx = &root_ui.ctx().clone();
+            CentralPanel::default().show(root_ui, |ui| {
                 let policy = process_table_policy(ui.available_width());
                 super::super::render_grouped_table(
                     &mut app, ctx, ui, 20.0, policy, &rows, &mut false,
@@ -1184,8 +1185,9 @@ mod tests {
             ..Default::default()
         };
 
-        let output = ctx.run(input, |ctx| {
-            CentralPanel::default().show(ctx, |ui| {
+        let output = crate::util::run_headless(&ctx, input, |root_ui| {
+            let ctx = &root_ui.ctx().clone();
+            CentralPanel::default().show(root_ui, |ui| {
                 let policy = process_table_policy(ui.available_width());
                 super::super::render_grouped_table(
                     &mut app, ctx, ui, 20.0, policy, &rows, &mut false,
@@ -1274,8 +1276,9 @@ mod tests {
             ..Default::default()
         };
 
-        let _ = ctx.run(input, |ctx| {
-            CentralPanel::default().show(ctx, |ui| {
+        let _ = crate::util::run_headless(&ctx, input, |root_ui| {
+            let ctx = &root_ui.ctx().clone();
+            CentralPanel::default().show(root_ui, |ui| {
                 let policy = process_table_policy(ui.available_width());
                 super::super::render_grouped_table(
                     &mut app, ctx, ui, 20.0, policy, &rows, &mut false,
@@ -1332,8 +1335,9 @@ mod tests {
             ..Default::default()
         };
 
-        let _ = ctx.run(input, |ctx| {
-            CentralPanel::default().show(ctx, |ui| {
+        let _ = crate::util::run_headless(&ctx, input, |root_ui| {
+            let ctx = &root_ui.ctx().clone();
+            CentralPanel::default().show(root_ui, |ui| {
                 let policy = process_table_policy(ui.available_width());
                 super::super::render_grouped_table(
                     &mut app, ctx, ui, 20.0, policy, &rows, &mut false,
@@ -1400,8 +1404,9 @@ mod tests {
             ..Default::default()
         };
 
-        let _ = ctx.run(input, |ctx| {
-            CentralPanel::default().show(ctx, |ui| {
+        let _ = crate::util::run_headless(&ctx, input, |root_ui| {
+            let ctx = &root_ui.ctx().clone();
+            CentralPanel::default().show(root_ui, |ui| {
                 let policy = process_table_policy(ui.available_width());
                 super::super::render_grouped_table(
                     &mut app, ctx, ui, 20.0, policy, &rows, &mut false,
@@ -1487,8 +1492,9 @@ mod tests {
             ..Default::default()
         };
 
-        let _ = ctx.run(input, |ctx| {
-            CentralPanel::default().show(ctx, |ui| {
+        let _ = crate::util::run_headless(&ctx, input, |root_ui| {
+            let ctx = &root_ui.ctx().clone();
+            CentralPanel::default().show(root_ui, |ui| {
                 let policy = process_table_policy(ui.available_width());
                 super::super::render_grouped_table(
                     &mut app, ctx, ui, 20.0, policy, &rows, &mut false,

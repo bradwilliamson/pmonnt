@@ -38,7 +38,7 @@ fn header_cell_button(
         ui.separator();
         if ui.button("Reset columns").clicked() {
             app.reset_process_columns_to_default();
-            ui.close_menu();
+            ui.close();
         }
     });
 

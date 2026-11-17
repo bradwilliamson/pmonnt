@@ -11,8 +11,8 @@ fn render_perf_tab(size: Vec2) {
         ..Default::default()
     };
 
-    let _ = ctx.run(input, |ctx| {
-        CentralPanel::default().show(ctx, |ui| {
+    let _ = crate::util::run_headless(&ctx, input, |root_ui| {
+        CentralPanel::default().show(root_ui, |ui| {
             render_performance_tab(ui, &fake_perf_stats(), 1234);
         });
     });

@@ -19,7 +19,7 @@ pub(super) fn render_sha256_row(ui: &mut egui::Ui, sha256: &Option<String>) {
             ui.label("SHA-256:");
             ui.monospace(sha256);
             if ui.button("📋").clicked() {
-                ui.output_mut(|o| o.copied_text = sha256.clone());
+                ui.copy_text(sha256.clone());
             }
         });
     }

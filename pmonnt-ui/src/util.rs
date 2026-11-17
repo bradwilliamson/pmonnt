@@ -231,7 +231,7 @@ pub(crate) fn paint_inline_usage_bar(ui: &egui::Ui, percentage: f32) {
 
     let response = ui.interact(
         ui.available_rect_before_wrap(),
-        egui::Id::new(ui.next_auto_id()),
+        ui.next_auto_id(),
         egui::Sense::hover(),
     );
 
@@ -660,4 +660,19 @@ mod tests {
         assert_eq!(s, u64::MAX);
         assert_eq!(t, u64::MAX);
     }
+}
+
+/// Run one headless egui pass for tests.
+///
+/// egui 0.37 debug-asserts that texture deltas are applied before a `FullOutput` is dropped;
+/// there is no renderer in tests, so discard them explicitly.
+#[cfg(test)]
+pub(crate) fn run_headless(
+    ctx: &eframe::egui::Context,
+    input: eframe::egui::RawInput,
+    run_ui: impl FnMut(&mut eframe::egui::Ui),
+) -> eframe::egui::FullOutput {
+    let mut output = ctx.run_ui(input, run_ui);
+    output.textures_delta.clear();
+    output
 }

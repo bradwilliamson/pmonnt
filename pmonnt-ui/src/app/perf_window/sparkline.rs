@@ -34,6 +34,7 @@ fn draw_sparkline_f32(ui: &mut egui::Ui, values: &[f32], y_min: f32, y_max: f32,
         rect,
         0.0,
         egui::Stroke::new(1.0, ui.visuals().widgets.inactive.bg_stroke.color),
+        egui::StrokeKind::Inside,
     );
 
     if values.len() < 2 {

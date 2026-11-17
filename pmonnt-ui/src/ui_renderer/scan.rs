@@ -39,7 +39,7 @@ pub fn render_scan_panel(
 
     ui.horizontal(|ui| {
         ui.label("Min severity:");
-        egui::ComboBox::from_id_source("yara_min_severity")
+        egui::ComboBox::from_id_salt("yara_min_severity")
             .selected_text(format!("{:?}", yara_state.min_severity))
             .show_ui(ui, |ui| {
                 ui.selectable_value(

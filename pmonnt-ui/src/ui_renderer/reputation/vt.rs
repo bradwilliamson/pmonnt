@@ -137,7 +137,7 @@ pub fn render_virustotal_section(
             ui.label("SHA-256:");
             ui.monospace(sha);
             if ui.button("📋").clicked() {
-                ui.output_mut(|o| o.copied_text = sha.clone());
+                ui.copy_text(sha.clone());
             }
         });
 

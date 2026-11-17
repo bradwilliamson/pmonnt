@@ -11,7 +11,7 @@ pub(super) fn handle_tree_keyboard_nav(
     selection_changed: &mut bool,
 ) {
     // Keyboard navigation - only when not typing
-    if ctx.wants_keyboard_input() {
+    if ctx.egui_wants_keyboard_input() {
         return;
     }
 

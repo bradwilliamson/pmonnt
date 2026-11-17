@@ -24,8 +24,8 @@ struct StartupErrorApp {
 }
 
 impl eframe::App for StartupErrorApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        egui::CentralPanel::default().show(ctx, |ui| {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        egui::CentralPanel::default().show(ui, |ui| {
             ui.heading("PMonNT failed to start");
             ui.add_space(8.0);
             ui.label("Initialization failed due to a runtime/environment issue.");

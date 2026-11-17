@@ -11,7 +11,7 @@ pub(super) fn handle_grouped_keyboard_nav(
     selection_changed: &mut bool,
 ) {
     // Keyboard navigation for grouped view (flat rows) - only when not typing
-    if ctx.wants_keyboard_input() {
+    if ctx.egui_wants_keyboard_input() {
         return;
     }
 

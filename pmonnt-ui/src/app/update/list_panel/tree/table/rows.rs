@@ -32,7 +32,7 @@ pub(super) fn render_rows(
 
         let apply_selected_text_color = |ui: &mut egui::Ui| {
             if is_selected_row && is_3270 {
-                let visuals = ui.ctx().style().visuals.clone();
+                let visuals = ui.style().visuals.clone();
                 let sel_fg = visuals.panel_fill;
                 ui.style_mut().visuals.override_text_color = Some(sel_fg);
             }
@@ -91,7 +91,7 @@ pub(super) fn render_rows(
                         let response = label_response.unwrap_or_else(|| ui.label(&item.label));
 
                         if is_selected_row && is_3270 {
-                            let sel_fg = ui.ctx().style().visuals.panel_fill;
+                            let sel_fg = ui.style().visuals.panel_fill;
                             let _marker =
                                 ui.label(egui::RichText::new("SEL").small().color(sel_fg));
                             #[cfg(test)]
@@ -407,36 +407,36 @@ pub(super) fn render_rows(
                 .clicked()
             {
                 app.request_mini_dump(item.pid, item.label.clone());
-                ui.close_menu();
+                ui.close();
             }
             if ui
                 .add_enabled(!dump_busy, egui::Button::new("Create full dump…"))
                 .clicked()
             {
                 app.request_full_dump_with_confirm(item.pid, item.label.clone());
-                ui.close_menu();
+                ui.close();
             }
 
             if let Some(path) = app.last_dump_path() {
                 ui.separator();
                 if ui.button("Copy dump path").clicked() {
-                    ui.output_mut(|o| o.copied_text = path.to_string_lossy().to_string());
-                    ui.close_menu();
+                    ui.copy_text(path.to_string_lossy().to_string());
+                    ui.close();
                 }
                 if ui.button("Open dump folder").clicked() {
                     if let Some(parent) = path.parent() {
                         let _ = std::process::Command::new("explorer").arg(parent).spawn();
                     }
-                    ui.close_menu();
+                    ui.close();
                 }
             }
 
             ui.separator();
             if ui.button("Copy path").clicked() {
                 if let Some(path) = app.pid_to_image_path.get(&item.pid) {
-                    ui.output_mut(|o| o.copied_text = path.clone());
+                    ui.copy_text(path.clone());
                 }
-                ui.close_menu();
+                ui.close();
             }
             if ui.button("Open containing folder").clicked() {
                 if let Some(path) = app.pid_to_image_path.get(&item.pid) {
@@ -445,12 +445,12 @@ pub(super) fn render_rows(
                         .arg(path)
                         .spawn();
                 }
-                ui.close_menu();
+                ui.close();
             }
             if ui.button("Copy SHA-256 (computes if needed)").clicked() {
                 if app.selected_pid == Some(item.pid) {
                     if let Some(sha) = &app.mb_ui_state.current_process_sha {
-                        ui.output_mut(|o| o.copied_text = sha.clone());
+                        ui.copy_text(sha.clone());
                     } else {
                         app.pending_copy_sha_pid = Some(item.pid);
                     }
@@ -458,33 +458,33 @@ pub(super) fn render_rows(
                     app.selected_pid = Some(item.pid);
                     app.pending_copy_sha_pid = Some(item.pid);
                 }
-                ui.close_menu();
+                ui.close();
             }
 
             ui.separator();
             if ui.button("Kill Process (Del)").clicked() {
                 app.open_kill_dialog(item.pid, false);
-                ui.close_menu();
+                ui.close();
             }
             if item.has_children && ui.button("Kill Process Tree (Shift+Del)").clicked() {
                 app.open_kill_dialog(item.pid, true);
-                ui.close_menu();
+                ui.close();
             }
 
             ui.separator();
             if ui.button("Set Priority...").clicked() {
                 app.open_priority_dialog(item.pid);
-                ui.close_menu();
+                ui.close();
             }
             if ui.button("Set Affinity...").clicked() {
                 app.open_affinity_dialog(item.pid);
-                ui.close_menu();
+                ui.close();
             }
 
             ui.separator();
             if ui.button("Services...").clicked() {
                 app.open_service_dialog(item.pid);
-                ui.close_menu();
+                ui.close();
             }
         });
 

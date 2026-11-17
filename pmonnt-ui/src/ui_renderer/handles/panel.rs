@@ -117,7 +117,7 @@ pub fn render_handles_panel(
                     handle_cache,
                     scan_interval_secs,
                 );
-                ui.output_mut(|o| o.copied_text = report);
+                ui.copy_text(report);
             }
             if ui.button("📋 Copy full report").clicked() {
                 let report = build_full_report(
@@ -132,7 +132,7 @@ pub fn render_handles_panel(
                     handle_cache,
                     scan_interval_secs,
                 );
-                ui.output_mut(|o| o.copied_text = report);
+                ui.copy_text(report);
             }
         });
 
@@ -227,7 +227,7 @@ pub fn render_handles_panel(
                 ui.colored_label(egui::Color32::GRAY, "No growth detected");
             } else {
                 egui::ScrollArea::vertical()
-                    .id_source("growing_types_scroll")
+                    .id_salt("growing_types_scroll")
                     .max_height(150.0)
                     .show(ui, |ui| {
                         egui::Grid::new("growing_types_grid")
@@ -265,7 +265,7 @@ pub fn render_handles_panel(
             ui.label("Handle types:");
 
             egui::ScrollArea::vertical()
-                .id_source("handles_scroll")
+                .id_salt("handles_scroll")
                 .max_height(300.0)
                 .show(ui, |ui| {
                     egui::Grid::new("handles_grid")

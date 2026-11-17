@@ -16,9 +16,23 @@ mod shortcuts;
 mod snapshot;
 
 impl eframe::App for PMonNTApp {
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+    /// Data collection. eframe calls this every pass, including while the window is
+    /// minimized (when `ui` is skipped), so metrics and leak history keep accumulating.
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.service_background_work();
+        self.tick_housekeeping(ctx);
+        self.refresh_snapshot_and_metrics(ctx);
+        self.update_handles_cache(ctx);
+
+        // While the window is hidden only `logic` runs; wake often enough to keep the
+        // 2-second snapshot cadence. `ui` asks for faster repaints while visible.
+        ctx.request_repaint_after(std::time::Duration::from_secs(1));
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         // FRAME TIMING START
         let frame_start = Instant::now();
+        let ctx = &ui.ctx().clone();
 
         // Best-effort: keep a cached HWND for native dialog ownership.
         self.main_hwnd = crate::util::try_get_main_hwnd(frame);
@@ -33,11 +47,6 @@ impl eframe::App for PMonNTApp {
         // Used to detect mouse-driven selection changes without touching every click site.
         let selected_pid_before_panels = self.selected_pid;
 
-        self.service_background_work();
-        self.tick_housekeeping(ctx);
-        self.refresh_snapshot_and_metrics(ctx);
-        self.update_handles_cache(ctx);
-
         // Extract needed state before closures to avoid borrow conflicts
         let tick = self.tick;
         let process_count = self.current_snapshot.len();
@@ -50,24 +59,24 @@ impl eframe::App for PMonNTApp {
 
         self.update_selection_hash_jobs();
         self.handle_filter_shortcuts(ctx, &input);
-        self.show_elevation_warning(ctx);
-        self.show_version_footer(ctx);
+        self.show_elevation_warning(ui);
+        self.show_version_footer(ui);
 
-        let (available_width, is_compact) = self.compute_responsive_layout(ctx);
-        self.render_main_toolbar(ctx, is_compact);
+        let (available_width, is_compact) = self.compute_responsive_layout(ui);
+        self.render_main_toolbar(ui, is_compact);
 
         let (show_list_panel, show_details_panel, left_min_width, left_max_width) =
             self.compute_panel_visibility_and_splitter_bounds(available_width, is_compact);
 
         // Render Details Panel first (SidePanel::right) if visible
         if show_details_panel && self.details_panel_visible {
-            self.show_details_panel(ctx, selected_pid);
+            self.show_details_panel(ui, selected_pid);
         }
 
         // Render List Panel (CentralPanel)
         if show_list_panel {
             self.show_list_panel(
-                ctx,
+                ui,
                 is_compact,
                 available_width,
                 left_min_width,
@@ -88,7 +97,7 @@ impl eframe::App for PMonNTApp {
             // Only fulfill if the requested PID is still selected.
             if self.selected_pid == Some(pid) {
                 if let Some(sha) = self.mb_ui_state.current_process_sha.clone() {
-                    ctx.output_mut(|o| o.copied_text = sha);
+                    ctx.copy_text(sha);
                     self.pending_copy_sha_pid = None;
                 }
             } else {

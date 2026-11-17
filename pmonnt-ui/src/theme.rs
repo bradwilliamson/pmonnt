@@ -82,12 +82,12 @@ pub(crate) fn apply_theme(ctx: &egui::Context, theme: Theme) {
             visuals.window_shadow = egui::epaint::Shadow::NONE;
 
             // Reduce rounding to keep the terminal vibe.
-            visuals.window_rounding = egui::Rounding::same(0.0);
-            visuals.widgets.noninteractive.rounding = egui::Rounding::same(0.0);
-            visuals.widgets.inactive.rounding = egui::Rounding::same(0.0);
-            visuals.widgets.hovered.rounding = egui::Rounding::same(0.0);
-            visuals.widgets.active.rounding = egui::Rounding::same(0.0);
-            visuals.widgets.open.rounding = egui::Rounding::same(0.0);
+            visuals.window_corner_radius = egui::CornerRadius::same(0);
+            visuals.widgets.noninteractive.corner_radius = egui::CornerRadius::same(0);
+            visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(0);
+            visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(0);
+            visuals.widgets.active.corner_radius = egui::CornerRadius::same(0);
+            visuals.widgets.open.corner_radius = egui::CornerRadius::same(0);
         }
         Theme::HighContrast => {
             visuals.panel_fill = egui::Color32::BLACK;
@@ -126,7 +126,7 @@ pub(crate) fn apply_theme(ctx: &egui::Context, theme: Theme) {
 
     ctx.set_visuals(visuals);
 
-    let mut style = (*ctx.style()).clone();
+    let mut style = (*ctx.global_style()).clone();
     match theme {
         Theme::HighContrast => {
             style.spacing.item_spacing = egui::vec2(10.0, 8.0);
@@ -213,5 +213,5 @@ pub(crate) fn apply_theme(ctx: &egui::Context, theme: Theme) {
             // Keep existing style.
         }
     }
-    ctx.set_style(style);
+    ctx.set_global_style(style);
 }

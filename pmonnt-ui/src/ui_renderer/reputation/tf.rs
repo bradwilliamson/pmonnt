@@ -117,7 +117,7 @@ pub fn render_threatfox_section(
             ui.label("SHA-256:");
             ui.monospace(sha);
             if ui.button("📋").clicked() {
-                ui.output_mut(|o| o.copied_text = sha.clone());
+                ui.copy_text(sha.clone());
             }
         });
 
@@ -158,7 +158,7 @@ pub fn render_threatfox_section(
                                             ui.horizontal(|ui| {
                                                 ui.label(format!("[{}] {}", typ, val));
                                                 if ui.small_button("📋").clicked() {
-                                                    ui.output_mut(|o| o.copied_text = val.clone());
+                                                    ui.copy_text(val.clone());
                                                 }
                                             });
                                         }

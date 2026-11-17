@@ -37,7 +37,7 @@ pub(crate) fn render_priority_dialog(app: &mut PMonNTApp, ctx: &egui::Context) {
 
             ui.horizontal(|ui| {
                 ui.label("Priority:");
-                egui::ComboBox::from_id_source("priority_combo")
+                egui::ComboBox::from_id_salt("priority_combo")
                     .selected_text(selected.display_name())
                     .show_ui(ui, |ui| {
                         for &p in PriorityClass::all() {

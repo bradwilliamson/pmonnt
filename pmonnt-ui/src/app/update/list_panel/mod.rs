@@ -16,7 +16,7 @@ impl PMonNTApp {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn show_list_panel(
         &mut self,
-        ctx: &egui::Context,
+        ui: &mut egui::Ui,
         is_compact: bool,
         _available_width: f32,
         _left_min_width: f32,
@@ -29,7 +29,8 @@ impl PMonNTApp {
         selection_changed: &mut bool,
     ) {
         // List Panel is now the CentralPanel, taking up remaining space
-        egui::CentralPanel::default().show(ctx, |ui| {
+        let ctx = &ui.ctx().clone();
+        egui::CentralPanel::default().show(ui, |ui| {
             // (details tabs, scroll areas) keep their existing feel.
             match self.density {
                 Density::Comfortable => {
@@ -108,7 +109,7 @@ impl PMonNTApp {
                     ui.separator();
                     if ui.button("Reset columns").clicked() {
                         self.reset_process_columns_to_default();
-                        ui.close_menu();
+                        ui.close();
                     }
                 });
 
@@ -277,7 +278,7 @@ impl PMonNTApp {
             ui.horizontal(|ui| {
                 ui.label("Filter:");
                 egui::TextEdit::singleline(&mut self.filter_text)
-                    .id(egui::Id::new("process_filter_input"))
+                    .id(egui::Id::unique("process_filter_input"))
                     .hint_text("/ or Ctrl+F to focus, Esc to clear")
                     .show(ui);
 
@@ -448,7 +449,7 @@ impl PMonNTApp {
                 ui.label("Exited (last 30s):");
 
                 egui::ScrollArea::vertical()
-                    .id_source("exited_scroll")
+                    .id_salt("exited_scroll")
                     .max_height(150.0)
                     .show(ui, |ui| {
                         for exited in recent_exited {

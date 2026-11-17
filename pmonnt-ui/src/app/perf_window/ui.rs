@@ -244,7 +244,8 @@ impl PMonNTApp {
                 let current_include_child_pids = w.include_child_pids;
                 let current_selected_tid = w.selected_tid;
 
-                ctx.show_viewport_immediate(viewport_id, builder, move |ctx, class| {
+                ctx.show_viewport_immediate(viewport_id, builder, move |vp_ui, class| {
+                    let ctx = &vp_ui.ctx().clone();
                     let mut should_close = ctx.input(|i| i.viewport().close_requested());
                     let mut tab = current_tab;
                     let mut security_filter = current_security_filter.clone();
@@ -335,7 +336,7 @@ impl PMonNTApp {
                     };
 
                     match class {
-                        egui::ViewportClass::Embedded => {
+                        egui::ViewportClass::EmbeddedWindow => {
                             let mut open = true;
                             egui::Window::new(title.clone())
                                 .open(&mut open)
@@ -345,7 +346,7 @@ impl PMonNTApp {
                                     );
 
                                     egui::ScrollArea::vertical()
-                                        .id_source(("perf_window_details_scroll", pid))
+                                        .id_salt(("perf_window_details_scroll", pid))
                                         .show(ui, |ui| {
                                             render_tab_content(ui, tab);
                                         });
@@ -360,13 +361,13 @@ impl PMonNTApp {
                             }
                         }
                         _ => {
-                            egui::CentralPanel::default().show(ctx, |ui| {
+                            egui::CentralPanel::default().show(vp_ui, |ui| {
                                 crate::app::perf_window::tabs::render_window_header(
                                     ui, pid, &title, &mut tab,
                                 );
 
                                 egui::ScrollArea::vertical()
-                                    .id_source(("perf_window_details_scroll", pid))
+                                    .id_salt(("perf_window_details_scroll", pid))
                                     .auto_shrink([false; 2])
                                     .show(ui, |ui| {
                                         render_tab_content(ui, tab);

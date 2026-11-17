@@ -140,7 +140,7 @@ pub fn render_malwarebazaar_section(
             ui.label("SHA-256:");
             ui.monospace(sha);
             if ui.button("📋").clicked() {
-                ui.output_mut(|o| o.copied_text = sha.clone());
+                ui.copy_text(sha.clone());
             }
         });
         if let Some((sample_opt, meta)) = reputation_service.get_mb_sample_for_hash(sha) {

@@ -88,18 +88,18 @@ impl PMonNTApp {
         ui_renderer::render_reputation_settings_panel_ctx(&mut ctx);
     }
 
-    pub(super) fn show_details_panel(&mut self, ctx: &egui::Context, selected_pid: Option<u32>) {
-        egui::SidePanel::right("details_panel")
+    pub(super) fn show_details_panel(&mut self, ui: &mut egui::Ui, selected_pid: Option<u32>) {
+        egui::Panel::right("details_panel")
             .resizable(true)
-            .default_width(self.right_panel_width)
-            .width_range(200.0..=1200.0)
-            .show(ctx, |ui| {
+            .default_size(self.right_panel_width)
+            .size_range(200.0..=1200.0)
+            .show(ui, |ui| {
                 // Persist width
                 self.right_panel_width = ui.available_width();
 
                 let has_pid = selected_pid.is_some();
 
-                egui::TopBottomPanel::top("thread_tabs").show_inside(ui, |ui| {
+                egui::Panel::top("thread_tabs").show(ui, |ui| {
                     ui.horizontal(|ui| {
                         // Close button - flat to align with tabs
                         if ui
@@ -129,7 +129,7 @@ impl PMonNTApp {
                 });
 
                 egui::ScrollArea::vertical()
-                    .id_source("central_panel_scroll")
+                    .id_salt("central_panel_scroll")
                     .show(ui, |ui| {
                         if self.right_tab == RightTab::Settings {
                             self.render_settings_tab(ui);
@@ -212,7 +212,7 @@ impl PMonNTApp {
                     ui.label("PID:");
                     ui.monospace(format!("{}", pid));
                     if ui.button("📋").on_hover_text("Copy PID").clicked() {
-                        ui.output_mut(|o| o.copied_text = format!("{}", pid));
+                        ui.copy_text(format!("{}", pid));
                     }
                 });
 
@@ -300,7 +300,7 @@ impl PMonNTApp {
                                     .on_hover_text(path); // Show full path on hover
                             }
                             if ui.button("📋").on_hover_text("Copy Full Path").clicked() {
-                                ui.output_mut(|o| o.copied_text = path.clone());
+                                ui.copy_text(path.clone());
                             }
                         });
                     }
@@ -314,7 +314,7 @@ impl PMonNTApp {
                                 ui.label("").on_hover_text(cmd);
                             }
                             if ui.button("📋").on_hover_text("Copy Command Line").clicked() {
-                                ui.output_mut(|o| o.copied_text = cmd.clone());
+                                ui.copy_text(cmd.clone());
                             }
                         });
                     }
@@ -567,7 +567,7 @@ impl PMonNTApp {
             if let Some(env_rows) = self.pid_to_environment.get(&pid) {
                 egui::ScrollArea::vertical()
                     .max_height(260.0)
-                    .id_source(("env_scroll", pid))
+                    .id_salt(("env_scroll", pid))
                     .show(ui, |ui| {
                         egui::Grid::new(("env_grid", pid))
                             .num_columns(2)
@@ -751,7 +751,7 @@ impl PMonNTApp {
                                         .map_err(|e| format!("{e}"));
                                         let _ = tx.send((pid, name, "Restart".to_string(), r));
                                     });
-                                    ui.close_menu();
+                                    ui.close();
                                 }
 
                                 if pause_clicked {
@@ -766,7 +766,7 @@ impl PMonNTApp {
                                         .map_err(|e| format!("{e}"));
                                         let _ = tx.send((pid, name, "Pause".to_string(), r));
                                     });
-                                    ui.close_menu();
+                                    ui.close();
                                 }
 
                                 if resume_clicked {
@@ -781,7 +781,7 @@ impl PMonNTApp {
                                         .map_err(|e| format!("{e}"));
                                         let _ = tx.send((pid, name, "Resume".to_string(), r));
                                     });
-                                    ui.close_menu();
+                                    ui.close();
                                 }
                             });
                         });

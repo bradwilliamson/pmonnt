@@ -225,7 +225,7 @@ pub(super) fn render_providers_section(
             let mut chevron_clicked = false;
             let mut open_clicked = false;
 
-            ui.allocate_ui_at_rect(rect, |ui| {
+            ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new(label).strong());
                     ui.add_space(6.0);
